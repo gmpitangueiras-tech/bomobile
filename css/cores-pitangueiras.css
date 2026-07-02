@@ -1,0 +1,313 @@
+/* ============================================
+   CORES DA BANDEIRA DE PITANGUEIRAS/PR
+   Verde, Azul e Branco
+   ============================================ */
+
+:root {
+  /* VERDE - Cores da bandeira */
+  --verde-bandeira: #00843d;
+  --verde-escuro: #006b31;
+  --verde-claro: #4caf50;
+  --verde-muito-claro: #e8f5e9;
+  --verde-destaque: #00a54d;
+
+  /* AZUL - Cores da bandeira */
+  --azul-bandeira: #003f87;
+  --azul-escuro: #002d62;
+  --azul-claro: #2196f3;
+  --azul-muito-claro: #e3f2fd;
+  --azul-destaque: #0055a8;
+
+  /* BRANCO E NEUTROS */
+  --branco: #ffffff;
+  --branco-fumaca: #f5f5f5;
+  --cinza-claro: #e0e0e0;
+  --cinza-medio: #9e9e9e;
+  --cinza-escuro: #424242;
+  --preto: #1a1a1a;
+
+  /* GRADIENTES */
+  --gradiente-principal: linear-gradient(
+    135deg,
+    var(--azul-bandeira) 0%,
+    var(--verde-bandeira) 100%
+  );
+  --gradiente-header: linear-gradient(
+    90deg,
+    var(--azul-escuro) 0%,
+    var(--verde-escuro) 100%
+  );
+  --gradiente-botao: linear-gradient(
+    135deg,
+    var(--verde-bandeira) 0%,
+    var(--verde-escuro) 100%
+  );
+  --gradiente-card: linear-gradient(
+    135deg,
+    var(--azul-muito-claro) 0%,
+    var(--verde-muito-claro) 100%
+  );
+
+  /* SOMBRAS */
+  --sombra-padrao: 0 2px 10px rgba(0, 0, 0, 0.1);
+  --sombra-media: 0 4px 20px rgba(0, 0, 0, 0.15);
+  --sombra-forte: 0 8px 30px rgba(0, 0, 0, 0.2);
+
+  /* TAMANHOS */
+  --header-height: 64px;
+  --footer-height: 70px;
+  --border-radius: 12px;
+}
+
+/* Classes utilitárias de cores */
+.bg-verde {
+  background-color: var(--verde-bandeira);
+}
+.bg-azul {
+  background-color: var(--azul-bandeira);
+}
+.bg-gradiente {
+  background: var(--gradiente-principal);
+}
+.bg-verde-claro {
+  background-color: var(--verde-muito-claro);
+}
+.bg-azul-claro {
+  background-color: var(--azul-muito-claro);
+}
+
+.text-verde {
+  color: var(--verde-bandeira);
+}
+.text-azul {
+  color: var(--azul-bandeira);
+}
+.text-branco {
+  color: var(--branco);
+}
+
+.border-verde {
+  border-color: var(--verde-bandeira);
+}
+.border-azul {
+  border-color: var(--azul-bandeira);
+}
+
+/* Botões com as cores da cidade */
+.btn-primario {
+  background: var(--gradiente-botao);
+  color: var(--branco);
+  border: none;
+  padding: 14px 28px;
+  border-radius: var(--border-radius);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  width: 100%;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.btn-primario:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sombra-media);
+}
+
+.btn-primario:active {
+  transform: translateY(0);
+}
+
+.btn-secundario {
+  background: var(--azul-bandeira);
+  color: var(--branco);
+  border: none;
+  padding: 14px 28px;
+  border-radius: var(--border-radius);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  width: 100%;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--azul-bandeira);
+  border: 2px solid var(--azul-bandeira);
+  padding: 12px 26px;
+  border-radius: var(--border-radius);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  width: 100%;
+}
+
+.btn-outline:hover {
+  background: var(--azul-bandeira);
+  color: var(--branco);
+}
+
+/* Cards com estilo Pitangueiras */
+.card-pitangueiras {
+  background: var(--branco);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  box-shadow: var(--sombra-padrao);
+  border-left: 4px solid var(--verde-bandeira);
+  transition: all 0.3s ease;
+}
+
+.card-pitangueiras:hover {
+  box-shadow: var(--sombra-media);
+  transform: translateY(-2px);
+}
+
+.card-pitangueiras.azul {
+  border-left-color: var(--azul-bandeira);
+}
+
+/* Badge de status */
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-verde {
+  background: var(--verde-muito-claro);
+  color: var(--verde-escuro);
+}
+.badge-azul {
+  background: var(--azul-muito-claro);
+  color: var(--azul-escuro);
+}
+.badge-cinza {
+  background: var(--cinza-claro);
+  color: var(--cinza-escuro);
+}
+
+/* Header personalizado */
+.header-pitangueiras {
+  background: var(--gradiente-header);
+  color: var(--branco);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--sombra-media);
+}
+
+.header-pitangueiras .logo-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-pitangueiras .logo-area img {
+  height: 40px;
+  width: auto;
+}
+
+.header-pitangueiras .logo-area h1 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.header-pitangueiras .logo-area small {
+  font-size: 11px;
+  opacity: 0.8;
+  display: block;
+  font-weight: 400;
+}
+
+.header-pitangueiras .user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.header-pitangueiras .user-info .avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--branco);
+  color: var(--azul-bandeira);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* Status de conexão */
+.status-conexao {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.status-conexao.online {
+  background: var(--verde-muito-claro);
+  color: var(--verde-escuro);
+}
+
+.status-conexao.offline {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.status-conexao .ponto {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-conexao.online .ponto {
+  background: var(--verde-bandeira);
+  animation: pulse-green 2s infinite;
+}
+
+.status-conexao.offline .ponto {
+  background: #e65100;
+  animation: pulse-orange 2s infinite;
+}
+
+@keyframes pulse-green {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes pulse-orange {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.8);
+  }
+}

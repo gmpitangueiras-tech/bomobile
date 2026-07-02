@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#003F87" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta
+      name="description"
+      content="Sistema de Registro de Ocorrências da Guarda Municipal de Pitangueiras - PR"
+    />
+
+    <title>Guarda Municipal - Pitangueiras/PR</title>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/cores-pitangueiras.css" />
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/components.css" />
+
+    <!-- Manifest PWA -->
+    <link rel="manifest" href="manifest.json" />
+
+    <!-- Favicon -->
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="assets/icons/icon-192x192.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="512x512"
+      href="assets/icons/icon-512x512.png"
+    />
+    <link rel="apple-touch-icon" href="assets/icons/icon-192x192.png" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Container principal -->
+      <div class="container" id="main-container">
+        <!-- Tela de Login será carregada aqui -->
+        <div id="page-content">
+          <!-- O conteúdo será injetado pelo JavaScript -->
+          <div
+            style="
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              padding: 20px;
+              text-align: center;
+            "
+          >
+            <div
+              class="spinner"
+              style="
+                width: 40px;
+                height: 40px;
+                border-width: 4px;
+                border-color: var(--azul-bandeira);
+                margin: 0 auto;
+              "
+            ></div>
+            <p style="margin-top: 16px; color: var(--cinza-escuro)">
+              Carregando sistema...
+            </p>
+            <p
+              style="
+                margin-top: 8px;
+                color: var(--cinza-medio);
+                font-size: 14px;
+              "
+            >
+              Guarda Municipal de Pitangueiras - PR
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- BIBLIOTECAS E SCRIPTS - ORDEM CORRETA         -->
+    <!-- ============================================ -->
+
+    <!-- 1. Supabase JS (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- 2. Configurações do Sistema -->
+    <script src="js/config.js"></script>
+
+    <!-- 3. Cliente Supabase -->
+    <script src="js/supabase-client.js"></script>
+
+    <!-- 4. Gerenciador de Autenticação -->
+    <script src="js/auth.js"></script>
+
+    <!-- 5. Gerenciador de Banco de Dados Local (IndexedDB) -->
+    <script src="js/db.js"></script>
+
+    <!-- 6. Gerenciador de Sincronização -->
+    <script src="js/sync.js"></script>
+
+    <!-- 7. Gerenciador de Ocorrências -->
+    <script src="js/ocorrencia.js"></script>
+
+    <!-- 8. Aplicação Principal -->
+    <script src="js/app.js"></script>
+
+    <!-- 9. Service Worker Registration (fallback) -->
+    <script>
+      // Registro do Service Worker para PWA
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then(function (registration) {
+              console.log(
+                "✅ Service Worker registrado com sucesso:",
+                registration.scope,
+              );
+            })
+            .catch(function (error) {
+              console.log("⚠️ Falha ao registrar Service Worker:", error);
+            });
+        });
+      }
+
+      // Verificação de conexão para fallback
+      window.addEventListener("online", function () {
+        console.log("🟢 Conexão restaurada");
+        const statusElements = document.querySelectorAll(".status-conexao");
+        statusElements.forEach(function (el) {
+          el.className = "status-conexao online";
+          const ponto = el.querySelector(".ponto");
+          const texto = el.querySelector(".texto");
+          if (ponto) ponto.style.background = "var(--verde-bandeira)";
+          if (texto) texto.textContent = "Online";
+        });
+
+        // Tenta sincronizar automaticamente
+        if (window.syncManager) {
+          window.syncManager.sincronizarAutomaticamente();
+        }
+      });
+
+      window.addEventListener("offline", function () {
+        console.log("🔴 Conexão perdida - Modo offline");
+        const statusElements = document.querySelectorAll(".status-conexao");
+        statusElements.forEach(function (el) {
+          el.className = "status-conexao offline";
+          const ponto = el.querySelector(".ponto");
+          const texto = el.querySelector(".texto");
+          if (ponto) ponto.style.background = "#E65100";
+          if (texto) texto.textContent = "Offline";
+        });
+
+        // Notifica o usuário
+        if (window.authManager) {
+          window.authManager.mostrarToast(
+            "Modo offline ativado. Os dados serão sincronizados quando a conexão for restaurada.",
+            "warning",
+          );
+        }
+      });
+
+      // Previne zoom com dois toques em dispositivos móveis
+      document.addEventListener(
+        "dblclick",
+        function (e) {
+          e.preventDefault();
+        },
+        { passive: false },
+      );
+
+      console.log("📱 Sistema Guarda Municipal - Pitangueiras/PR");
+      console.log("🔧 Versão: 1.0.0");
+      console.log(
+        "📅 " +
+          new Date().toLocaleDateString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+      );
+    </script>
+  </body>
+</html>

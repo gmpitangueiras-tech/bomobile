@@ -1,45 +1,23 @@
 /**
- * ============================================
- * GERENCIADOR DE SINCRONIZAÇÃO
- * Sistema de Registro de Ocorrências
- * Guarda Municipal de Pitangueiras - PR
- * ============================================
+ * SYNC MANAGER - Sincronização
+ * Placeholder - Será implementado para o modo offline
  */
 
 class SyncManager {
   constructor() {
     this.initialized = false;
-    this.syncInProgress = false;
-    this.pendingItems = [];
-    this.syncCallbacks = [];
+    this.isSyncing = false;
   }
 
   async init() {
     if (this.initialized) return;
     this.initialized = true;
-    console.log("✅ Sync Manager inicializado");
+    console.log("🔄 Sync Manager (placeholder) inicializado");
+    return true;
   }
 
-  async getPendentes() {
-    // Retorna lista de itens pendentes do IndexedDB
-    try {
-      if (dbManager && dbManager.initialized) {
-        const items = await dbManager.listar(
-          "sincronizacao",
-          "status",
-          "pending",
-        );
-        return items || [];
-      }
-      return [];
-    } catch (error) {
-      console.error("❌ Erro ao buscar pendentes:", error);
-      return [];
-    }
-  }
-
-  async sincronizarAutomaticamente() {
-    if (this.syncInProgress) {
+  async sincronizar() {
+    if (this.isSyncing) {
       console.log("⏳ Sincronização já em andamento");
       return;
     }
@@ -49,56 +27,21 @@ class SyncManager {
       return;
     }
 
-    this.syncInProgress = true;
-    console.log("🔄 Iniciando sincronização automática...");
+    this.isSyncing = true;
+    console.log("🔄 [PLACEHOLDER] Sincronizando...");
 
-    try {
-      const pendentes = await this.getPendentes();
-
-      if (pendentes.length === 0) {
-        console.log("✅ Nenhum item pendente");
-        this.syncInProgress = false;
-        return;
-      }
-
-      console.log(`📤 ${pendentes.length} itens para sincronizar`);
-
-      for (const item of pendentes) {
-        try {
-          await this.sincronizarItem(item);
-        } catch (error) {
-          console.error("❌ Erro ao sincronizar item:", error);
-        }
-      }
-
-      console.log("✅ Sincronização concluída");
-    } catch (error) {
-      console.error("❌ Erro na sincronização:", error);
-    } finally {
-      this.syncInProgress = false;
-    }
-  }
-
-  async sincronizarItem(item) {
     // Simula sincronização
-    console.log(`📤 Sincronizando item ${item.id}...`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Atualiza status
-    if (dbManager && dbManager.initialized) {
-      item.status = "synced";
-      await dbManager.salvar("sincronizacao", item);
-    }
-
+    this.isSyncing = false;
+    console.log("✅ [PLACEHOLDER] Sincronização concluída");
     return true;
   }
 
-  onSync(callback) {
-    if (typeof callback === "function") {
-      this.syncCallbacks.push(callback);
-    }
+  async getPendentes() {
+    return [];
   }
 }
 
 const syncManager = new SyncManager();
 window.syncManager = syncManager;
-console.log("📦 Sync Manager carregado");

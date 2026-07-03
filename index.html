@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <meta name="theme-color" content="#003F87" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
       name="apple-mobile-web-app-status-bar-style"
@@ -20,14 +21,12 @@
     <title>Guarda Municipal - Pitangueiras/PR</title>
 
     <!-- CSS -->
-    <link rel="stylesheet" href="css/cores-pitangueiras.css" />
     <link rel="stylesheet" href="css/style.css" />
-    <link rel="stylesheet" href="css/components.css" />
 
     <!-- Manifest PWA -->
     <link rel="manifest" href="manifest.json" />
 
-    <!-- Favicon -->
+    <!-- Ícones -->
     <link
       rel="icon"
       type="image/png"
@@ -41,336 +40,315 @@
       href="assets/icons/icon-512x512.png"
     />
     <link rel="apple-touch-icon" href="assets/icons/icon-192x192.png" />
+
+    <!-- Font Awesome para ícones -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+    />
   </head>
   <body>
     <div id="app">
-      <!-- Container principal -->
-      <div class="container" id="main-container">
-        <!-- Tela de Login será carregada aqui -->
-        <div id="page-content">
-          <!-- O conteúdo será injetado pelo JavaScript -->
-          <div
-            style="
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              padding: 20px;
-              text-align: center;
-            "
-          >
+      <!-- ========== HEADER ========== -->
+      <header id="app-header" style="display: none">
+        <div class="header-content">
+          <div class="logo-area">
+            <button id="menuToggle" class="menu-btn" aria-label="Abrir menu">
+              <i class="fas fa-bars"></i>
+            </button>
             <div
-              class="spinner"
               style="
-                width: 40px;
-                height: 40px;
-                border-width: 4px;
-                border-color: var(--azul-bandeira);
-                margin: 0 auto;
-              "
-            ></div>
-            <p style="margin-top: 16px; color: var(--cinza-escuro)">
-              Carregando sistema...
-            </p>
-            <p
-              style="
-                margin-top: 8px;
-                color: var(--cinza-medio);
-                font-size: 14px;
+                width: 36px;
+                height: 36px;
+                border-radius: 50%;
+                background: rgba(255, 255, 255, 0.2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
               "
             >
-              Guarda Municipal de Pitangueiras - PR
-            </p>
+              <i
+                class="fas fa-shield-alt"
+                style="font-size: 18px; color: var(--branco)"
+              ></i>
+            </div>
+            <div class="logo-text">
+              <span class="title">Guarda Municipal</span>
+              <span class="subtitle">Pitangueiras - PR</span>
+            </div>
+          </div>
+          <div class="user-info">
+            <div class="user-details">
+              <span class="name" id="userName">Carregando...</span>
+              <span class="matricula" id="userMatricula"></span>
+            </div>
+            <div class="avatar" id="userAvatar">
+              <i class="fas fa-user"></i>
+            </div>
+            <div class="connection-status online" id="connectionStatus">
+              <span class="dot"></span>
+              <span class="status-text">Online</span>
+            </div>
           </div>
         </div>
-      </div>
+      </header>
+
+      <!-- ========== MENU LATERAL ========== -->
+      <div id="menuOverlay" class="menu-overlay"></div>
+      <nav id="sideMenu" class="side-menu">
+        <div class="menu-header">
+          <div class="avatar" id="menuAvatar">
+            <i class="fas fa-user" style="font-size: 28px"></i>
+          </div>
+          <div class="nome" id="menuNome">Carregando...</div>
+          <div class="matricula" id="menuMatricula"></div>
+          <div class="perfil-badge" id="menuPerfil">Guarda</div>
+        </div>
+        <div class="menu-items">
+          <button class="menu-item active" data-page="dashboard">
+            <i class="fas fa-home"></i>
+            <span>Início</span>
+          </button>
+          <button class="menu-item" data-page="ocorrencias">
+            <i class="fas fa-list"></i>
+            <span>Minhas Ocorrências</span>
+          </button>
+          <button class="menu-item" data-page="nova-ocorrencia">
+            <i class="fas fa-plus-circle"></i>
+            <span>Nova Ocorrência</span>
+          </button>
+          <button
+            class="menu-item"
+            data-page="relatorios"
+            id="menuRelatorios"
+            style="display: none"
+          >
+            <i class="fas fa-chart-bar"></i>
+            <span>Relatórios</span>
+          </button>
+          <button
+            class="menu-item"
+            data-page="usuarios"
+            id="menuUsuarios"
+            style="display: none"
+          >
+            <i class="fas fa-users"></i>
+            <span>Gerenciar Usuários</span>
+          </button>
+          <div class="menu-divider"></div>
+          <button class="menu-item" data-page="perfil">
+            <i class="fas fa-user"></i>
+            <span>Meu Perfil</span>
+          </button>
+          <button class="menu-item" id="btnLogout">
+            <i class="fas fa-sign-out-alt"></i>
+            <span>Sair</span>
+          </button>
+        </div>
+        <div class="menu-footer">
+          <span>
+            <i class="fas fa-code" style="margin-right: 4px"></i>
+            v1.0.0
+          </span>
+          <span class="separator">•</span>
+          <span>
+            <i class="fas fa-building" style="margin-right: 4px"></i>
+            Pitangueiras - PR
+          </span>
+        </div>
+      </nav>
+
+      <!-- ========== CONTEÚDO PRINCIPAL ========== -->
+      <main id="main-content">
+        <!-- Login Screen -->
+        <div id="page-login" class="page">
+          <div class="login-screen">
+            <div class="login-card">
+              <div class="logo-container">
+                <div class="logo-wrapper">
+                  <div
+                    style="
+                      width: 80px;
+                      height: 80px;
+                      border-radius: 50%;
+                      background: var(--gradiente-principal);
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      margin: 0 auto;
+                    "
+                  >
+                    <i
+                      class="fas fa-shield-alt"
+                      style="font-size: 40px; color: var(--branco)"
+                    ></i>
+                  </div>
+                  <div class="logo-ring"></div>
+                </div>
+                <h1>Guarda Municipal</h1>
+                <h2>Pitangueiras - PR</h2>
+                <p class="subtitle">
+                  <i
+                    class="fas fa-clipboard-list"
+                    style="margin-right: 6px"
+                  ></i>
+                  Sistema de Registro de Ocorrências
+                </p>
+              </div>
+
+              <form id="loginForm">
+                <div class="form-group">
+                  <label for="loginCpf">
+                    <i
+                      class="fas fa-id-card"
+                      style="margin-right: 6px; color: var(--azul-bandeira)"
+                    ></i>
+                    CPF
+                  </label>
+                  <div class="input-wrapper">
+                    <i class="fas fa-user input-icon-left"></i>
+                    <input
+                      type="text"
+                      id="loginCpf"
+                      placeholder="123.456.789-00"
+                      maxlength="14"
+                      autocomplete="username"
+                    />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="loginSenha">
+                    <i
+                      class="fas fa-lock"
+                      style="margin-right: 6px; color: var(--azul-bandeira)"
+                    ></i>
+                    Senha
+                  </label>
+                  <div class="input-wrapper">
+                    <i class="fas fa-lock input-icon-left"></i>
+                    <input
+                      type="password"
+                      id="loginSenha"
+                      placeholder="Digite sua senha"
+                      autocomplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      class="toggle-password"
+                      aria-label="Mostrar senha"
+                    >
+                      <i class="fas fa-eye"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="options-row">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rememberMe" />
+                    <span>Lembrar-me</span>
+                  </label>
+                  <a href="#" class="forgot-link">
+                    <i
+                      class="fas fa-question-circle"
+                      style="margin-right: 4px"
+                    ></i>
+                    Esqueci minha senha
+                  </a>
+                </div>
+
+                <button type="submit" class="btn-primary" id="loginBtn">
+                  <i class="fas fa-sign-in-alt" style="margin-right: 8px"></i>
+                  <span class="btn-text">ENTRAR</span>
+                  <span class="spinner-small"></span>
+                </button>
+
+                <div
+                  id="loginError"
+                  class="login-error"
+                  style="display: none"
+                ></div>
+              </form>
+
+              <div class="login-footer">
+                <span class="version">
+                  <i
+                    class="fas fa-code"
+                    style="margin-right: 4px; font-size: 11px"
+                  ></i>
+                  v1.0.0
+                </span>
+                <span class="separator">•</span>
+                <span>
+                  <i
+                    class="fas fa-building"
+                    style="margin-right: 4px; font-size: 11px"
+                  ></i>
+                  Guarda Municipal de Pitangueiras
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="page-dashboard" class="page" style="display: none">
+          <div class="container" id="dashboardContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Ocorrências -->
+        <div id="page-ocorrencias" class="page" style="display: none">
+          <div class="container" id="ocorrenciasContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Nova Ocorrência -->
+        <div id="page-nova-ocorrencia" class="page" style="display: none">
+          <div class="container" id="novaOcorrenciaContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Relatórios -->
+        <div id="page-relatorios" class="page" style="display: none">
+          <div class="container" id="relatoriosContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Usuários -->
+        <div id="page-usuarios" class="page" style="display: none">
+          <div class="container" id="usuariosContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Perfil -->
+        <div id="page-perfil" class="page" style="display: none">
+          <div class="container" id="perfilContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+      </main>
+
+      <!-- ========== FAB - Botão Flutuante ========== -->
+      <button id="fab" class="fab" style="display: none">
+        <i class="fas fa-plus"></i>
+        <span class="fab-label">Nova Ocorrência</span>
+      </button>
+
+      <!-- ========== TOAST - Notificações ========== -->
+      <div id="toastContainer"></div>
     </div>
 
-    <!-- ============================================ -->
-    <!-- BIBLIOTECAS E SCRIPTS - ORDEM CORRETA         -->
-    <!-- ============================================ -->
-
-    <!-- 1. Supabase JS (CDN) -->
+    <!-- ========== SCRIPTS ========== -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-    <!-- 2. Configurações do Sistema -->
     <script src="js/config.js"></script>
-
-    <!-- 3. Cliente Supabase -->
-    <script src="js/supabase-client.js"></script>
-
-    <!-- 4. Gerenciador de Autenticação -->
+    <script src="js/supabase.js"></script>
     <script src="js/auth.js"></script>
-
-    <!-- 5. Gerenciador de Banco de Dados Local (IndexedDB) -->
-    <script src="js/db.js"></script>
-
-    <!-- 6. Gerenciador de Sincronização -->
-    <script src="js/sync.js"></script>
-
-    <!-- 7. Gerenciador de Ocorrências -->
     <script src="js/ocorrencia.js"></script>
-
-    <!-- 8. Aplicação Principal -->
     <script src="js/app.js"></script>
-
-    <!-- 9. Service Worker Registration e Inicialização -->
-    <script>
-      // ============================================
-      // INICIALIZAÇÃO MANUAL
-      // ============================================
-
-      // Função para verificar se todos os scripts carregaram
-      function verificarDependencias() {
-        const dependencias = {
-          CONFIG: typeof CONFIG !== "undefined",
-          supabaseClient: typeof supabaseClient !== "undefined",
-          authManager: typeof authManager !== "undefined",
-          app: typeof app !== "undefined",
-        };
-
-        let todosOk = true;
-        console.log("📦 Verificando dependências:");
-        for (const [nome, ok] of Object.entries(dependencias)) {
-          console.log(`  ${ok ? "✅" : "❌"} ${nome}`);
-          if (!ok) todosOk = false;
-        }
-
-        return todosOk;
-      }
-
-      // Inicialização principal
-      function iniciarSistema() {
-        console.log("🚀 Iniciando sistema...");
-
-        // Verifica dependências
-        if (!verificarDependencias()) {
-          console.warn(
-            "⚠️ Algumas dependências estão faltando. Tentando carregar novamente...",
-          );
-          setTimeout(iniciarSistema, 1000);
-          return;
-        }
-
-        // Inicializa a aplicação
-        if (typeof app !== "undefined" && app.init) {
-          console.log("📱 Iniciando aplicação...");
-          app.init().catch(function (error) {
-            console.error("❌ Erro ao iniciar aplicação:", error);
-            mostrarErroInicializacao(
-              "Erro ao iniciar o sistema. Verifique sua conexão.",
-            );
-          });
-        } else {
-          console.error("❌ Aplicação não encontrada");
-          mostrarErroInicializacao(
-            "Aplicação não encontrada. Recarregue a página.",
-          );
-        }
-      }
-
-      // Mostra erro de inicialização
-      function mostrarErroInicializacao(mensagem) {
-        const container = document.getElementById("page-content");
-        if (!container) return;
-
-        container.innerHTML = `
-                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:20px;text-align:center;">
-                    <div style="font-size:64px;margin-bottom:20px;">⚠️</div>
-                    <h2 style="color:var(--azul-bandeira);">Erro ao Iniciar</h2>
-                    <p style="color:var(--cinza-escuro);margin-bottom:8px;">${mensagem}</p>
-                    <p style="color:var(--cinza-medio);font-size:14px;margin-bottom:20px;">
-                        Tente recarregar a página ou verifique sua conexão com a internet.
-                    </p>
-                    <button onclick="location.reload()" class="btn-primario" style="max-width:200px;">
-                        🔄 Recarregar Página
-                    </button>
-                    <div style="margin-top:20px;font-size:12px;color:var(--cinza-medio);">
-                        Guarda Municipal de ${typeof CONFIG !== "undefined" ? CONFIG.MUNICIPIO : "Pitangueiras"} - ${typeof CONFIG !== "undefined" ? CONFIG.ESTADO : "PR"}
-                        <br>
-                        v${typeof CONFIG !== "undefined" ? CONFIG.VERSAO : "1.0.0"}
-                    </div>
-                </div>
-            `;
-      }
-
-      // ============================================
-      // EVENTOS DE INICIALIZAÇÃO
-      // ============================================
-
-      // Quando o DOM estiver pronto
-      document.addEventListener("DOMContentLoaded", function () {
-        console.log("📄 DOM carregado e pronto");
-
-        // Aguarda um pequeno delay para garantir que todos os scripts foram carregados
-        setTimeout(function () {
-          iniciarSistema();
-        }, 300);
-      });
-
-      // Se o DOM já estiver carregado, inicia imediatamente
-      if (
-        document.readyState === "complete" ||
-        document.readyState === "interactive"
-      ) {
-        console.log("📄 DOM já estava carregado");
-        setTimeout(function () {
-          iniciarSistema();
-        }, 100);
-      }
-
-      // ============================================
-      // SERVICE WORKER
-      // ============================================
-
-      // Registro do Service Worker para PWA
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", function () {
-          navigator.serviceWorker
-            .register("/sw.js", { scope: "/" })
-            .then(function (registration) {
-              console.log(
-                "✅ Service Worker registrado com sucesso:",
-                registration.scope,
-              );
-
-              // Verifica atualizações
-              registration.addEventListener("updatefound", function () {
-                const newWorker = registration.installing;
-                console.log("🔄 Nova versão do Service Worker encontrada");
-
-                newWorker.addEventListener("statechange", function () {
-                  if (newWorker.state === "installed") {
-                    console.log("✅ Service Worker atualizado");
-                    // Notifica o usuário se estiver logado
-                    if (
-                      typeof authManager !== "undefined" &&
-                      authManager.isLoggedIn()
-                    ) {
-                      authManager.mostrarToast(
-                        "Nova versão disponível. Atualize a página.",
-                        "info",
-                      );
-                    }
-                  }
-                });
-              });
-            })
-            .catch(function (error) {
-              console.warn("⚠️ Falha ao registrar Service Worker:", error);
-            });
-        });
-      } else {
-        console.warn("⚠️ Service Worker não suportado neste navegador");
-      }
-
-      // ============================================
-      // MONITORAMENTO DE CONEXÃO
-      // ============================================
-
-      // Evento quando fica online
-      window.addEventListener("online", function () {
-        console.log("🟢 Conexão restaurada");
-
-        // Atualiza status visual
-        const statusElements = document.querySelectorAll(".status-conexao");
-        statusElements.forEach(function (el) {
-          el.className = "status-conexao online";
-          const ponto = el.querySelector(".ponto");
-          const texto = el.querySelector(".texto");
-          if (ponto) ponto.style.background = "var(--verde-bandeira)";
-          if (texto) texto.textContent = "Online";
-        });
-
-        // Tenta sincronizar automaticamente
-        if (
-          typeof syncManager !== "undefined" &&
-          syncManager.sincronizarAutomaticamente
-        ) {
-          console.log("🔄 Iniciando sincronização automática...");
-          syncManager.sincronizarAutomaticamente();
-        }
-
-        // Notifica o usuário
-        if (typeof authManager !== "undefined" && authManager.isLoggedIn()) {
-          authManager.mostrarToast(
-            "Conexão restaurada. Sincronizando dados...",
-            "success",
-          );
-        }
-      });
-
-      // Evento quando fica offline
-      window.addEventListener("offline", function () {
-        console.log("🔴 Conexão perdida - Modo offline");
-
-        // Atualiza status visual
-        const statusElements = document.querySelectorAll(".status-conexao");
-        statusElements.forEach(function (el) {
-          el.className = "status-conexao offline";
-          const ponto = el.querySelector(".ponto");
-          const texto = el.querySelector(".texto");
-          if (ponto) ponto.style.background = "#E65100";
-          if (texto) texto.textContent = "Offline";
-        });
-
-        // Notifica o usuário
-        if (typeof authManager !== "undefined" && authManager.isLoggedIn()) {
-          authManager.mostrarToast(
-            "Modo offline ativado. Os dados serão salvos localmente.",
-            "warning",
-          );
-        }
-      });
-
-      // ============================================
-      // PREVENÇÃO DE ZOOM EM DISPOSITIVOS MÓVEIS
-      // ============================================
-
-      // Previne zoom com dois toques
-      document.addEventListener(
-        "dblclick",
-        function (e) {
-          e.preventDefault();
-        },
-        { passive: false },
-      );
-
-      // Previne gestos de pinça
-      document.addEventListener(
-        "gesturestart",
-        function (e) {
-          e.preventDefault();
-        },
-        { passive: false },
-      );
-
-      // ============================================
-      // LOG INICIAL DO SISTEMA
-      // ============================================
-
-      console.log("========================================");
-      console.log("🛡️ GUARDA MUNICIPAL DE PITANGUEIRAS - PR");
-      console.log("📱 Sistema de Registro de Ocorrências");
-      console.log("📌 Versão: 1.0.0");
-      console.log("========================================");
-      console.log(
-        "📅 " +
-          new Date().toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          }),
-      );
-      console.log("🌐 Navegador:", navigator.userAgent);
-      console.log("📱 Dispositivo:", screen.width + "x" + screen.height);
-      console.log("========================================");
-      console.log("⏳ Aguardando inicialização...");
-      console.log("========================================");
-    </script>
   </body>
 </html>

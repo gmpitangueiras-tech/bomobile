@@ -46,6 +46,11 @@ class App {
       dataInicio: "",
       dataFim: "",
     };
+    // Geolocalização
+    this.localizacao = {
+      latitude: null,
+      longitude: null,
+    };
   }
 
   // ============================================
@@ -67,6 +72,40 @@ class App {
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
     return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
+  // ============================================
+  // GEOLOCALIZAÇÃO
+  // ============================================
+
+  obterLocalizacao() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        this.showToast("Geolocalização não suportada pelo navegador", "warning");
+        resolve(null);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          this.localizacao.latitude = latitude;
+          this.localizacao.longitude = longitude;
+          this.showToast("Localização obtida com sucesso!", "success");
+          resolve({ latitude, longitude });
+        },
+        (error) => {
+          console.error("Erro ao obter localização:", error);
+          let mensagem = "Erro ao obter localização";
+          if (error.code === 1) mensagem = "Permissão de localização negada";
+          else if (error.code === 2) mensagem = "Localização indisponível";
+          else if (error.code === 3) mensagem = "Timeout ao obter localização";
+          this.showToast(mensagem, "warning");
+          resolve(null);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+      );
+    });
   }
 
   // ============================================
@@ -158,6 +197,8 @@ class App {
           envolvidos: [],
           observacoes: data.observacoes || "",
           anexos: [],
+          latitude: data.latitude || null,
+          longitude: data.longitude || null,
         };
 
         const envResult = await ocorrenciaManager.listarEnvolvidos(data.id);
@@ -167,7 +208,7 @@ class App {
 
         const anexosResult = await ocorrenciaManager.listarAnexos(data.id);
         if (anexosResult.success) {
-          this.dadosRascunho.anexos = anexosResult.data.map((a) => ({
+          this.dadosRascunho.anexos = anexosResult.data.map(a => ({
             nome: a.nome_arquivo,
             tipo: a.tipo_arquivo,
             tamanho: a.tamanho,
@@ -191,28 +232,18 @@ class App {
         return;
       }
 
-      const camposPreenchidos = Object.keys(dados).filter((key) => {
+      const camposPreenchidos = Object.keys(dados).filter(key => {
         const valor = dados[key];
-        if (key === "envolvidos" || key === "anexos") {
+        if (key === 'envolvidos' || key === 'anexos') {
           return valor && valor.length > 0;
         }
         return valor && (typeof valor !== "string" || valor.trim() !== "");
       });
 
-      const camposIgnorados = [
-        "data_hora_inicio",
-        "data_hora_encerramento",
-        "codigo_operacional",
-      ];
-      const temDadosRelevantes = camposPreenchidos.some(
-        (key) => !camposIgnorados.includes(key),
-      );
+      const camposIgnorados = ['data_hora_inicio', 'data_hora_encerramento', 'codigo_operacional'];
+      const temDadosRelevantes = camposPreenchidos.some(key => !camposIgnorados.includes(key));
 
-      if (
-        !temDadosRelevantes &&
-        dados.envolvidos.length === 0 &&
-        dados.anexos.length === 0
-      ) {
+      if (!temDadosRelevantes && dados.envolvidos.length === 0 && dados.anexos.length === 0) {
         this.showToast("Não há dados para salvar como rascunho", "warning");
         return;
       }
@@ -233,10 +264,7 @@ class App {
       delete dadosParaSalvar.envolvidos;
       delete dadosParaSalvar.anexos;
 
-      if (
-        !dadosParaSalvar.data_hora_inicio ||
-        dadosParaSalvar.data_hora_inicio === ""
-      ) {
+      if (!dadosParaSalvar.data_hora_inicio || dadosParaSalvar.data_hora_inicio === "") {
         dadosParaSalvar.data_hora_inicio = null;
       } else {
         try {
@@ -274,6 +302,8 @@ class App {
         atualizado_em: new Date().toISOString(),
         numero_versao: 1,
         esta_ativa: true,
+        latitude: dados.latitude || null,
+        longitude: dados.longitude || null,
       };
 
       let result;
@@ -298,30 +328,21 @@ class App {
       }
 
       if (dados.envolvidos && dados.envolvidos.length > 0) {
-        await client
-          .from("envolvidos")
-          .delete()
-          .eq("ocorrencia_id", this.rascunhoId);
+        await client.from("envolvidos").delete().eq("ocorrencia_id", this.rascunhoId);
         const envResult = await ocorrenciaManager.salvarEnvolvidos(
           this.rascunhoId,
-          dados.envolvidos,
+          dados.envolvidos
         );
         if (!envResult.success) {
-          console.warn(
-            "Erro ao salvar envolvidos do rascunho:",
-            envResult.error,
-          );
+          console.warn("Erro ao salvar envolvidos do rascunho:", envResult.error);
         }
       }
 
       if (dados.anexos && dados.anexos.length > 0) {
-        await client
-          .from("anexos")
-          .delete()
-          .eq("ocorrencia_id", this.rascunhoId);
+        await client.from("anexos").delete().eq("ocorrencia_id", this.rascunhoId);
         const anexoResult = await ocorrenciaManager.salvarAnexos(
           this.rascunhoId,
-          dados.anexos,
+          dados.anexos
         );
         if (!anexoResult.success) {
           console.warn("Erro ao salvar anexos do rascunho:", anexoResult.error);
@@ -343,14 +364,8 @@ class App {
         const client = supabaseClient.getClient();
         if (client) {
           await client.from("ocorrencias").delete().eq("id", this.rascunhoId);
-          await client
-            .from("envolvidos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
-          await client
-            .from("anexos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
+          await client.from("envolvidos").delete().eq("ocorrencia_id", this.rascunhoId);
+          await client.from("anexos").delete().eq("ocorrencia_id", this.rascunhoId);
         }
         this.rascunhoId = null;
         this.dadosRascunho = null;
@@ -424,9 +439,7 @@ class App {
 
     const userMatriculaEl = document.getElementById("userMatricula");
     if (userMatriculaEl) {
-      userMatriculaEl.textContent = user.matricula
-        ? `Mat. ${user.matricula}`
-        : "";
+      userMatriculaEl.textContent = user.matricula ? `Mat. ${user.matricula}` : "";
     }
 
     const userAvatarEl = document.getElementById("userAvatar");
@@ -442,9 +455,7 @@ class App {
 
     const menuMatriculaEl = document.getElementById("menuMatricula");
     if (menuMatriculaEl) {
-      menuMatriculaEl.textContent = user.matricula
-        ? `Mat. ${user.matricula}`
-        : "";
+      menuMatriculaEl.textContent = user.matricula ? `Mat. ${user.matricula}` : "";
     }
 
     const menuAvatarEl = document.getElementById("menuAvatar");
@@ -460,16 +471,13 @@ class App {
         guarda: "Guarda",
         admin: "Administrador",
       };
-      menuPerfilEl.textContent =
-        perfilMap[user.perfil] || user.perfil || "Guarda";
+      menuPerfilEl.textContent = perfilMap[user.perfil] || user.perfil || "Guarda";
     }
 
     const menuRelatorios = document.getElementById("menuRelatorios");
     const menuUsuarios = document.getElementById("menuUsuarios");
     if (menuRelatorios) {
-      menuRelatorios.style.display = authManager.isSupervisor()
-        ? "flex"
-        : "none";
+      menuRelatorios.style.display = authManager.isSupervisor() ? "flex" : "none";
     }
     if (menuUsuarios) {
       menuUsuarios.style.display = authManager.isSupervisor() ? "flex" : "none";
@@ -646,21 +654,10 @@ class App {
     const stats = await ocorrenciaManager.getStats();
     const statsData = stats.success
       ? stats.data
-      : {
-          total: 0,
-          hoje: 0,
-          draft: 0,
-          pending: 0,
-          synced: 0,
-          cancelled: 0,
-          rectified: 0,
-          pending_rectification: 0,
-        };
+      : { total: 0, hoje: 0, draft: 0, pending: 0, synced: 0, cancelled: 0, rectified: 0, pending_rectification: 0 };
 
     const filtroAtivo = this.filtroStatusAtual;
-    const tituloFiltro = filtroAtivo
-      ? this.getStatusLabel(filtroAtivo)
-      : "Todas";
+    const tituloFiltro = filtroAtivo ? this.getStatusLabel(filtroAtivo) : "Todas";
 
     container.innerHTML = `
             <div class="container">
@@ -709,15 +706,11 @@ class App {
                         <i class="fas fa-list-ul" style="margin-right:8px;"></i>
                         ${filtroAtivo ? `Ocorrências - ${tituloFiltro}` : "Últimas Ocorrências"}
                     </h3>
-                    ${
-                      filtroAtivo
-                        ? `
+                    ${filtroAtivo ? `
                         <button class="btn-secondary" onclick="app.filtrarPorStatus(null)" style="padding:4px 12px;font-size:12px;min-height:auto;">
                             <i class="fas fa-times" style="margin-right:4px;"></i> Limpar Filtro
                         </button>
-                    `
-                        : ""
-                    }
+                    ` : ""}
                 </div>
 
                 <div id="listaOcorrenciasContainer">
@@ -731,7 +724,7 @@ class App {
 
     await this.renderOcorrenciasLista(
       document.getElementById("listaOcorrenciasContainer"),
-      this.filtroStatusAtual,
+      this.filtroStatusAtual
     );
   }
 
@@ -745,7 +738,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS
+  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS (COM BADGE DE VERSÃO)
   // ============================================
 
   async renderOcorrenciasLista(container, statusFilter = null) {
@@ -757,7 +750,7 @@ class App {
     const result = await ocorrenciaManager.listar(filtros);
 
     if (!result.success || result.data.length === 0) {
-      const mensagem = statusFilter
+      const mensagem = statusFilter 
         ? `Nenhuma ocorrência com status "${this.getStatusLabel(statusFilter)}" encontrada`
         : "Nenhuma ocorrência encontrada";
       container.innerHTML = `
@@ -766,17 +759,13 @@ class App {
                         <i class="fas fa-inbox"></i>
                     </div>
                     <p style="font-weight:500;">${mensagem}</p>
-                    ${!statusFilter ? '<p style="font-size:13px;">Clique em "+" para criar sua primeira ocorrência</p>' : ""}
-                    ${
-                      statusFilter
-                        ? `
+                    ${!statusFilter ? '<p style="font-size:13px;">Clique em "+" para criar sua primeira ocorrência</p>' : ''}
+                    ${statusFilter ? `
                         <button onclick="app.filtrarPorStatus(null)" class="btn-secondary" style="margin-top:12px;">
                             <i class="fas fa-arrow-left" style="margin-right:6px;"></i>
                             Ver todas
                         </button>
-                    `
-                        : ""
-                    }
+                    ` : ''}
                 </div>
             `;
       return;
@@ -795,16 +784,15 @@ class App {
         minute: "2-digit",
       });
 
-      const versaoInfo =
-        occ.status === "rectified" || occ.status === "pending_rectification"
-          ? ` (v${occ.numero_versao || 1})`
-          : "";
+      const versaoBadge = (occ.status === 'rectified' && occ.numero_versao > 1) 
+        ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>` 
+        : '';
 
       html += `
                 <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
                     <div class="header">
                         <div>
-                            <div class="numero">#${numero}${versaoInfo}</div>
+                            <div class="numero">#${numero}${versaoBadge}</div>
                             <div class="data">${data} ${hora}</div>
                         </div>
                         <span class="badge badge-${statusClass}">${statusLabel}</span>
@@ -833,7 +821,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - OCORRÊNCIAS (COM FILTROS)
+  // RENDERIZAÇÃO - OCORRÊNCIAS (COM BADGE DE VERSÃO)
   // ============================================
 
   async renderOcorrencias(container) {
@@ -880,15 +868,11 @@ class App {
             <div class="filtro-group">
               <label><i class="fas fa-tag" style="margin-right:4px;"></i> Status</label>
               <select id="filtroStatus">
-                ${opcoesStatus
-                  .map(
-                    (op) => `
-                  <option value="${op.value}" ${this.filtrosOcorrencias.status === op.value ? "selected" : ""}>
+                ${opcoesStatus.map(op => `
+                  <option value="${op.value}" ${this.filtrosOcorrencias.status === op.value ? 'selected' : ''}>
                     ${op.label}
                   </option>
-                `,
-                  )
-                  .join("")}
+                `).join('')}
               </select>
             </div>
             <div class="filtro-group">
@@ -911,19 +895,13 @@ class App {
           <div class="filtros-info">
             <span>
               <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-              ${result.success ? `${result.data.length} ocorrência(s) encontrada(s)` : "Carregando..."}
+              ${result.success ? `${result.data.length} ocorrência(s) encontrada(s)` : 'Carregando...'}
             </span>
-            ${
-              this.filtrosOcorrencias.status ||
-              this.filtrosOcorrencias.dataInicio ||
-              this.filtrosOcorrencias.dataFim
-                ? `
+            ${(this.filtrosOcorrencias.status || this.filtrosOcorrencias.dataInicio || this.filtrosOcorrencias.dataFim) ? `
               <span style="color:var(--azul-bandeira);">
                 <i class="fas fa-filter" style="margin-right:4px;"></i> Filtro ativo
               </span>
-            `
-                : ""
-            }
+            ` : ''}
           </div>
         </div>
     `;
@@ -942,24 +920,18 @@ class App {
             <i class="fas fa-inbox"></i>
           </div>
           <p style="font-weight:500;">Nenhuma ocorrência encontrada</p>
-          <p style="font-size:13px;">${this.filtrosOcorrencias.status || this.filtrosOcorrencias.dataInicio || this.filtrosOcorrencias.dataFim ? "Tente ajustar os filtros aplicados" : 'Clique em "+" para criar sua primeira ocorrência'}</p>
-          ${
-            this.filtrosOcorrencias.status ||
-            this.filtrosOcorrencias.dataInicio ||
-            this.filtrosOcorrencias.dataFim
-              ? `
+          <p style="font-size:13px;">${(this.filtrosOcorrencias.status || this.filtrosOcorrencias.dataInicio || this.filtrosOcorrencias.dataFim) ? 'Tente ajustar os filtros aplicados' : 'Clique em "+" para criar sua primeira ocorrência'}</p>
+          ${(this.filtrosOcorrencias.status || this.filtrosOcorrencias.dataInicio || this.filtrosOcorrencias.dataFim) ? `
             <button onclick="app.limparFiltrosOcorrencias()" class="btn-secondary" style="margin-top:12px;">
               <i class="fas fa-undo" style="margin-right:6px;"></i>
               Limpar Filtros
             </button>
-          `
-              : `
+          ` : `
             <button onclick="app.navigateTo('nova-ocorrencia')" class="btn-primary" style="margin-top:16px;max-width:200px;">
               <i class="fas fa-plus" style="margin-right:6px;"></i>
               Nova Ocorrência
             </button>
-          `
-          }
+          `}
         </div>
       `;
       html += `</div>`;
@@ -980,16 +952,15 @@ class App {
         minute: "2-digit",
       });
 
-      const versaoInfo =
-        occ.status === "rectified" || occ.status === "pending_rectification"
-          ? ` (v${occ.numero_versao || 1})`
-          : "";
+      const versaoBadge = (occ.status === 'rectified' && occ.numero_versao > 1) 
+        ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>` 
+        : '';
 
       html += `
         <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
           <div class="header">
             <div>
-              <div class="numero">#${numero}${versaoInfo}</div>
+              <div class="numero">#${numero}${versaoBadge}</div>
               <div class="data">${data} ${hora}</div>
             </div>
             <span class="badge badge-${statusClass}">${statusLabel}</span>
@@ -1016,10 +987,7 @@ class App {
     const dataFim = document.getElementById("filtroDataFim")?.value || "";
 
     if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
+      this.showToast("Data final deve ser maior ou igual à data inicial", "warning");
       return;
     }
 
@@ -1043,7 +1011,7 @@ class App {
   }
 
   // ============================================
-  // DETALHES DA OCORRÊNCIA (COM RETIFICAÇÃO E HISTÓRICO)
+  // DETALHES DA OCORRÊNCIA (COM BADGE DE VERSÃO)
   // ============================================
 
   verDetalhes(ocorrenciaId) {
@@ -1089,12 +1057,8 @@ class App {
     const statusClass = this.getStatusClass(occ.status);
     const statusLabel = this.getStatusLabel(occ.status);
     const dataCriacao = new Date(occ.criado_em).toLocaleString("pt-BR");
-    const dataInicio = occ.data_hora_inicio
-      ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR")
-      : "Não informado";
-    const dataEncerramento = occ.data_hora_encerramento
-      ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR")
-      : "Não informado";
+    const dataInicio = occ.data_hora_inicio ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR") : "Não informado";
+    const dataEncerramento = occ.data_hora_encerramento ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR") : "Não informado";
 
     const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
     const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
@@ -1110,12 +1074,9 @@ class App {
     const temRetificacoes = await ocorrenciaManager.temRetificacoes(id);
     const isRetificacao = occ.ocorrencia_original_id !== null;
     const isAtiva = occ.esta_ativa !== false;
-    const versaoInfo = isRetificacao
-      ? `Retificação v${occ.numero_versao || 1}`
-      : temRetificacoes
-        ? "Versão Original (substituída)"
-        : "";
-    const isPending = occ.status === "pending_rectification";
+    const versaoInfo = isRetificacao ? `Retificação v${occ.numero_versao || 1}` : 
+                       temRetificacoes ? 'Versão Original (substituída)' : '';
+    const isPending = occ.status === 'pending_rectification';
 
     container.innerHTML = `
             <div class="container" style="padding-bottom:120px;">
@@ -1133,50 +1094,40 @@ class App {
                     Criado em ${dataCriacao}
                 </p>
 
-                ${
-                  versaoInfo
-                    ? `
+                ${versaoInfo ? `
                 <div style="margin-bottom:12px;">
-                    <span class="badge ${isAtiva ? "badge-synced" : "badge-draft"}" style="font-size:12px;padding:4px 16px;">
-                        ${isAtiva ? "✅ Versão Ativa" : "📜 Versão Anterior"} - ${versaoInfo}
+                    <span class="badge ${isAtiva ? 'badge-synced' : 'badge-draft'}" style="font-size:12px;padding:4px 16px;">
+                        ${isAtiva ? '✅ Versão Ativa' : '📜 Versão Anterior'} - ${versaoInfo}
                     </span>
-                    ${
-                      isRetificacao
-                        ? `
+                    ${isRetificacao ? `
                         <span style="font-size:12px;color:var(--cinza-medio);margin-left:8px;">
                             <i class="fas fa-link" style="margin-right:4px;"></i>
-                            Substitui #${occ.numero_ocorrencia || "original"}
+                            Substitui #${occ.numero_ocorrencia || 'original'}
                         </span>
-                    `
-                        : ""
-                    }
-                    ${
-                      isPending
-                        ? `
+                    ` : ''}
+                    ${isPending ? `
                         <span style="font-size:12px;color:var(--aviso);margin-left:8px;">
                             <i class="fas fa-clock" style="margin-right:4px;"></i>
                             Aguardando aprovação do supervisor
                         </span>
-                    `
-                        : ""
-                    }
+                    ` : ''}
+                    ${occ.status === 'rectified' && occ.numero_versao > 1 ? `
+                        <span style="font-size:12px;color:var(--azul-bandeira);margin-left:8px;">
+                            <i class="fas fa-code-branch" style="margin-right:4px;"></i>
+                            v${occ.numero_versao}
+                        </span>
+                    ` : ''}
                 </div>
-                `
-                    : ""
-                }
+                ` : ''}
 
-                ${
-                  !authManager.isSupervisor() && occ.status !== "draft"
-                    ? `
+                ${!authManager.isSupervisor() && occ.status !== 'draft' ? `
                 <div style="padding:12px 16px;background:var(--azul-muito-claro);border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:12px;">
                     <p style="font-size:13px;color:var(--cinza-escuro);margin:0;">
                         <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:6px;"></i>
                         Você está visualizando uma ocorrência finalizada. Apenas supervisores podem cancelar ou aprovar retificações.
                     </p>
                 </div>
-                `
-                    : ""
-                }
+                ` : ''}
 
                 <div class="card-revisao">
                     <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
@@ -1184,33 +1135,21 @@ class App {
                         <span class="rotulo">Local:</span>
                         <span class="valor">${occ.local_ocorrencia || "Não informado"}</span>
                     </div>
-                    ${
-                      occ.rodovia
-                        ? `
+                    ${occ.rodovia ? `
                     <div class="campo">
                         <span class="rotulo">Rodovia:</span>
                         <span class="valor">${occ.rodovia}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.bairro_ocorrencia
-                        ? `
+                    </div>` : ""}
+                    ${occ.bairro_ocorrencia ? `
                     <div class="campo">
                         <span class="rotulo">Bairro:</span>
                         <span class="valor">${occ.bairro_ocorrencia}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.referencia
-                        ? `
+                    </div>` : ""}
+                    ${occ.referencia ? `
                     <div class="campo">
                         <span class="rotulo">Referência:</span>
                         <span class="valor">${occ.referencia}</span>
-                    </div>`
-                        : ""
-                    }
+                    </div>` : ""}
                     <div class="campo">
                         <span class="rotulo">Data/Hora Início:</span>
                         <span class="valor">${dataInicio}</span>
@@ -1219,24 +1158,26 @@ class App {
                         <span class="rotulo">Data/Hora Encerramento:</span>
                         <span class="valor">${dataEncerramento}</span>
                     </div>
-                    ${
-                      occ.codigo_operacional
-                        ? `
+                    ${occ.codigo_operacional ? `
                     <div class="campo">
                         <span class="rotulo">Código Operacional:</span>
                         <span class="valor">${occ.codigo_operacional}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.numero_versao
-                        ? `
+                    </div>` : ""}
+                    ${occ.numero_versao ? `
                     <div class="campo">
                         <span class="rotulo">Versão:</span>
                         <span class="valor">${occ.numero_versao}</span>
-                    </div>`
-                        : ""
-                    }
+                    </div>` : ""}
+                    ${occ.latitude ? `
+                    <div class="campo">
+                        <span class="rotulo">Latitude:</span>
+                        <span class="valor">${occ.latitude}</span>
+                    </div>` : ""}
+                    ${occ.longitude ? `
+                    <div class="campo">
+                        <span class="rotulo">Longitude:</span>
+                        <span class="valor">${occ.longitude}</span>
+                    </div>` : ""}
                 </div>
 
                 <div class="card-revisao">
@@ -1245,143 +1186,91 @@ class App {
                         <span class="rotulo">Forma:</span>
                         <span class="valor">${occ.forma_solicitacao || "Não informado"}</span>
                     </div>
-                    ${
-                      occ.nome_solicitante
-                        ? `
+                    ${occ.nome_solicitante ? `
                     <div class="campo">
                         <span class="rotulo">Solicitante:</span>
                         <span class="valor">${occ.nome_solicitante}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.telefone_solicitante
-                        ? `
+                    </div>` : ""}
+                    ${occ.telefone_solicitante ? `
                     <div class="campo">
                         <span class="rotulo">Telefone:</span>
                         <span class="valor">${occ.telefone_solicitante}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.endereco_solicitante
-                        ? `
+                    </div>` : ""}
+                    ${occ.endereco_solicitante ? `
                     <div class="campo">
                         <span class="rotulo">Endereço:</span>
                         <span class="valor">${occ.endereco_solicitante}</span>
-                    </div>`
-                        : ""
-                    }
-                    ${
-                      occ.bairro_solicitante
-                        ? `
+                    </div>` : ""}
+                    ${occ.bairro_solicitante ? `
                     <div class="campo">
                         <span class="rotulo">Bairro:</span>
                         <span class="valor">${occ.bairro_solicitante}</span>
-                    </div>`
-                        : ""
-                    }
+                    </div>` : ""}
                 </div>
 
                 <div class="card-revisao">
                     <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-                    ${
-                      envolvidos.length === 0
-                        ? `
+                    ${envolvidos.length === 0 ? `
                     <p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>
-                    `
-                        : `
-                    ${envolvidos
-                      .map(
-                        (env) => `
+                    ` : `
+                    ${envolvidos.map(env => `
                         <div class="envolvido-item">
                             <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
                             <strong>${env.nome_completo}</strong>
                             ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - CPF: ${env.cpf}</span>` : ""}
                             ${env.telefone ? `<span style="color:var(--cinza-medio);font-size:12px;"> - Tel: ${env.telefone}</span>` : ""}
                         </div>
-                    `,
-                      )
-                      .join("")}
-                    `
-                    }
+                    `).join("")}
+                    `}
                 </div>
 
                 <div class="card-revisao">
                     <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
                     <p style="font-size:14px;white-space:pre-wrap;margin:0;">${occ.observacoes || "Nenhuma observação registrada"}</p>
-                    ${
-                      occ.justificativa_retificacao
-                        ? `
+                    ${occ.justificativa_retificacao ? `
                     <div style="margin-top:8px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
                         <strong><i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i> Justificativa da Retificação:</strong>
                         ${occ.justificativa_retificacao}
                     </div>
-                    `
-                        : ""
-                    }
-                    ${
-                      occ.solicitacao_retificacao_justificativa &&
-                      occ.status === "pending_rectification"
-                        ? `
+                    ` : ''}
+                    ${occ.solicitacao_retificacao_justificativa && occ.status === 'pending_rectification' ? `
                     <div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
                         <strong><i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i> Solicitação de Retificação Pendente:</strong>
                         ${occ.solicitacao_retificacao_justificativa}
                     </div>
-                    `
-                        : ""
-                    }
+                    ` : ''}
                 </div>
 
                 <div class="card-revisao">
                     <h4><i class="fas fa-paperclip"></i> Anexos (${anexos.length})</h4>
-                    ${
-                      anexos.length === 0
-                        ? `
+                    ${anexos.length === 0 ? `
                     <p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>
-                    `
-                        : `
-                    ${anexos
-                      .map(
-                        (anexo) => `
+                    ` : `
+                    ${anexos.map(anexo => `
                         <div style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);display:flex;align-items:center;gap:10px;">
                             <i class="fas ${this.getIconAnexo(anexo.tipo_arquivo)}" style="color:var(--azul-bandeira);font-size:18px;"></i>
                             <span style="flex:1;">${anexo.nome_arquivo}</span>
                             <span style="color:var(--cinza-medio);font-size:12px;">${this.formatarTamanho(anexo.tamanho || 0)}</span>
                             ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);"><i class="fas fa-external-link-alt"></i></a>` : ""}
                         </div>
-                    `,
-                      )
-                      .join("")}
-                    `
-                    }
+                    `).join("")}
+                    `}
                 </div>
 
                 <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
-                    ${
-                      podeFinalizar
-                        ? `
+                    ${podeFinalizar ? `
                     <button class="btn-success" onclick="app.finalizarOcorrenciaExistente('${occ.id}')">
                         <i class="fas fa-check-circle" style="margin-right:6px;"></i>
                         Finalizar Ocorrência
-                    </button>`
-                        : ""
-                    }
+                    </button>` : ""}
                     
-                    ${
-                      podeRetificar && occ.status === "synced"
-                        ? `
+                    ${podeRetificar && occ.status === 'synced' ? `
                     <button class="btn-primary" onclick="app.solicitarRetificacao('${occ.id}')" style="background:var(--azul-bandeira);">
                         <i class="fas fa-sync-alt" style="margin-right:6px;"></i>
                         Solicitar Retificação
-                    </button>`
-                        : ""
-                    }
+                    </button>` : ""}
                     
-                    ${
-                      authManager.isSupervisor() &&
-                      occ.status === "pending_rectification"
-                        ? `
+                    ${authManager.isSupervisor() && occ.status === 'pending_rectification' ? `
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
                         <button class="btn-success" onclick="app.aprovarRetificacao('${occ.id}')" style="flex:1;min-width:120px;">
                             <i class="fas fa-check" style="margin-right:6px;"></i>
@@ -1391,39 +1280,25 @@ class App {
                             <i class="fas fa-times" style="margin-right:6px;"></i>
                             Rejeitar Retificação
                         </button>
-                    </div>`
-                        : ""
-                    }
+                    </div>` : ""}
                     
-                    ${
-                      podeEditar && occ.status === "draft"
-                        ? `
+                    ${podeEditar && occ.status === "draft" ? `
                     <button class="btn-primary" onclick="app.editarOcorrencia('${occ.id}')">
                         <i class="fas fa-edit" style="margin-right:6px;"></i>
                         Editar Ocorrência
-                    </button>`
-                        : ""
-                    }
+                    </button>` : ""}
                     
-                    ${
-                      podeCancelar
-                        ? `
+                    ${podeCancelar ? `
                     <button class="btn-danger" onclick="app.cancelarOcorrencia('${occ.id}')">
                         <i class="fas fa-times-circle" style="margin-right:6px;"></i>
                         Cancelar Ocorrência
-                    </button>`
-                        : ""
-                    }
+                    </button>` : ""}
                     
-                    ${
-                      podeVerHistorico && (temRetificacoes || isRetificacao)
-                        ? `
+                    ${podeVerHistorico && (temRetificacoes || isRetificacao) ? `
                     <button class="btn-secondary" onclick="app.verHistorico('${occ.id}')" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
                         <i class="fas fa-history" style="margin-right:6px;"></i>
                         Ver Histórico (${temRetificacoes ? temRetificacoes : 1} versões)
-                    </button>`
-                        : ""
-                    }
+                    </button>` : ""}
                     
                     <button class="btn-secondary" onclick="app.navigateTo('dashboard')" style="width:100%;">
                         <i class="fas fa-arrow-left" style="margin-right:6px;"></i>
@@ -1435,7 +1310,7 @@ class App {
   }
 
   // ============================================
-  // RETIFICAÇÃO - COM TODOS OS CAMPOS RETIFICÁVEIS
+  // RETIFICAÇÃO
   // ============================================
 
   async solicitarRetificacao(id) {
@@ -1450,12 +1325,8 @@ class App {
     const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
     const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
 
-    const dataInicio = occ.data_hora_inicio
-      ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR")
-      : "Não informado";
-    const dataEncerramento = occ.data_hora_encerramento
-      ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR")
-      : "Não informado";
+    const dataInicio = occ.data_hora_inicio ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR") : "Não informado";
+    const dataEncerramento = occ.data_hora_encerramento ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR") : "Não informado";
 
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
@@ -1491,12 +1362,12 @@ class App {
               Dados Imutáveis (apenas para referência)
             </p>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">
-              <div><strong>Número:</strong> ${occ.numero_ocorrencia || occ.numero_temporario || "Rascunho"}</div>
-              <div><strong>Forma de Solicitação:</strong> ${occ.forma_solicitacao || "Não informado"}</div>
+              <div><strong>Número:</strong> ${occ.numero_ocorrencia || occ.numero_temporario || 'Rascunho'}</div>
+              <div><strong>Forma de Solicitação:</strong> ${occ.forma_solicitacao || 'Não informado'}</div>
               <div><strong>Data/Hora Início:</strong> ${dataInicio}</div>
               <div><strong>Data/Hora Encerramento:</strong> ${dataEncerramento}</div>
-              <div><strong>Criado por:</strong> ${occ.criado_por || "Não informado"}</div>
-              <div><strong>Criado em:</strong> ${new Date(occ.criado_em).toLocaleString("pt-BR")}</div>
+              <div><strong>Criado por:</strong> ${occ.criado_por || 'Não informado'}</div>
+              <div><strong>Criado em:</strong> ${new Date(occ.criado_em).toLocaleString('pt-BR')}</div>
             </div>
           </div>
 
@@ -1531,31 +1402,31 @@ class App {
                 </p>
                 <div class="form-group">
                   <label for="ret_nome_solicitante">Nome do Solicitante</label>
-                  <input type="text" id="ret_nome_solicitante" class="form-control" value="${occ.nome_solicitante || ""}" placeholder="Nome completo">
+                  <input type="text" id="ret_nome_solicitante" class="form-control" value="${occ.nome_solicitante || ''}" placeholder="Nome completo">
                 </div>
                 <div class="form-group">
                   <label for="ret_telefone_solicitante">Telefone do Solicitante</label>
-                  <input type="text" id="ret_telefone_solicitante" class="form-control" value="${occ.telefone_solicitante || ""}" placeholder="(44) 99999-9999">
+                  <input type="text" id="ret_telefone_solicitante" class="form-control" value="${occ.telefone_solicitante || ''}" placeholder="(44) 99999-9999">
                 </div>
                 <div class="form-group">
                   <label for="ret_endereco_solicitante">Endereço do Solicitante</label>
-                  <input type="text" id="ret_endereco_solicitante" class="form-control" value="${occ.endereco_solicitante || ""}" placeholder="Rua, número, bairro">
+                  <input type="text" id="ret_endereco_solicitante" class="form-control" value="${occ.endereco_solicitante || ''}" placeholder="Rua, número, bairro">
                 </div>
                 <div class="form-group">
                   <label for="ret_bairro_solicitante">Bairro do Solicitante</label>
-                  <input type="text" id="ret_bairro_solicitante" class="form-control" value="${occ.bairro_solicitante || ""}" placeholder="Bairro">
+                  <input type="text" id="ret_bairro_solicitante" class="form-control" value="${occ.bairro_solicitante || ''}" placeholder="Bairro">
                 </div>
                 <div class="form-group">
                   <label for="ret_complemento">Complemento</label>
-                  <input type="text" id="ret_complemento" class="form-control" value="${occ.complemento || ""}" placeholder="Apto, bloco, ponto de referência">
+                  <input type="text" id="ret_complemento" class="form-control" value="${occ.complemento || ''}" placeholder="Apto, bloco, ponto de referência">
                 </div>
                 <div class="form-group">
                   <label for="ret_identificacao_adicional">Identificação Adicional</label>
-                  <input type="text" id="ret_identificacao_adicional" class="form-control" value="${occ.identificacao_adicional || ""}" placeholder="Informações adicionais">
+                  <input type="text" id="ret_identificacao_adicional" class="form-control" value="${occ.identificacao_adicional || ''}" placeholder="Informações adicionais">
                 </div>
                 <div class="form-group">
                   <label for="ret_codigo_municipal">Código Municipal</label>
-                  <input type="text" id="ret_codigo_municipal" class="form-control" value="${occ.codigo_municipal || ""}" placeholder="Código do imóvel">
+                  <input type="text" id="ret_codigo_municipal" class="form-control" value="${occ.codigo_municipal || ''}" placeholder="Código do imóvel">
                 </div>
               </div>
 
@@ -1567,19 +1438,19 @@ class App {
                 </p>
                 <div class="form-group">
                   <label for="ret_local_ocorrencia">Local da Ocorrência</label>
-                  <input type="text" id="ret_local_ocorrencia" class="form-control" value="${occ.local_ocorrencia || ""}" placeholder="Endereço completo">
+                  <input type="text" id="ret_local_ocorrencia" class="form-control" value="${occ.local_ocorrencia || ''}" placeholder="Endereço completo">
                 </div>
                 <div class="form-group">
                   <label for="ret_rodovia">Rodovia</label>
-                  <input type="text" id="ret_rodovia" class="form-control" value="${occ.rodovia || ""}" placeholder="BR-123, km 45">
+                  <input type="text" id="ret_rodovia" class="form-control" value="${occ.rodovia || ''}" placeholder="BR-123, km 45">
                 </div>
                 <div class="form-group">
                   <label for="ret_bairro_ocorrencia">Bairro da Ocorrência</label>
-                  <input type="text" id="ret_bairro_ocorrencia" class="form-control" value="${occ.bairro_ocorrencia || ""}" placeholder="Bairro">
+                  <input type="text" id="ret_bairro_ocorrencia" class="form-control" value="${occ.bairro_ocorrencia || ''}" placeholder="Bairro">
                 </div>
                 <div class="form-group">
                   <label for="ret_referencia">Referência</label>
-                  <input type="text" id="ret_referencia" class="form-control" value="${occ.referencia || ""}" placeholder="Ponto de referência próximo">
+                  <input type="text" id="ret_referencia" class="form-control" value="${occ.referencia || ''}" placeholder="Ponto de referência próximo">
                 </div>
               </div>
 
@@ -1591,7 +1462,7 @@ class App {
                 </p>
                 <div class="form-group">
                   <label for="ret_observacoes">Observações</label>
-                  <textarea id="ret_observacoes" class="form-control" rows="4" placeholder="Complemente as informações da ocorrência">${occ.observacoes || ""}</textarea>
+                  <textarea id="ret_observacoes" class="form-control" rows="4" placeholder="Complemente as informações da ocorrência">${occ.observacoes || ''}</textarea>
                 </div>
               </div>
 
@@ -1603,7 +1474,7 @@ class App {
                 </p>
                 <div class="form-group">
                   <label for="ret_codigo_operacional">Código Operacional</label>
-                  <input type="text" id="ret_codigo_operacional" class="form-control" value="${occ.codigo_operacional || ""}" placeholder="Código da ocorrência">
+                  <input type="text" id="ret_codigo_operacional" class="form-control" value="${occ.codigo_operacional || ''}" placeholder="Código da ocorrência">
                 </div>
               </div>
 
@@ -1613,25 +1484,17 @@ class App {
                   <i class="fas fa-users" style="margin-right:6px;"></i>
                   Envolvidos (${envolvidos.length}) - Não podem ser alterados na retificação
                 </p>
-                ${
-                  envolvidos.length === 0
-                    ? `
+                ${envolvidos.length === 0 ? `
                   <p style="font-size:13px;color:var(--cinza-medio);">Nenhum envolvido cadastrado</p>
-                `
-                    : `
-                  ${envolvidos
-                    .map(
-                      (env) => `
+                ` : `
+                  ${envolvidos.map(env => `
                     <div style="font-size:13px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
                       <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
                       <strong>${env.nome_completo}</strong>
-                      ${env.cpf ? ` - ${env.cpf}` : ""}
+                      ${env.cpf ? ` - ${env.cpf}` : ''}
                     </div>
-                  `,
-                    )
-                    .join("")}
-                `
-                }
+                  `).join('')}
+                `}
                 <p style="font-size:12px;color:var(--cinza-medio);margin-top:6px;">
                   <i class="fas fa-info-circle" style="margin-right:4px;"></i>
                   Para alterar envolvidos, crie uma nova ocorrência
@@ -1656,41 +1519,28 @@ class App {
   async confirmarRetificacao(id) {
     const justificativa = document.getElementById("ret_justificativa")?.value;
     if (!justificativa || justificativa.trim().length < 10) {
-      this.showToast(
-        "Justificativa deve ter pelo menos 10 caracteres",
-        "warning",
-      );
+      this.showToast("Justificativa deve ter pelo menos 10 caracteres", "warning");
       return;
     }
 
-    // Coleta APENAS os campos retificáveis (que foram preenchidos)
     const dadosCorrigidos = {};
 
-    // Dados do Solicitante
-    const nome_solicitante = document.getElementById(
-      "ret_nome_solicitante",
-    )?.value;
+    const nome_solicitante = document.getElementById("ret_nome_solicitante")?.value;
     if (nome_solicitante && nome_solicitante.trim() !== "") {
       dadosCorrigidos.nome_solicitante = nome_solicitante.trim();
     }
 
-    const telefone_solicitante = document.getElementById(
-      "ret_telefone_solicitante",
-    )?.value;
+    const telefone_solicitante = document.getElementById("ret_telefone_solicitante")?.value;
     if (telefone_solicitante && telefone_solicitante.trim() !== "") {
       dadosCorrigidos.telefone_solicitante = telefone_solicitante.trim();
     }
 
-    const endereco_solicitante = document.getElementById(
-      "ret_endereco_solicitante",
-    )?.value;
+    const endereco_solicitante = document.getElementById("ret_endereco_solicitante")?.value;
     if (endereco_solicitante && endereco_solicitante.trim() !== "") {
       dadosCorrigidos.endereco_solicitante = endereco_solicitante.trim();
     }
 
-    const bairro_solicitante = document.getElementById(
-      "ret_bairro_solicitante",
-    )?.value;
+    const bairro_solicitante = document.getElementById("ret_bairro_solicitante")?.value;
     if (bairro_solicitante && bairro_solicitante.trim() !== "") {
       dadosCorrigidos.bairro_solicitante = bairro_solicitante.trim();
     }
@@ -1700,24 +1550,17 @@ class App {
       dadosCorrigidos.complemento = complemento.trim();
     }
 
-    const identificacao_adicional = document.getElementById(
-      "ret_identificacao_adicional",
-    )?.value;
+    const identificacao_adicional = document.getElementById("ret_identificacao_adicional")?.value;
     if (identificacao_adicional && identificacao_adicional.trim() !== "") {
       dadosCorrigidos.identificacao_adicional = identificacao_adicional.trim();
     }
 
-    const codigo_municipal = document.getElementById(
-      "ret_codigo_municipal",
-    )?.value;
+    const codigo_municipal = document.getElementById("ret_codigo_municipal")?.value;
     if (codigo_municipal && codigo_municipal.trim() !== "") {
       dadosCorrigidos.codigo_municipal = codigo_municipal.trim();
     }
 
-    // Dados do Local
-    const local_ocorrencia = document.getElementById(
-      "ret_local_ocorrencia",
-    )?.value;
+    const local_ocorrencia = document.getElementById("ret_local_ocorrencia")?.value;
     if (local_ocorrencia && local_ocorrencia.trim() !== "") {
       dadosCorrigidos.local_ocorrencia = local_ocorrencia.trim();
     }
@@ -1727,9 +1570,7 @@ class App {
       dadosCorrigidos.rodovia = rodovia.trim();
     }
 
-    const bairro_ocorrencia = document.getElementById(
-      "ret_bairro_ocorrencia",
-    )?.value;
+    const bairro_ocorrencia = document.getElementById("ret_bairro_ocorrencia")?.value;
     if (bairro_ocorrencia && bairro_ocorrencia.trim() !== "") {
       dadosCorrigidos.bairro_ocorrencia = bairro_ocorrencia.trim();
     }
@@ -1739,40 +1580,27 @@ class App {
       dadosCorrigidos.referencia = referencia.trim();
     }
 
-    // Observações
     const observacoes = document.getElementById("ret_observacoes")?.value;
     if (observacoes && observacoes.trim() !== "") {
       dadosCorrigidos.observacoes = observacoes.trim();
     }
 
-    // Dados Operacionais
-    const codigo_operacional = document.getElementById(
-      "ret_codigo_operacional",
-    )?.value;
+    const codigo_operacional = document.getElementById("ret_codigo_operacional")?.value;
     if (codigo_operacional && codigo_operacional.trim() !== "") {
       dadosCorrigidos.codigo_operacional = codigo_operacional.trim();
     }
 
-    // Verifica se pelo menos um campo foi alterado
     if (Object.keys(dadosCorrigidos).length === 0) {
       this.showToast("Nenhum campo foi preenchido para retificação", "warning");
       return;
     }
 
-    if (
-      !confirm(
-        "Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor.",
-      )
-    ) {
+    if (!confirm("Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor.")) {
       return;
     }
 
-    const result = await ocorrenciaManager.solicitarRetificacao(
-      id,
-      dadosCorrigidos,
-      justificativa,
-    );
-
+    const result = await ocorrenciaManager.solicitarRetificacao(id, dadosCorrigidos, justificativa);
+    
     if (!result.success) {
       this.showToast("Erro ao solicitar retificação: " + result.error, "error");
       return;
@@ -1782,40 +1610,23 @@ class App {
     if (modal) modal.remove();
 
     if (result.is_pending) {
-      this.showToast(
-        "Retificação solicitada com sucesso! Aguarde aprovação do supervisor.",
-        "success",
-      );
+      this.showToast("Retificação solicitada com sucesso! Aguarde aprovação do supervisor.", "success");
     } else {
       this.showToast("Retificação criada com sucesso!", "success");
     }
-
-    setTimeout(
-      () => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }),
-      1500,
-    );
+    
+    setTimeout(() => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }), 1500);
   }
 
-  // ============================================
-  // APROVAR/REJEITAR RETIFICAÇÃO (APENAS SUPERVISOR)
-  // ============================================
-
   async aprovarRetificacao(id) {
-    if (
-      !confirm(
-        "Confirma a aprovação desta retificação? A versão original será substituída.",
-      )
-    ) {
+    if (!confirm("Confirma a aprovação desta retificação? A versão original será substituída.")) {
       return;
     }
 
     const result = await ocorrenciaManager.aprovarRetificacao(id);
     if (result.success) {
       this.showToast("Retificação aprovada com sucesso!", "success");
-      setTimeout(
-        () => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }),
-        1000,
-      );
+      setTimeout(() => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }), 1000);
     } else {
       this.showToast("Erro ao aprovar retificação: " + result.error, "error");
     }
@@ -1835,18 +1646,11 @@ class App {
     const result = await ocorrenciaManager.rejeitarRetificacao(id, motivo);
     if (result.success) {
       this.showToast("Retificação rejeitada", "info");
-      setTimeout(
-        () => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }),
-        1000,
-      );
+      setTimeout(() => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }), 1000);
     } else {
       this.showToast("Erro ao rejeitar retificação: " + result.error, "error");
     }
   }
-
-  // ============================================
-  // HISTÓRICO
-  // ============================================
 
   async verHistorico(id) {
     const result = await ocorrenciaManager.buscarHistorico(id);
@@ -1856,10 +1660,10 @@ class App {
     }
 
     const historico = result.data;
-
+    
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
-
+    
     let html = `
       <div class="modal" style="max-width:600px;">
         <div class="modal-header">
@@ -1880,109 +1684,78 @@ class App {
       const statusClass = this.getStatusClass(item.status);
       const statusLabel = this.getStatusLabel(item.status);
       const data = new Date(item.criado_em).toLocaleString("pt-BR");
-      const numero =
-        item.numero_ocorrencia || item.numero_temporario || "Rascunho";
-
-      // Verifica se há campos alterados
+      const numero = item.numero_ocorrencia || item.numero_temporario || "Rascunho";
+      
       let camposAlterados = [];
       if (item.campos_alterados) {
         try {
           camposAlterados = JSON.parse(item.campos_alterados);
         } catch (e) {}
       }
-
+      
       html += `
-        <div style="border-left:4px solid ${isAtiva ? "var(--verde-bandeira)" : "var(--cinza-medio)"};padding-left:12px;margin-bottom:16px;background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
+        <div style="border-left:4px solid ${isAtiva ? 'var(--verde-bandeira)' : 'var(--cinza-medio)'};padding-left:12px;margin-bottom:16px;background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
             <div>
               <span style="font-weight:700;color:var(--azul-bandeira);">
-                ${isOriginal ? "📄 Versão Original" : `🔄 Retificação v${item.numero_versao || 1}`}
+                ${isOriginal ? '📄 Versão Original' : `🔄 Retificação v${item.numero_versao || 1}`}
               </span>
               ${isAtiva ? ' <span class="badge badge-synced" style="font-size:10px;">✅ Ativa</span>' : ' <span class="badge badge-draft" style="font-size:10px;">📜 Substituída</span>'}
-              ${item.status === "pending_rectification" ? ' <span class="badge badge-pending" style="font-size:10px;">⏳ Pendente</span>' : ""}
-              ${item.status === "rectification_rejected" ? ' <span class="badge badge-cancelled" style="font-size:10px;">❌ Rejeitada</span>' : ""}
+              ${item.status === 'pending_rectification' ? ' <span class="badge badge-pending" style="font-size:10px;">⏳ Pendente</span>' : ''}
+              ${item.status === 'rectification_rejected' ? ' <span class="badge badge-cancelled" style="font-size:10px;">❌ Rejeitada</span>' : ''}
             </div>
             <span class="badge badge-${statusClass}" style="font-size:10px;">${statusLabel}</span>
           </div>
           <div style="font-size:13px;color:var(--cinza-medio);margin-top:4px;">
             <i class="fas fa-calendar" style="margin-right:4px;"></i> ${data}
             <span style="margin-left:12px;"><i class="fas fa-hashtag" style="margin-right:4px;"></i>#${numero}</span>
-            ${
-              item.justificativa_retificacao
-                ? `
+            ${item.justificativa_retificacao ? `
               <div style="margin-top:6px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
                 <i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i>
                 ${item.justificativa_retificacao}
               </div>
-            `
-                : ""
-            }
-            ${
-              item.solicitacao_retificacao_justificativa &&
-              item.status === "pending_rectification"
-                ? `
+            ` : ''}
+            ${item.solicitacao_retificacao_justificativa && item.status === 'pending_rectification' ? `
               <div style="margin-top:6px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
                 <i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i>
                 Solicitação: ${item.solicitacao_retificacao_justificativa}
               </div>
-            `
-                : ""
-            }
-            ${
-              item.motivo_rejeicao
-                ? `
+            ` : ''}
+            ${item.motivo_rejeicao ? `
               <div style="margin-top:6px;padding:8px 12px;background:#fee2e2;border-radius:var(--border-radius);font-size:13px;color:#991b1b;border-left:3px solid var(--erro);">
                 <i class="fas fa-times-circle" style="color:var(--erro);margin-right:4px;"></i>
                 Motivo da rejeição: ${item.motivo_rejeicao}
               </div>
-            `
-                : ""
-            }
-            ${
-              camposAlterados.length > 0
-                ? `
+            ` : ''}
+            ${camposAlterados.length > 0 ? `
               <div style="margin-top:6px;padding:8px 12px;background:var(--verde-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--verde-escuro);border-left:3px solid var(--verde-bandeira);">
                 <strong><i class="fas fa-edit" style="margin-right:4px;"></i> Campos Alterados:</strong>
-                ${camposAlterados
-                  .map(
-                    (c) => `
+                ${camposAlterados.map(c => `
                   <div style="margin-top:4px;font-size:12px;padding:4px 8px;background:var(--branco);border-radius:4px;">
                     <strong>${c.label || c.campo}:</strong> 
-                    <span style="color:var(--cinza-medio);text-decoration:line-through;">${c.antes || "(vazio)"}</span> 
+                    <span style="color:var(--cinza-medio);text-decoration:line-through;">${c.antes || '(vazio)'}</span> 
                     → 
-                    <span style="color:var(--verde-bandeira);">${c.depois || "(vazio)"}</span>
+                    <span style="color:var(--verde-bandeira);">${c.depois || '(vazio)'}</span>
                   </div>
-                `,
-                  )
-                  .join("")}
+                `).join('')}
               </div>
-            `
-                : ""
-            }
+            ` : ''}
           </div>
           <div style="margin-top:6px;font-size:13px;">
-            <strong>Local:</strong> ${item.local_ocorrencia || "Não informado"}
+            <strong>Local:</strong> ${item.local_ocorrencia || 'Não informado'}
           </div>
-          ${
-            !isOriginal && item.retificado_por
-              ? `
+          ${!isOriginal && item.retificado_por ? `
             <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
               <i class="fas fa-user" style="margin-right:4px;"></i>
               Retificado por: Supervisor
             </div>
-          `
-              : ""
-          }
-          ${
-            !isOriginal && item.solicitada_por
-              ? `
+          ` : ''}
+          ${!isOriginal && item.solicitada_por ? `
             <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
               <i class="fas fa-user" style="margin-right:4px;"></i>
               Solicitado por: Guarda
             </div>
-          `
-              : ""
-          }
+          ` : ''}
           <button onclick="app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })" class="btn-secondary" style="margin-top:8px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
             <i class="fas fa-eye" style="margin-right:4px;"></i> Ver Versão
           </button>
@@ -1999,7 +1772,7 @@ class App {
         </div>
       </div>
     `;
-
+    
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
   }
@@ -2109,7 +1882,7 @@ class App {
   }
 
   // ============================================
-  // NOVA OCORRÊNCIA
+  // NOVA OCORRÊNCIA - COM GEOLOCALIZAÇÃO
   // ============================================
 
   async renderNovaOcorrencia(container) {
@@ -2144,6 +1917,8 @@ class App {
           envolvidos: [],
           observacoes: "",
           anexos: [],
+          latitude: null,
+          longitude: null,
         },
       };
       this.alteracoesNaoSalvas = false;
@@ -2394,7 +2169,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 2 - DADOS DA OCORRÊNCIA (COM DATA/HORA AUTOMÁTICA)
+  // ETAPA 2 - DADOS DA OCORRÊNCIA (COM GEOLOCALIZAÇÃO)
   // ============================================
   renderEtapa2(dados) {
     const brasiliaNow = this.obterDataHoraBrasilia();
@@ -2415,6 +2190,10 @@ class App {
     }
 
     const dataFim = dados.data_hora_encerramento || "";
+
+    // Geolocalização
+    const latitude = dados.latitude || null;
+    const longitude = dados.longitude || null;
 
     return `
             <div class="form-group">
@@ -2437,6 +2216,23 @@ class App {
                     <i class="fas fa-map-marker-alt input-icon-left"></i>
                     <input type="text" id="local_ocorrencia" class="form-control" placeholder="Endereço completo" required value="${dados.local_ocorrencia || ""}">
                 </div>
+                <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <button type="button" class="btn-secondary" onclick="app.obterLocalizacaoParaOcorrencia()" style="padding:6px 12px;font-size:12px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
+                        <i class="fas fa-location-dot" style="margin-right:4px;"></i> Usar minha localização
+                    </button>
+                    ${latitude && longitude ? `
+                        <span style="font-size:12px;color:var(--verde-bandeira);display:flex;align-items:center;gap:4px;">
+                            <i class="fas fa-check-circle"></i> Localização capturada
+                        </span>
+                    ` : `
+                        <span style="font-size:12px;color:var(--cinza-medio);display:flex;align-items:center;gap:4px;">
+                            <i class="fas fa-info-circle"></i> Nenhuma localização capturada
+                        </span>
+                    `}
+                </div>
+                <!-- Campos ocultos para latitude e longitude -->
+                <input type="hidden" id="latitude" value="${latitude || ''}">
+                <input type="hidden" id="longitude" value="${longitude || ''}">
             </div>
 
             <div class="form-group">
@@ -2502,6 +2298,36 @@ class App {
                 </div>
             </div>
         `;
+  }
+
+  async obterLocalizacaoParaOcorrencia() {
+    const result = await this.obterLocalizacao();
+    if (result) {
+      const { latitude, longitude } = result;
+      // Atualizar os campos ocultos
+      const latField = document.getElementById("latitude");
+      const lngField = document.getElementById("longitude");
+      if (latField) latField.value = latitude;
+      if (lngField) lngField.value = longitude;
+      
+      // Atualizar os dados da ocorrência
+      if (this.novaOcorrencia) {
+        this.novaOcorrencia.dados.latitude = latitude;
+        this.novaOcorrencia.dados.longitude = longitude;
+      }
+      
+      // Atualizar a interface para mostrar que a localização foi capturada
+      const container = document.getElementById("novaOcorrenciaContent");
+      if (container) {
+        // Recarregar a etapa para mostrar o ícone de confirmação
+        this.renderizarEtapa(container);
+        // Rolar para o campo de localização
+        const localField = document.getElementById("local_ocorrencia");
+        if (localField) {
+          localField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }
   }
 
   // ============================================
@@ -2680,24 +2506,16 @@ class App {
                     <span class="rotulo">Solicitante:</span>
                     <span class="valor">${dados.nome_solicitante || "Não informado"}</span>
                 </div>
-                ${
-                  dados.telefone_solicitante
-                    ? `
+                ${dados.telefone_solicitante ? `
                 <div class="campo">
                     <span class="rotulo">Telefone:</span>
                     <span class="valor">${dados.telefone_solicitante}</span>
-                </div>`
-                    : ""
-                }
-                ${
-                  dados.endereco_solicitante
-                    ? `
+                </div>` : ""}
+                ${dados.endereco_solicitante ? `
                 <div class="campo">
                     <span class="rotulo">Endereço:</span>
                     <span class="valor">${dados.endereco_solicitante}</span>
-                </div>`
-                    : ""
-                }
+                </div>` : ""}
             </div>
 
             <div class="card-revisao">
@@ -2709,37 +2527,35 @@ class App {
                     <span class="rotulo">Local:</span>
                     <span class="valor">${dados.local_ocorrencia || "Não informado"}</span>
                 </div>
-                ${
-                  dados.rodovia
-                    ? `
+                ${dados.rodovia ? `
                 <div class="campo">
                     <span class="rotulo">Rodovia:</span>
                     <span class="valor">${dados.rodovia}</span>
-                </div>`
-                    : ""
-                }
-                ${
-                  dados.bairro_ocorrencia
-                    ? `
+                </div>` : ""}
+                ${dados.bairro_ocorrencia ? `
                 <div class="campo">
                     <span class="rotulo">Bairro:</span>
                     <span class="valor">${dados.bairro_ocorrencia}</span>
-                </div>`
-                    : ""
-                }
+                </div>` : ""}
                 <div class="campo">
                     <span class="rotulo">Início:</span>
                     <span class="valor">${dados.data_hora_inicio ? new Date(dados.data_hora_inicio).toLocaleString("pt-BR") : "Não informado"}</span>
                 </div>
-                ${
-                  dados.data_hora_encerramento
-                    ? `
+                ${dados.data_hora_encerramento ? `
                 <div class="campo">
                     <span class="rotulo">Encerramento:</span>
                     <span class="valor">${new Date(dados.data_hora_encerramento).toLocaleString("pt-BR")}</span>
-                </div>`
-                    : ""
-                }
+                </div>` : ""}
+                ${dados.latitude ? `
+                <div class="campo">
+                    <span class="rotulo">Latitude:</span>
+                    <span class="valor">${dados.latitude}</span>
+                </div>` : ""}
+                ${dados.longitude ? `
+                <div class="campo">
+                    <span class="rotulo">Longitude:</span>
+                    <span class="valor">${dados.longitude}</span>
+                </div>` : ""}
             </div>
 
             <div class="card-revisao">
@@ -2872,6 +2688,8 @@ class App {
           document.getElementById("data_hora_inicio")?.value || "";
         dados.data_hora_encerramento =
           document.getElementById("data_hora_encerramento")?.value || "";
+        dados.latitude = document.getElementById("latitude")?.value || null;
+        dados.longitude = document.getElementById("longitude")?.value || null;
         break;
       case 4:
         dados.observacoes = document.getElementById("observacoes")?.value || "";
@@ -3189,22 +3007,15 @@ class App {
         if (isNaN(dateObj.getTime())) {
           this.showToast("Data e hora de encerramento inválida", "warning");
           this.novaOcorrencia.etapa = 2;
-          this.renderizarEtapa(
-            document.getElementById("novaOcorrenciaContent"),
-          );
+          this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
           return;
         }
         const inicio = new Date(dados.data_hora_inicio);
         const fim = new Date(dados.data_hora_encerramento);
         if (fim < inicio) {
-          this.showToast(
-            "Data de encerramento deve ser posterior ao início",
-            "warning",
-          );
+          this.showToast("Data de encerramento deve ser posterior ao início", "warning");
           this.novaOcorrencia.etapa = 2;
-          this.renderizarEtapa(
-            document.getElementById("novaOcorrenciaContent"),
-          );
+          this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
           return;
         }
       } catch (e) {
@@ -3318,14 +3129,8 @@ class App {
         const client = supabaseClient.getClient();
         if (client) {
           await client.from("ocorrencias").delete().eq("id", this.rascunhoId);
-          await client
-            .from("envolvidos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
-          await client
-            .from("anexos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
+          await client.from("envolvidos").delete().eq("ocorrencia_id", this.rascunhoId);
+          await client.from("anexos").delete().eq("ocorrencia_id", this.rascunhoId);
         }
         this.rascunhoId = null;
         this.dadosRascunho = null;
@@ -3356,11 +3161,761 @@ class App {
         envolvidos: [],
         observacoes: "",
         anexos: [],
+        latitude: null,
+        longitude: null,
       },
     };
     this.alteracoesNaoSalvas = false;
 
     setTimeout(() => this.navigateTo("dashboard"), 1500);
+  }
+
+  // ============================================
+  // RENDERIZAÇÃO - USUÁRIOS (APENAS SUPERVISOR)
+  // ============================================
+
+  async renderUsuarios(container) {
+    if (!authManager.isSupervisor()) {
+      container.innerHTML = `
+                <div class="container">
+                    <h2 style="color:var(--azul-bandeira);"><i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários</h2>
+                    <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
+                        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <p style="font-weight:500;">Acesso restrito a supervisores</p>
+                        <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+                            Voltar
+                        </button>
+                    </div>
+                </div>
+            `;
+      return;
+    }
+
+    const result = await authManager.listarUsuarios();
+    if (!result.success) {
+      container.innerHTML = `
+                <div class="container">
+                    <h2 style="color:var(--azul-bandeira);"><i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários</h2>
+                    <p style="color:var(--erro);">Erro ao carregar usuários: ${result.error}</p>
+                    <button onclick="app.loadPageContent('usuarios')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+                        Tentar novamente
+                    </button>
+                </div>
+            `;
+      return;
+    }
+
+    const usuarios = result.data || [];
+
+    let html = `
+            <div class="container">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h2 style="color:var(--azul-bandeira);margin:0;">
+                        <i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários
+                    </h2>
+                    <button class="btn-primary" onclick="app.modalCriarUsuario()" style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;">
+                        <i class="fas fa-plus" style="margin-right:4px;"></i> Novo
+                    </button>
+                </div>
+                <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:14px;">
+                    ${usuarios.length} usuário(s) cadastrado(s)
+                </p>
+
+                <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+                    <input type="text" id="filtroSearchUser" placeholder="Buscar por nome, CPF ou matrícula..." style="flex:1;min-width:150px;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco-fumaca);">
+                    <button class="btn-secondary" onclick="app.filtrarUsuarios()" style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;">
+                        <i class="fas fa-search"></i>
+                    </button>
+                    <button class="btn-secondary" onclick="app.limparFiltroUsuarios()" style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;">
+                        <i class="fas fa-undo"></i>
+                    </button>
+                </div>
+
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                        <thead>
+                            <tr style="background:var(--cinza-claro);">
+                                <th style="padding:8px 6px;text-align:left;">Nome</th>
+                                <th style="padding:8px 6px;text-align:left;">Matrícula</th>
+                                <th style="padding:8px 6px;text-align:left;">Perfil</th>
+                                <th style="padding:8px 6px;text-align:left;">Status</th>
+                                <th style="padding:8px 6px;text-align:center;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+    `;
+
+    if (usuarios.length === 0) {
+      html += `
+                        <tr>
+                            <td colspan="5" style="padding:20px;text-align:center;color:var(--cinza-medio);">
+                                Nenhum usuário encontrado
+                            </td>
+                        </tr>
+                    `;
+    } else {
+      usuarios.forEach(user => {
+        const statusClass = user.status === 'ativo' ? 'synced' : user.status === 'inativo' ? 'cancelled' : 'draft';
+        const statusLabel = user.status === 'ativo' ? 'Ativo' : user.status === 'inativo' ? 'Inativo' : user.status === 'bloqueado' ? 'Bloqueado' : user.status;
+        const perfilLabel = user.perfil === 'supervisor' ? 'Supervisor' : user.perfil === 'guarda' ? 'Guarda' : user.perfil;
+        const ehAtual = user.id === authManager.getUserId();
+
+        html += `
+                            <tr style="border-bottom:1px solid var(--cinza-claro);">
+                                <td style="padding:8px 6px;">${user.nome_completo}</td>
+                                <td style="padding:8px 6px;">${user.matricula || '-'}</td>
+                                <td style="padding:8px 6px;"><span class="badge ${user.perfil === 'supervisor' ? 'badge-azul' : 'badge-verde'}">${perfilLabel}</span></td>
+                                <td style="padding:8px 6px;"><span class="badge badge-${statusClass}">${statusLabel}</span></td>
+                                <td style="padding:8px 6px;text-align:center;display:flex;gap:4px;flex-wrap:wrap;justify-content:center;">
+                                    <button class="btn-secondary" onclick="app.modalEditarUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;" title="Editar">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn-secondary" onclick="app.toggleStatusUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:${user.status === 'ativo' ? 'var(--erro)' : 'var(--verde-bandeira)'};color:var(--branco);" title="${user.status === 'ativo' ? 'Desativar' : 'Ativar'}">
+                                        <i class="fas ${user.status === 'ativo' ? 'fa-user-slash' : 'fa-user-check'}"></i>
+                                    </button>
+                                    ${!ehAtual ? `
+                                        <button class="btn-secondary" onclick="app.resetarSenhaUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:var(--aviso);color:var(--branco);" title="Resetar senha">
+                                            <i class="fas fa-key"></i>
+                                        </button>
+                                    ` : ''}
+                                    <button class="btn-secondary" onclick="app.verLogsUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);" title="Ver logs">
+                                        <i class="fas fa-history"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+      });
+    }
+
+    html += `
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+    container.innerHTML = html;
+  }
+
+  async filtrarUsuarios() {
+    const search = document.getElementById("filtroSearchUser")?.value || "";
+    const result = await authManager.listarUsuarios({ search });
+    if (!result.success) {
+      this.showToast("Erro ao filtrar usuários", "error");
+      return;
+    }
+    // Recarregar a lista com filtro
+    this.renderUsuarios(document.getElementById("page-usuarios"));
+  }
+
+  async limparFiltroUsuarios() {
+    const input = document.getElementById("filtroSearchUser");
+    if (input) input.value = "";
+    this.renderUsuarios(document.getElementById("page-usuarios"));
+  }
+
+  // ============================================
+  // MODAL - CRIAR USUÁRIO
+  // ============================================
+
+  modalCriarUsuario() {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <div class="title">
+            <i class="fas fa-user-plus" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+            Criar Usuário
+          </div>
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <form id="formCriarUsuario">
+            <div class="form-group">
+              <label for="new_nome">Nome Completo <span class="required">*</span></label>
+              <input type="text" id="new_nome" class="form-control" placeholder="Nome completo" required>
+            </div>
+            <div class="form-group">
+              <label for="new_cpf">CPF <span class="required">*</span></label>
+              <input type="text" id="new_cpf" class="form-control" placeholder="123.456.789-00" required maxlength="14">
+            </div>
+            <div class="form-group">
+              <label for="new_matricula">Matrícula</label>
+              <input type="text" id="new_matricula" class="form-control" placeholder="Matrícula">
+            </div>
+            <div class="form-group">
+              <label for="new_email">Email</label>
+              <input type="email" id="new_email" class="form-control" placeholder="email@exemplo.com">
+            </div>
+            <div class="form-group">
+              <label for="new_telefone">Telefone</label>
+              <input type="text" id="new_telefone" class="form-control" placeholder="(44) 99999-9999">
+            </div>
+            <div class="form-group">
+              <label for="new_perfil">Perfil <span class="required">*</span></label>
+              <select id="new_perfil" class="form-control" required>
+                <option value="guarda">Guarda</option>
+                <option value="supervisor">Supervisor</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="new_senha">Senha (opcional)</label>
+              <input type="text" id="new_senha" class="form-control" placeholder="Deixe em branco para gerar automática">
+              <div class="input-hint">
+                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                Se não preencher, uma senha temporária será gerada
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          <button type="button" class="btn-primary" onclick="app.confirmarCriarUsuario()">
+            <i class="fas fa-save" style="margin-right:6px;"></i> Criar
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Máscara de CPF
+    const cpfInput = document.getElementById("new_cpf");
+    if (cpfInput) {
+      cpfInput.addEventListener("input", function(e) {
+        let value = this.value.replace(/\D/g, '');
+        if (value.length > 11) value = value.slice(0, 11);
+        let formatted = '';
+        if (value.length > 0) formatted = value.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+        if (value.length <= 3) formatted = value;
+        else if (value.length <= 6) formatted = value.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+        else if (value.length <= 9) formatted = value.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+        this.value = formatted;
+      });
+    }
+  }
+
+  async confirmarCriarUsuario() {
+    const nome = document.getElementById("new_nome")?.value?.trim();
+    const cpf = document.getElementById("new_cpf")?.value?.trim();
+    const matricula = document.getElementById("new_matricula")?.value?.trim();
+    const email = document.getElementById("new_email")?.value?.trim();
+    const telefone = document.getElementById("new_telefone")?.value?.trim();
+    const perfil = document.getElementById("new_perfil")?.value;
+    const senha = document.getElementById("new_senha")?.value?.trim();
+
+    if (!nome || !cpf) {
+      this.showToast("Preencha nome e CPF", "warning");
+      return;
+    }
+
+    const result = await authManager.criarUsuario({
+      nome,
+      cpf,
+      matricula,
+      email,
+      telefone,
+      perfil,
+      senha: senha || undefined,
+    });
+
+    if (!result.success) {
+      this.showToast("Erro ao criar usuário: " + result.error, "error");
+      return;
+    }
+
+    const modal = document.querySelector(".modal-overlay");
+    if (modal) modal.remove();
+
+    let msg = "Usuário criado com sucesso!";
+    if (result.senha_temporaria) {
+      msg += ` Senha temporária: ${result.senha_temporaria}`;
+    }
+    this.showToast(msg, "success");
+    this.loadPageContent("usuarios");
+  }
+
+  // ============================================
+  // MODAL - EDITAR USUÁRIO
+  // ============================================
+
+  async modalEditarUsuario(id) {
+    const result = await authManager.listarUsuarios({ search: "" });
+    if (!result.success) {
+      this.showToast("Erro ao carregar dados do usuário", "error");
+      return;
+    }
+    const user = result.data.find(u => u.id === id);
+    if (!user) {
+      this.showToast("Usuário não encontrado", "error");
+      return;
+    }
+
+    const isSelf = user.id === authManager.getUserId();
+    const isSupervisor = authManager.isSupervisor();
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <div class="title">
+            <i class="fas fa-user-edit" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+            Editar Usuário
+          </div>
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <form id="formEditarUsuario">
+            <div class="form-group">
+              <label for="edit_nome">Nome Completo <span class="required">*</span></label>
+              <input type="text" id="edit_nome" class="form-control" value="${user.nome_completo || ''}" required>
+            </div>
+            <div class="form-group">
+              <label for="edit_cpf">CPF</label>
+              <input type="text" id="edit_cpf" class="form-control" value="${user.cpf || ''}" disabled style="opacity:0.7;">
+            </div>
+            ${isSupervisor ? `
+              <div class="form-group">
+                <label for="edit_matricula">Matrícula</label>
+                <input type="text" id="edit_matricula" class="form-control" value="${user.matricula || ''}">
+              </div>
+              <div class="form-group">
+                <label for="edit_perfil">Perfil</label>
+                <select id="edit_perfil" class="form-control">
+                  <option value="guarda" ${user.perfil === 'guarda' ? 'selected' : ''}>Guarda</option>
+                  <option value="supervisor" ${user.perfil === 'supervisor' ? 'selected' : ''}>Supervisor</option>
+                </select>
+              </div>
+            ` : `
+              <div class="form-group">
+                <label>Matrícula</label>
+                <input type="text" class="form-control" value="${user.matricula || ''}" disabled style="opacity:0.7;">
+              </div>
+              <div class="form-group">
+                <label>Perfil</label>
+                <input type="text" class="form-control" value="${user.perfil === 'supervisor' ? 'Supervisor' : 'Guarda'}" disabled style="opacity:0.7;">
+              </div>
+            `}
+            <div class="form-group">
+              <label for="edit_email">Email</label>
+              <input type="email" id="edit_email" class="form-control" value="${user.email || ''}">
+            </div>
+            <div class="form-group">
+              <label for="edit_telefone">Telefone</label>
+              <input type="text" id="edit_telefone" class="form-control" value="${user.telefone || ''}">
+            </div>
+            ${isSupervisor && !isSelf ? `
+              <div class="form-group">
+                <label for="edit_status">Status</label>
+                <select id="edit_status" class="form-control">
+                  <option value="ativo" ${user.status === 'ativo' ? 'selected' : ''}>Ativo</option>
+                  <option value="inativo" ${user.status === 'inativo' ? 'selected' : ''}>Inativo</option>
+                  <option value="bloqueado" ${user.status === 'bloqueado' ? 'selected' : ''}>Bloqueado</option>
+                </select>
+              </div>
+            ` : `
+              <div class="form-group">
+                <label>Status</label>
+                <input type="text" class="form-control" value="${user.status === 'ativo' ? 'Ativo' : user.status === 'inativo' ? 'Inativo' : user.status === 'bloqueado' ? 'Bloqueado' : user.status}" disabled style="opacity:0.7;">
+              </div>
+            `}
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          <button type="button" class="btn-primary" onclick="app.confirmarEditarUsuario('${id}')">
+            <i class="fas fa-save" style="margin-right:6px;"></i> Salvar
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+
+  async confirmarEditarUsuario(id) {
+    const nome = document.getElementById("edit_nome")?.value?.trim();
+    const email = document.getElementById("edit_email")?.value?.trim();
+    const telefone = document.getElementById("edit_telefone")?.value?.trim();
+
+    if (!nome) {
+      this.showToast("Nome é obrigatório", "warning");
+      return;
+    }
+
+    const dados = { nome_completo: nome };
+    if (email !== undefined) dados.email = email;
+    if (telefone !== undefined) dados.telefone = telefone;
+
+    // Supervisor pode editar mais campos
+    if (authManager.isSupervisor() && id !== authManager.getUserId()) {
+      const matricula = document.getElementById("edit_matricula")?.value?.trim();
+      const perfil = document.getElementById("edit_perfil")?.value;
+      const status = document.getElementById("edit_status")?.value;
+      if (matricula !== undefined) dados.matricula = matricula;
+      if (perfil !== undefined) dados.perfil = perfil;
+      if (status !== undefined) dados.status = status;
+    }
+
+    const result = await authManager.atualizarUsuario(id, dados);
+    if (!result.success) {
+      this.showToast("Erro ao atualizar: " + result.error, "error");
+      return;
+    }
+
+    const modal = document.querySelector(".modal-overlay");
+    if (modal) modal.remove();
+
+    this.showToast("Usuário atualizado com sucesso!", "success");
+    // Se atualizou o próprio perfil, atualizar header
+    if (id === authManager.getUserId()) {
+      this.atualizarHeader();
+    }
+    this.loadPageContent("usuarios");
+  }
+
+  // ============================================
+  // TOGGLE STATUS - USUÁRIO
+  // ============================================
+
+  async toggleStatusUsuario(id) {
+    const result = await authManager.listarUsuarios({ search: "" });
+    if (!result.success) {
+      this.showToast("Erro ao carregar dados", "error");
+      return;
+    }
+    const user = result.data.find(u => u.id === id);
+    if (!user) return;
+
+    const novoStatus = user.status === 'ativo' ? 'inativo' : 'ativo';
+    if (!confirm(`Deseja ${novoStatus === 'ativo' ? 'ativar' : 'desativar'} o usuário ${user.nome_completo}?`)) return;
+
+    const res = await authManager.ativarDesativarUsuario(id, novoStatus);
+    if (!res.success) {
+      this.showToast("Erro: " + res.error, "error");
+      return;
+    }
+    this.showToast(`Usuário ${novoStatus === 'ativo' ? 'ativado' : 'desativado'} com sucesso!`, "success");
+    this.loadPageContent("usuarios");
+  }
+
+  // ============================================
+  // RESETAR SENHA - USUÁRIO
+  // ============================================
+
+  async resetarSenhaUsuario(id) {
+    if (!confirm("Deseja resetar a senha deste usuário? Uma nova senha temporária será gerada.")) return;
+
+    const result = await authManager.resetarSenha(id);
+    if (!result.success) {
+      this.showToast("Erro ao resetar senha: " + result.error, "error");
+      return;
+    }
+    this.showToast(`Senha resetada! Senha temporária: ${result.senha_temporaria}`, "success");
+    this.loadPageContent("usuarios");
+  }
+
+  // ============================================
+  // VER LOGS - USUÁRIO
+  // ============================================
+
+  async verLogsUsuario(id) {
+    const result = await authManager.listarLogsAcesso({ usuario_id: id, limit: 50 });
+    if (!result.success) {
+      this.showToast("Erro ao carregar logs", "error");
+      return;
+    }
+
+    const logs = result.data || [];
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+          <div class="title">
+            <i class="fas fa-history" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+            Logs de Acesso
+          </div>
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
+          ${logs.length === 0 ? `
+            <p style="color:var(--cinza-medio);text-align:center;padding:20px;">Nenhum log encontrado</p>
+          ` : `
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead>
+                <tr style="background:var(--cinza-claro);">
+                  <th style="padding:6px 8px;text-align:left;">Data/Hora</th>
+                  <th style="padding:6px 8px;text-align:left;">Ação</th>
+                  <th style="padding:6px 8px;text-align:left;">IP</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs.map(log => `
+                  <tr style="border-bottom:1px solid var(--cinza-claro);">
+                    <td style="padding:6px 8px;">${new Date(log.data_hora).toLocaleString('pt-BR')}</td>
+                    <td style="padding:6px 8px;">${log.acao || 'login'}</td>
+                    <td style="padding:6px 8px;">${log.ip || '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+
+  // ============================================
+  // RENDERIZAÇÃO - PERFIL (COM EDIÇÃO)
+  // ============================================
+
+  async renderPerfil(container) {
+    const user = authManager.getUser();
+    if (!user) {
+      container.innerHTML = `<p>Usuário não encontrado</p>`;
+      return;
+    }
+
+    const isSupervisor = authManager.isSupervisor();
+    const podeEditarMatricula = isSupervisor; // apenas supervisor pode editar matrícula
+    const podeEditarPerfil = isSupervisor; // supervisor pode editar perfil de outros? mas é o próprio perfil, então pode
+
+    container.innerHTML = `
+            <div class="container">
+                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-user" style="margin-right:8px;"></i>Meu Perfil</h2>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div style="text-align:center;padding:16px;">
+                        <div class="avatar" style="width:72px;height:72px;border-radius:50%;background:var(--gradiente-principal);color:var(--branco);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;margin:0 auto 12px;">
+                            ${user.nome_completo?.charAt(0) || "U"}
+                        </div>
+                        <h3 style="margin:0;">${user.nome_completo}</h3>
+                        <p style="color:var(--cinza-medio);font-size:14px;">${user.perfil === 'supervisor' ? 'Supervisor' : 'Guarda'}</p>
+                        <p style="color:var(--cinza-medio);font-size:13px;">
+                            <i class="fas fa-id-card"></i> ${user.matricula || "Sem matrícula"}
+                        </p>
+                    </div>
+                </div>
+
+                <form id="formPerfil" style="margin-top:8px;">
+                    <div class="form-group">
+                        <label for="perfil_nome">Nome Completo <span class="required">*</span></label>
+                        <input type="text" id="perfil_nome" class="form-control" value="${user.nome_completo || ''}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="perfil_cpf">CPF</label>
+                        <input type="text" id="perfil_cpf" class="form-control" value="${user.cpf || ''}" disabled style="opacity:0.7;">
+                    </div>
+                    <div class="form-group">
+                        <label for="perfil_matricula">Matrícula</label>
+                        <input type="text" id="perfil_matricula" class="form-control" value="${user.matricula || ''}" ${podeEditarMatricula ? '' : 'disabled style="opacity:0.7;"'}>
+                    </div>
+                    <div class="form-group">
+                        <label for="perfil_email">Email</label>
+                        <input type="email" id="perfil_email" class="form-control" value="${user.email || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label for="perfil_telefone">Telefone</label>
+                        <input type="text" id="perfil_telefone" class="form-control" value="${user.telefone || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label for="perfil_perfil">Perfil</label>
+                        <input type="text" id="perfil_perfil" class="form-control" value="${user.perfil === 'supervisor' ? 'Supervisor' : 'Guarda'}" disabled style="opacity:0.7;">
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+                        <button type="button" class="btn-primary" onclick="app.salvarPerfil()" style="flex:1;">
+                            <i class="fas fa-save" style="margin-right:6px;"></i> Salvar Alterações
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="app.modalAlterarSenha()" style="flex:1;">
+                            <i class="fas fa-key" style="margin-right:6px;"></i> Alterar Senha
+                        </button>
+                    </div>
+                </form>
+            </div>
+        `;
+  }
+
+  async salvarPerfil() {
+    const nome = document.getElementById("perfil_nome")?.value?.trim();
+    const email = document.getElementById("perfil_email")?.value?.trim();
+    const telefone = document.getElementById("perfil_telefone")?.value?.trim();
+    const matricula = document.getElementById("perfil_matricula")?.value?.trim();
+
+    if (!nome) {
+      this.showToast("Nome é obrigatório", "warning");
+      return;
+    }
+
+    const dados = { nome_completo: nome };
+    if (email !== undefined) dados.email = email;
+    if (telefone !== undefined) dados.telefone = telefone;
+    // Matrícula só pode ser alterada por supervisor
+    if (authManager.isSupervisor() && matricula !== undefined) {
+      dados.matricula = matricula;
+    }
+
+    const result = await authManager.atualizarUsuario(authManager.getUserId(), dados);
+    if (!result.success) {
+      this.showToast("Erro ao atualizar perfil: " + result.error, "error");
+      return;
+    }
+
+    this.showToast("Perfil atualizado com sucesso!", "success");
+    this.atualizarHeader();
+    this.loadPageContent("perfil");
+  }
+
+  // ============================================
+  // MODAL - ALTERAR SENHA
+  // ============================================
+
+  modalAlterarSenha() {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+          <div class="title">
+            <i class="fas fa-key" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+            Alterar Senha
+          </div>
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <form id="formAlterarSenha">
+            <div class="form-group">
+              <label for="senha_atual">Senha Atual <span class="required">*</span></label>
+              <input type="password" id="senha_atual" class="form-control" placeholder="Digite sua senha atual" required>
+            </div>
+            <div class="form-group">
+              <label for="nova_senha">Nova Senha <span class="required">*</span></label>
+              <input type="password" id="nova_senha" class="form-control" placeholder="Nova senha" required minlength="6">
+            </div>
+            <div class="form-group">
+              <label for="confirmar_senha">Confirmar Nova Senha <span class="required">*</span></label>
+              <input type="password" id="confirmar_senha" class="form-control" placeholder="Confirme a nova senha" required>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          <button type="button" class="btn-primary" onclick="app.confirmarAlterarSenha()">
+            <i class="fas fa-check" style="margin-right:6px;"></i> Alterar
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+
+  async confirmarAlterarSenha() {
+    const senhaAtual = document.getElementById("senha_atual")?.value;
+    const novaSenha = document.getElementById("nova_senha")?.value;
+    const confirmarSenha = document.getElementById("confirmar_senha")?.value;
+
+    if (!senhaAtual || !novaSenha || !confirmarSenha) {
+      this.showToast("Preencha todos os campos", "warning");
+      return;
+    }
+
+    if (novaSenha.length < 6) {
+      this.showToast("A nova senha deve ter pelo menos 6 caracteres", "warning");
+      return;
+    }
+
+    if (novaSenha !== confirmarSenha) {
+      this.showToast("As senhas não coincidem", "warning");
+      return;
+    }
+
+    // Verificar senha atual
+    const user = authManager.getUser();
+    const client = supabaseClient.getClient();
+    if (!client) {
+      this.showToast("Erro ao conectar", "error");
+      return;
+    }
+
+    const { data: senhaValida } = await client.rpc("verificar_senha", {
+      p_cpf: user.cpf,
+      p_senha: senhaAtual,
+    });
+
+    if (!senhaValida) {
+      this.showToast("Senha atual incorreta", "warning");
+      return;
+    }
+
+    // Atualizar senha
+    const { data: hashData } = await client.rpc("criar_hash_senha", {
+      p_senha: novaSenha,
+    });
+
+    const result = await authManager.atualizarUsuario(user.id, {
+      senha_hash: hashData,
+    });
+
+    if (!result.success) {
+      this.showToast("Erro ao alterar senha: " + result.error, "error");
+      return;
+    }
+
+    const modal = document.querySelector(".modal-overlay");
+    if (modal) modal.remove();
+
+    this.showToast("Senha alterada com sucesso!", "success");
+  }
+
+  // ============================================
+  // RELATÓRIOS - PLACEHOLDER
+  // ============================================
+
+  async renderRelatorios(container) {
+    if (!authManager.isSupervisor()) {
+      container.innerHTML = `
+                <div class="container">
+                    <h2 style="color:var(--azul-bandeira);"><i class="fas fa-chart-bar" style="margin-right:8px;"></i>Relatórios</h2>
+                    <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
+                        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <p style="font-weight:500;">Acesso restrito a supervisores</p>
+                        <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+                            Voltar
+                        </button>
+                    </div>
+                </div>
+            `;
+      return;
+    }
+
+    container.innerHTML = `
+            <div class="container">
+                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-chart-bar" style="margin-right:8px;"></i>Relatórios</h2>
+                <div class="card">
+                    <p style="color:var(--cinza-medio);text-align:center;padding:20px;">
+                        <i class="fas fa-chart-line" style="font-size:32px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
+                        Módulo de relatórios em desenvolvimento
+                    </p>
+                </div>
+            </div>
+        `;
   }
 
   // ============================================
@@ -3533,10 +4088,7 @@ class App {
     document.querySelectorAll(".menu-item[data-page]").forEach((item) => {
       item.addEventListener("click", (e) => {
         const page = item.dataset.page;
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
+        if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
           e.preventDefault();
           this.paginaDestino = page;
           this.paramsDestino = null;
@@ -3551,10 +4103,7 @@ class App {
     document
       .getElementById("btnLogout")
       ?.addEventListener("click", async () => {
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
+        if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
           this.paginaDestino = "login";
           this.paramsDestino = null;
           this.perguntarSalvarRascunho("login", async () => {
@@ -3597,8 +4146,7 @@ class App {
     window.addEventListener("beforeunload", (e) => {
       if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
         e.preventDefault();
-        e.returnValue =
-          "Você tem alterações não salvas. Deseja realmente sair?";
+        e.returnValue = "Você tem alterações não salvas. Deseja realmente sair?";
         return e.returnValue;
       }
     });
@@ -3710,73 +4258,6 @@ class App {
             </div>
         `;
     this.showPage("login");
-  }
-
-  // ============================================
-  // PÁGINAS PLACEHOLDER
-  // ============================================
-
-  async renderRelatorios(container) {
-    container.innerHTML = `
-            <div class="container">
-                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-chart-bar" style="margin-right:8px;"></i>Relatórios</h2>
-                <div class="card">
-                    <p style="color:var(--cinza-medio);text-align:center;padding:20px;">
-                        <i class="fas fa-chart-line" style="font-size:32px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
-                        Módulo de relatórios em desenvolvimento
-                    </p>
-                </div>
-            </div>
-        `;
-  }
-
-  async renderUsuarios(container) {
-    container.innerHTML = `
-            <div class="container">
-                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários</h2>
-                <div class="card">
-                    <p style="color:var(--cinza-medio);text-align:center;padding:20px;">
-                        <i class="fas fa-user-cog" style="font-size:32px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
-                        Gerenciamento de usuários em desenvolvimento
-                    </p>
-                </div>
-            </div>
-        `;
-  }
-
-  async renderPerfil(container) {
-    const user = authManager.getUser();
-    container.innerHTML = `
-            <div class="container">
-                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-user" style="margin-right:8px;"></i>Meu Perfil</h2>
-                <div class="card">
-                    <div style="text-align:center;padding:16px;">
-                        <div class="avatar" style="width:72px;height:72px;border-radius:50%;background:var(--gradiente-principal);color:var(--branco);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;margin:0 auto 12px;">
-                            ${user?.nome_completo?.charAt(0) || "U"}
-                        </div>
-                        <h3 style="margin:0;">${user?.nome_completo || "Usuário"}</h3>
-                        <p style="color:var(--cinza-medio);font-size:14px;">${user?.perfil || "Guarda"}</p>
-                        <p style="color:var(--cinza-medio);font-size:13px;">
-                            <i class="fas fa-id-card"></i> ${user?.matricula || "Sem matrícula"}
-                        </p>
-                    </div>
-                    <div style="border-top:1px solid var(--cinza-claro);padding-top:12px;">
-                        <p style="font-size:14px;display:flex;justify-content:space-between;">
-                            <span style="color:var(--cinza-medio);">CPF</span>
-                            <span>${user?.cpf || "Não informado"}</span>
-                        </p>
-                        <p style="font-size:14px;display:flex;justify-content:space-between;">
-                            <span style="color:var(--cinza-medio);">Status</span>
-                            <span class="badge badge-${user?.status === "ativo" ? "synced" : "draft"}">${user?.status || "Desconhecido"}</span>
-                        </p>
-                    </div>
-                    <button class="btn-primary" style="margin-top:16px;" disabled>
-                        <i class="fas fa-edit" style="margin-right:6px;"></i>
-                        Editar Perfil (em desenvolvimento)
-                    </button>
-                </div>
-            </div>
-        `;
   }
 }
 

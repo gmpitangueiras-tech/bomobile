@@ -75,6 +75,55 @@ class App {
   }
 
   // ============================================
+  // CONFIRMAÇÃO PERSONALIZADA (MODAL)
+  // ============================================
+
+  confirmar(mensagem, titulo = "Confirmar") {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:400px;">
+          <div class="modal-header">
+            <div class="title">
+              <i class="fas fa-question-circle" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+              ${titulo}
+            </div>
+            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p style="font-size:16px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;">
+              ${mensagem}
+            </p>
+          </div>
+          <div class="modal-footer" style="flex-direction:row;gap:10px;">
+            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(false);" style="flex:1;">
+              Cancelar
+            </button>
+            <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(true);" style="flex:1;">
+              <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      
+      // Salvar a função resolve para ser chamada pelos botões
+      window._confirmResolve = resolve;
+      
+      // Fechar modal se clicar fora
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  // ============================================
   // GEOLOCALIZAÇÃO
   // ============================================
 
@@ -738,7 +787,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS (COM BADGE DE VERSÃO)
+  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS
   // ============================================
 
   async renderOcorrenciasLista(container, statusFilter = null) {
@@ -821,7 +870,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - OCORRÊNCIAS (COM BADGE DE VERSÃO)
+  // RENDERIZAÇÃO - OCORRÊNCIAS
   // ============================================
 
   async renderOcorrencias(container) {
@@ -1011,7 +1060,7 @@ class App {
   }
 
   // ============================================
-  // DETALHES DA OCORRÊNCIA (COM BADGE DE VERSÃO)
+  // DETALHES DA OCORRÊNCIA
   // ============================================
 
   verDetalhes(ocorrenciaId) {
@@ -1595,9 +1644,10 @@ class App {
       return;
     }
 
-    if (!confirm("Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor.")) {
-      return;
-    }
+    const confirmado = await this.confirmar(
+      "Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor."
+    );
+    if (!confirmado) return;
 
     const result = await ocorrenciaManager.solicitarRetificacao(id, dadosCorrigidos, justificativa);
     
@@ -1619,9 +1669,10 @@ class App {
   }
 
   async aprovarRetificacao(id) {
-    if (!confirm("Confirma a aprovação desta retificação? A versão original será substituída.")) {
-      return;
-    }
+    const confirmado = await this.confirmar(
+      "Confirma a aprovação desta retificação? A versão original será substituída."
+    );
+    if (!confirmado) return;
 
     const result = await ocorrenciaManager.aprovarRetificacao(id);
     if (result.success) {
@@ -1639,9 +1690,10 @@ class App {
       return;
     }
 
-    if (!confirm("Confirma a rejeição desta retificação?")) {
-      return;
-    }
+    const confirmado = await this.confirmar(
+      "Confirma a rejeição desta retificação?"
+    );
+    if (!confirmado) return;
 
     const result = await ocorrenciaManager.rejeitarRetificacao(id, motivo);
     if (result.success) {
@@ -1782,7 +1834,8 @@ class App {
   // ============================================
 
   async finalizarOcorrenciaExistente(id) {
-    if (!confirm("Deseja finalizar esta ocorrência?")) return;
+    const confirmado = await this.confirmar("Deseja finalizar esta ocorrência?");
+    if (!confirmado) return;
 
     const result = await ocorrenciaManager.finalizar(id);
     if (result.success) {
@@ -1803,7 +1856,10 @@ class App {
       return;
     }
 
-    if (!confirm("Deseja realmente cancelar esta ocorrência?")) return;
+    const confirmado = await this.confirmar(
+      `Deseja realmente cancelar esta ocorrência?\n\nMotivo: ${motivo}`
+    );
+    if (!confirmado) return;
 
     const result = await ocorrenciaManager.cancelar(id, motivo);
     if (result.success) {
@@ -2191,7 +2247,6 @@ class App {
 
     const dataFim = dados.data_hora_encerramento || "";
 
-    // Geolocalização
     const latitude = dados.latitude || null;
     const longitude = dados.longitude || null;
 
@@ -2230,7 +2285,6 @@ class App {
                         </span>
                     `}
                 </div>
-                <!-- Campos ocultos para latitude e longitude -->
                 <input type="hidden" id="latitude" value="${latitude || ''}">
                 <input type="hidden" id="longitude" value="${longitude || ''}">
             </div>
@@ -2304,24 +2358,19 @@ class App {
     const result = await this.obterLocalizacao();
     if (result) {
       const { latitude, longitude } = result;
-      // Atualizar os campos ocultos
       const latField = document.getElementById("latitude");
       const lngField = document.getElementById("longitude");
       if (latField) latField.value = latitude;
       if (lngField) lngField.value = longitude;
       
-      // Atualizar os dados da ocorrência
       if (this.novaOcorrencia) {
         this.novaOcorrencia.dados.latitude = latitude;
         this.novaOcorrencia.dados.longitude = longitude;
       }
       
-      // Atualizar a interface para mostrar que a localização foi capturada
       const container = document.getElementById("novaOcorrenciaContent");
       if (container) {
-        // Recarregar a etapa para mostrar o ícone de confirmação
         this.renderizarEtapa(container);
-        // Rolar para o campo de localização
         const localField = document.getElementById("local_ocorrencia");
         if (localField) {
           localField.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3034,13 +3083,10 @@ class App {
       }
     }
 
-    if (
-      !confirm(
-        "Deseja finalizar esta ocorrência? Após finalizar, não será mais possível editar.",
-      )
-    ) {
-      return;
-    }
+    const confirmado = await this.confirmar(
+      "Deseja finalizar esta ocorrência? Após finalizar, não será mais possível editar."
+    );
+    if (!confirmado) return;
 
     const envolvidos = dados.envolvidos || [];
     const anexos = dados.anexos || [];
@@ -3233,15 +3279,15 @@ class App {
                     </button>
                 </div>
 
-                <div style="overflow-x:auto;">
-                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <div class="table-wrapper">
+                    <table>
                         <thead>
-                            <tr style="background:var(--cinza-claro);">
-                                <th style="padding:8px 6px;text-align:left;">Nome</th>
-                                <th style="padding:8px 6px;text-align:left;">Matrícula</th>
-                                <th style="padding:8px 6px;text-align:left;">Perfil</th>
-                                <th style="padding:8px 6px;text-align:left;">Status</th>
-                                <th style="padding:8px 6px;text-align:center;">Ações</th>
+                            <tr>
+                                <th>Nome</th>
+                                <th>Matrícula</th>
+                                <th>Perfil</th>
+                                <th>Status</th>
+                                <th style="text-align:center;">Ações</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -3249,12 +3295,12 @@ class App {
 
     if (usuarios.length === 0) {
       html += `
-                        <tr>
-                            <td colspan="5" style="padding:20px;text-align:center;color:var(--cinza-medio);">
-                                Nenhum usuário encontrado
-                            </td>
-                        </tr>
-                    `;
+                            <tr>
+                                <td colspan="5" style="padding:20px;text-align:center;color:var(--cinza-medio);">
+                                    Nenhum usuário encontrado
+                                </td>
+                            </tr>
+                        `;
     } else {
       usuarios.forEach(user => {
         const statusClass = user.status === 'ativo' ? 'synced' : user.status === 'inativo' ? 'cancelled' : 'draft';
@@ -3263,26 +3309,28 @@ class App {
         const ehAtual = user.id === authManager.getUserId();
 
         html += `
-                            <tr style="border-bottom:1px solid var(--cinza-claro);">
-                                <td style="padding:8px 6px;">${user.nome_completo}</td>
-                                <td style="padding:8px 6px;">${user.matricula || '-'}</td>
-                                <td style="padding:8px 6px;"><span class="badge ${user.perfil === 'supervisor' ? 'badge-azul' : 'badge-verde'}">${perfilLabel}</span></td>
-                                <td style="padding:8px 6px;"><span class="badge badge-${statusClass}">${statusLabel}</span></td>
-                                <td style="padding:8px 6px;text-align:center;display:flex;gap:4px;flex-wrap:wrap;justify-content:center;">
-                                    <button class="btn-secondary" onclick="app.modalEditarUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;" title="Editar">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn-secondary" onclick="app.toggleStatusUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:${user.status === 'ativo' ? 'var(--erro)' : 'var(--verde-bandeira)'};color:var(--branco);" title="${user.status === 'ativo' ? 'Desativar' : 'Ativar'}">
-                                        <i class="fas ${user.status === 'ativo' ? 'fa-user-slash' : 'fa-user-check'}"></i>
-                                    </button>
-                                    ${!ehAtual ? `
-                                        <button class="btn-secondary" onclick="app.resetarSenhaUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:var(--aviso);color:var(--branco);" title="Resetar senha">
-                                            <i class="fas fa-key"></i>
+                            <tr>
+                                <td>${user.nome_completo}</td>
+                                <td>${user.matricula || '-'}</td>
+                                <td><span class="badge ${user.perfil === 'supervisor' ? 'badge-azul' : 'badge-verde'}">${perfilLabel}</span></td>
+                                <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
+                                <td>
+                                    <div class="acoes">
+                                        <button class="btn-secondary info" onclick="app.modalEditarUsuario('${user.id}')" title="Editar">
+                                            <i class="fas fa-edit"></i>
                                         </button>
-                                    ` : ''}
-                                    <button class="btn-secondary" onclick="app.verLogsUsuario('${user.id}')" style="padding:2px 8px;font-size:11px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);" title="Ver logs">
-                                        <i class="fas fa-history"></i>
-                                    </button>
+                                        <button class="btn-secondary ${user.status === 'ativo' ? 'danger' : 'success'}" onclick="app.toggleStatusUsuario('${user.id}')" title="${user.status === 'ativo' ? 'Desativar' : 'Ativar'}">
+                                            <i class="fas ${user.status === 'ativo' ? 'fa-user-slash' : 'fa-user-check'}"></i>
+                                        </button>
+                                        ${!ehAtual ? `
+                                            <button class="btn-secondary warning" onclick="app.resetarSenhaUsuario('${user.id}')" title="Resetar senha">
+                                                <i class="fas fa-key"></i>
+                                            </button>
+                                        ` : ''}
+                                        <button class="btn-secondary info" onclick="app.verLogsUsuario('${user.id}')" title="Ver logs">
+                                            <i class="fas fa-history"></i>
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         `;
@@ -3306,7 +3354,6 @@ class App {
       this.showToast("Erro ao filtrar usuários", "error");
       return;
     }
-    // Recarregar a lista com filtro
     this.renderUsuarios(document.getElementById("page-usuarios"));
   }
 
@@ -3383,7 +3430,6 @@ class App {
     `;
     document.body.appendChild(overlay);
 
-    // Máscara de CPF
     const cpfInput = document.getElementById("new_cpf");
     if (cpfInput) {
       cpfInput.addEventListener("input", function(e) {
@@ -3553,7 +3599,6 @@ class App {
     if (email !== undefined) dados.email = email;
     if (telefone !== undefined) dados.telefone = telefone;
 
-    // Supervisor pode editar mais campos
     if (authManager.isSupervisor() && id !== authManager.getUserId()) {
       const matricula = document.getElementById("edit_matricula")?.value?.trim();
       const perfil = document.getElementById("edit_perfil")?.value;
@@ -3573,7 +3618,6 @@ class App {
     if (modal) modal.remove();
 
     this.showToast("Usuário atualizado com sucesso!", "success");
-    // Se atualizou o próprio perfil, atualizar header
     if (id === authManager.getUserId()) {
       this.atualizarHeader();
     }
@@ -3594,7 +3638,10 @@ class App {
     if (!user) return;
 
     const novoStatus = user.status === 'ativo' ? 'inativo' : 'ativo';
-    if (!confirm(`Deseja ${novoStatus === 'ativo' ? 'ativar' : 'desativar'} o usuário ${user.nome_completo}?`)) return;
+    const confirmado = await this.confirmar(
+      `Deseja ${novoStatus === 'ativo' ? 'ativar' : 'desativar'} o usuário ${user.nome_completo}?`
+    );
+    if (!confirmado) return;
 
     const res = await authManager.ativarDesativarUsuario(id, novoStatus);
     if (!res.success) {
@@ -3610,7 +3657,10 @@ class App {
   // ============================================
 
   async resetarSenhaUsuario(id) {
-    if (!confirm("Deseja resetar a senha deste usuário? Uma nova senha temporária será gerada.")) return;
+    const confirmado = await this.confirmar(
+      "Deseja resetar a senha deste usuário? Uma nova senha temporária será gerada."
+    );
+    if (!confirmado) return;
 
     const result = await authManager.resetarSenha(id);
     if (!result.success) {
@@ -3691,8 +3741,7 @@ class App {
     }
 
     const isSupervisor = authManager.isSupervisor();
-    const podeEditarMatricula = isSupervisor; // apenas supervisor pode editar matrícula
-    const podeEditarPerfil = isSupervisor; // supervisor pode editar perfil de outros? mas é o próprio perfil, então pode
+    const podeEditarMatricula = isSupervisor;
 
     container.innerHTML = `
             <div class="container">
@@ -3763,7 +3812,6 @@ class App {
     const dados = { nome_completo: nome };
     if (email !== undefined) dados.email = email;
     if (telefone !== undefined) dados.telefone = telefone;
-    // Matrícula só pode ser alterada por supervisor
     if (authManager.isSupervisor() && matricula !== undefined) {
       dados.matricula = matricula;
     }
@@ -3844,7 +3892,6 @@ class App {
       return;
     }
 
-    // Verificar senha atual
     const user = authManager.getUser();
     const client = supabaseClient.getClient();
     if (!client) {
@@ -3862,7 +3909,6 @@ class App {
       return;
     }
 
-    // Atualizar senha
     const { data: hashData } = await client.rpc("criar_hash_senha", {
       p_senha: novaSenha,
     });

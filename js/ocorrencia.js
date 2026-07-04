@@ -11,6 +11,8 @@
  * - Baseado em sistemas policiais oficiais (BO, BAT, DIAO, SRO)
  * - Ao solicitar retificação, NÃO copia o número da ocorrência original para evitar duplicidade
  * - Um novo número é gerado apenas quando a retificação é aprovada pelo supervisor
+ * - Na listagem, apenas ocorrências raiz (ocorrencia_original_id IS NULL) são exibidas
+ * - Ao aprovar retificação, mantém o mesmo número da ocorrência original
  */
 
 class OcorrenciaManager {
@@ -163,9 +165,13 @@ class OcorrenciaManager {
 
       let query = client.from("ocorrencias").select("*");
 
-      // Regra: TODOS os usuários autenticados veem TODAS as ocorrências
-      // (sem filtro por criado_por)
+      // ===== NOVA REGRA: Mostrar apenas ocorrências raiz (não retificações) =====
+      // Isso impede que pedidos de retificação (pending_rectification, rectification_rejected)
+      // apareçam na lista principal
+      query = query.is("ocorrencia_original_id", null);
+      // ===========================================================================
 
+      // Filtros
       if (filtros.status) {
         query = query.eq("status", filtros.status);
       }
@@ -602,7 +608,8 @@ class OcorrenciaManager {
 
   /**
    * Aprova uma retificação pendente (apenas supervisor)
-   * Gera um novo número de ocorrência na aprovação
+   * ===== CORREÇÃO: Mantém o mesmo número da ocorrência original =====
+   * Isso alinha com sistemas oficiais onde o número da ocorrência é único e permanente
    * @param {string} retificacaoId - ID da ocorrência de retificação pendente
    * @returns {Promise<Object>}
    */
@@ -637,18 +644,6 @@ class OcorrenciaManager {
         return { success: false, error: "Esta retificação não está pendente" };
       }
 
-      // ===== GERAR NOVO NÚMERO PARA A RETIFICAÇÃO =====
-      const ano = new Date().getFullYear();
-      const { count, error: countError } = await client
-        .from("ocorrencias")
-        .select("*", { count: "exact", head: true })
-        .gte("criado_em", `${ano}-01-01`);
-
-      if (countError) throw countError;
-      
-      const novoNumero = `${ano}-${String((count || 0) + 1).padStart(6, "0")}`;
-      // =================================================
-
       // Buscar a ocorrência original
       const { data: original, error: origError } = await client
         .from("ocorrencias")
@@ -660,24 +655,29 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência original não encontrada" };
       }
 
-      // Desativar a original
+      // ===== CORREÇÃO: Manter o mesmo número da original =====
+      const numeroOriginal = original.numero_ocorrencia;
+      // ======================================================
+
+      // Desativar a original e marcar como retificada
       const { error: updateOrigError } = await client
         .from("ocorrencias")
         .update({
           esta_ativa: false,
+          status: 'rectified',  // ← Muda o status da original para "Retificada"
           atualizado_em: new Date().toISOString()
         })
         .eq("id", original.id);
 
       if (updateOrigError) throw updateOrigError;
 
-      // Atualizar a retificação para aprovada com novo número
+      // Atualizar a retificação para aprovada com o MESMO número da original
       const { data, error } = await client
         .from("ocorrencias")
         .update({
           status: 'rectified',
           esta_ativa: true,
-          numero_ocorrencia: novoNumero, // ← NOVO NÚMERO GERADO NA APROVAÇÃO
+          numero_ocorrencia: numeroOriginal, // ← MANTÉM O MESMO NÚMERO!
           justificativa_retificacao: retificacao.solicitacao_retificacao_justificativa,
           retificado_em: new Date().toISOString(),
           retificado_por: user.id,

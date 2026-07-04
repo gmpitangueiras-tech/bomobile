@@ -211,44 +211,121 @@ class AuthManager {
     );
   }
 
-  // ========== PERMISSÕES ==========
+  // ============================================
+  // PERMISSÕES - ATUALIZADO PARA GUARDA/Supervisor
+  // ============================================
+
+  /**
+   * Verifica se o usuário pode editar uma ocorrência
+   * Regra: Apenas o CRIADOR (se for rascunho) ou SUPERVISOR podem editar
+   * NINGUÉM pode editar ocorrências finalizadas, canceladas ou retificadas
+   */
   podeEditar(ocorrencia) {
     if (!this.user) return false;
-    if (this.isSupervisor()) return true;
-    return (
-      ocorrencia.criado_por === this.user.id &&
-      ocorrencia.status !== "synced" &&
-      ocorrencia.status !== "cancelled"
-    );
-  }
-
-  podeVisualizar(ocorrencia) {
-    if (!this.user) return false;
-    if (this.isSupervisor()) return true;
-    return ocorrencia.criado_por === this.user.id;
-  }
-
-  podeCancelar(ocorrencia) {
-    if (!this.user) return false;
-    if (this.isSupervisor()) return true;
-    return (
-      ocorrencia.criado_por === this.user.id &&
-      ocorrencia.status !== "synced" &&
-      ocorrencia.status !== "cancelled"
-    );
-  }
-
-  podeFinalizar(ocorrencia) {
-    if (!this.user) return false;
-    if (this.isSupervisor()) return true;
+    // Supervisores podem editar qualquer rascunho
+    if (this.isSupervisor()) {
+      return ocorrencia.status === "draft";
+    }
+    // Guarda pode editar apenas seus próprios rascunhos
     return (
       ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
     );
   }
 
+  /**
+   * Verifica se o usuário pode visualizar uma ocorrência
+   * Regra: Todos os usuários autenticados podem visualizar TODAS as ocorrências
+   */
+  podeVisualizar(ocorrencia) {
+    if (!this.user) return false;
+    return true;
+  }
+
+  /**
+   * Verifica se o usuário pode finalizar uma ocorrência
+   * Regra: O CRIADOR (se for rascunho) ou SUPERVISOR podem finalizar
+   */
+  podeFinalizar(ocorrencia) {
+    if (!this.user) return false;
+    if (this.isSupervisor()) {
+      return ocorrencia.status === "draft";
+    }
+    // Guarda pode finalizar apenas seus próprios rascunhos
+    return (
+      ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
+    );
+  }
+
+  /**
+   * Verifica se o usuário pode cancelar uma ocorrência
+   * Regra: Apenas SUPERVISOR pode cancelar
+   */
+  podeCancelar(ocorrencia) {
+    if (!this.user) return false;
+    if (!this.isSupervisor()) return false;
+    return ocorrencia.status !== "cancelled";
+  }
+
+  /**
+   * Verifica se o usuário pode solicitar retificação
+   * Regra:
+   *   - Supervisor pode solicitar para qualquer ocorrência finalizada
+   *   - Guarda pode solicitar apenas para suas próprias ocorrências finalizadas
+   */
+  podeSolicitarRetificacao(ocorrencia) {
+    if (!this.user) return false;
+    // Apenas ocorrências finalizadas (synced ou pending_sync) podem ser retificadas
+    if (
+      ocorrencia.status !== "synced" &&
+      ocorrencia.status !== "pending_sync"
+    ) {
+      return false;
+    }
+    if (this.isSupervisor()) {
+      return true;
+    }
+    // Guarda: apenas suas próprias ocorrências
+    return ocorrencia.criado_por === this.user.id;
+  }
+
+  /**
+   * Verifica se o usuário pode aprovar uma retificação
+   * Regra: Apenas SUPERVISOR pode aprovar retificações pendentes
+   */
+  podeAprovarRetificacao(ocorrencia) {
+    if (!this.user) return false;
+    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
+  }
+
+  /**
+   * Verifica se o usuário pode rejeitar uma retificação
+   * Regra: Apenas SUPERVISOR pode rejeitar
+   */
+  podeRejeitarRetificacao(ocorrencia) {
+    if (!this.user) return false;
+    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
+  }
+
+  /**
+   * Verifica se o usuário pode ver o histórico
+   * Regra: Todos os autenticados podem ver
+   */
+  podeVerHistorico(ocorrencia) {
+    return this.isLoggedIn();
+  }
+
+  /**
+   * Verifica se o usuário pode acessar relatórios
+   * Regra: Apenas supervisores
+   */
   podeAcessarRelatorios() {
     return this.isSupervisor();
   }
+
+  /**
+   * Verifica se o usuário pode gerenciar usuários
+   * Regra: Apenas supervisores
+   */
   podeGerenciarUsuarios() {
     return this.isSupervisor();
   }

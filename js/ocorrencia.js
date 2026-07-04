@@ -13,6 +13,7 @@
  * - Um novo número é gerado apenas quando a retificação é aprovada pelo supervisor
  * - Na listagem, apenas ocorrências raiz (ocorrencia_original_id IS NULL) são exibidas
  * - Ao aprovar retificação, mantém o mesmo número da ocorrência original
+ * - Suporte a geolocalização (latitude/longitude)
  */
 
 class OcorrenciaManager {
@@ -61,13 +62,13 @@ class OcorrenciaManager {
       'numero_temporario',
       'criado_por',
       'criado_em',
-      'data_hora_inicio',        // DATA DO FATO É IMUTÁVEL!
-      'data_hora_encerramento',   // DATA DO FATO É IMUTÁVEL!
+      'data_hora_inicio',
+      'data_hora_encerramento',
       'status',
       'numero_versao',
       'ocorrencia_original_id',
-      'forma_solicitacao',        // Forma de solicitação é fixa
-      'criado_em'                 // Data de criação do registro é imutável
+      'forma_solicitacao',
+      'criado_em'
     ];
   }
 
@@ -114,6 +115,9 @@ class OcorrenciaManager {
         data_hora_inicio: dataHoraInicio,
         numero_versao: 1,
         esta_ativa: true,
+        // Campos de geolocalização
+        latitude: dados.latitude || null,
+        longitude: dados.longitude || null,
         // Campos para retificação
         ocorrencia_original_id: null,
         justificativa_retificacao: null,
@@ -169,7 +173,6 @@ class OcorrenciaManager {
       // Isso impede que pedidos de retificação (pending_rectification, rectification_rejected)
       // apareçam na lista principal
       query = query.is("ocorrencia_original_id", null);
-      // ===========================================================================
 
       // Filtros
       if (filtros.status) {
@@ -492,9 +495,9 @@ class OcorrenciaManager {
         // CAMPOS IMUTÁVEIS - PRESERVADOS (conforme sistemas oficiais)
         criado_por: original.criado_por,
         criado_em: original.criado_em,
-        data_hora_inicio: original.data_hora_inicio,     // ← PRESERVADO - IMUTÁVEL
-        data_hora_encerramento: original.data_hora_encerramento, // ← PRESERVADO - IMUTÁVEL
-        forma_solicitacao: original.forma_solicitacao,    // ← PRESERVADO - IMUTÁVEL
+        data_hora_inicio: original.data_hora_inicio,
+        data_hora_encerramento: original.data_hora_encerramento,
+        forma_solicitacao: original.forma_solicitacao,
         // Salvar quais campos foram alterados (para exibir no histórico)
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(original)
@@ -657,14 +660,13 @@ class OcorrenciaManager {
 
       // ===== CORREÇÃO: Manter o mesmo número da original =====
       const numeroOriginal = original.numero_ocorrencia;
-      // ======================================================
 
       // Desativar a original e marcar como retificada
       const { error: updateOrigError } = await client
         .from("ocorrencias")
         .update({
           esta_ativa: false,
-          status: 'rectified',  // ← Muda o status da original para "Retificada"
+          status: 'rectified',
           atualizado_em: new Date().toISOString()
         })
         .eq("id", original.id);

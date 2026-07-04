@@ -14,6 +14,7 @@
  * - Na listagem, apenas ocorrências raiz (ocorrencia_original_id IS NULL) são exibidas
  * - Ao aprovar retificação, mantém o mesmo número da ocorrência original
  * - Suporte a geolocalização (latitude/longitude)
+ * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
  */
 
 class OcorrenciaManager {
@@ -48,6 +49,16 @@ class OcorrenciaManager {
       
       // Dados Operacionais (correção de digitação)
       'codigo_operacional',
+      
+      // Natureza da Ocorrência (correção de classificação)
+      'tipo_ocorrencia',
+      'sub_tipo_ocorrencia',
+      'gravidade',
+      
+      // Dados do BO (correção de dados)
+      'numero_bo',
+      'orgao_bo',
+      'data_bo',
     ];
   }
 
@@ -118,6 +129,14 @@ class OcorrenciaManager {
         // Campos de geolocalização
         latitude: dados.latitude || null,
         longitude: dados.longitude || null,
+        // Campos de natureza da ocorrência
+        tipo_ocorrencia: dados.tipo_ocorrencia || null,
+        sub_tipo_ocorrencia: dados.sub_tipo_ocorrencia || null,
+        gravidade: dados.gravidade || null,
+        // Campos de BO (outros órgãos)
+        numero_bo: dados.numero_bo || null,
+        orgao_bo: dados.orgao_bo || null,
+        data_bo: dados.data_bo || null,
         // Campos para retificação
         ocorrencia_original_id: null,
         justificativa_retificacao: null,
@@ -170,13 +189,17 @@ class OcorrenciaManager {
       let query = client.from("ocorrencias").select("*");
 
       // ===== NOVA REGRA: Mostrar apenas ocorrências raiz (não retificações) =====
-      // Isso impede que pedidos de retificação (pending_rectification, rectification_rejected)
-      // apareçam na lista principal
       query = query.is("ocorrencia_original_id", null);
 
       // Filtros
       if (filtros.status) {
         query = query.eq("status", filtros.status);
+      }
+      if (filtros.tipo_ocorrencia) {
+        query = query.eq("tipo_ocorrencia", filtros.tipo_ocorrencia);
+      }
+      if (filtros.gravidade) {
+        query = query.eq("gravidade", filtros.gravidade);
       }
       if (filtros.data_inicio) {
         query = query.gte("criado_em", filtros.data_inicio);
@@ -457,7 +480,6 @@ class OcorrenciaManager {
       }
 
       // ⚠️ GARANTE QUE DATA/HORA NÃO SEJAM ALTERADAS
-      // Preserva as datas originais - NUNCA ALTERAR! (conforme sistemas oficiais)
       dadosFiltrados.data_hora_inicio = original.data_hora_inicio;
       dadosFiltrados.data_hora_encerramento = original.data_hora_encerramento;
       dadosFiltrados.forma_solicitacao = original.forma_solicitacao;
@@ -487,18 +509,16 @@ class OcorrenciaManager {
         numero_versao: (original.numero_versao || 1) + 1,
         criado_em: new Date().toISOString(),
         atualizado_em: new Date().toISOString(),
-        // ===== CORREÇÃO: NÃO COPIA O NÚMERO DA OCORRÊNCIA =====
-        // Isso evita violação da constraint unique
-        numero_ocorrencia: null, // ← Gera novo número na aprovação
+        // NÃO COPIA O NÚMERO DA OCORRÊNCIA - evita duplicidade
+        numero_ocorrencia: null,
         numero_temporario: `RET-${Date.now()}`,
-        // =======================================================
-        // CAMPOS IMUTÁVEIS - PRESERVADOS (conforme sistemas oficiais)
+        // CAMPOS IMUTÁVEIS PRESERVADOS
         criado_por: original.criado_por,
         criado_em: original.criado_em,
         data_hora_inicio: original.data_hora_inicio,
         data_hora_encerramento: original.data_hora_encerramento,
         forma_solicitacao: original.forma_solicitacao,
-        // Salvar quais campos foram alterados (para exibir no histórico)
+        // Salvar campos alterados
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(original)
       };
@@ -604,15 +624,20 @@ class OcorrenciaManager {
       'bairro_ocorrencia': 'Bairro da Ocorrência',
       'referencia': 'Referência',
       'observacoes': 'Observações',
-      'codigo_operacional': 'Código Operacional'
+      'codigo_operacional': 'Código Operacional',
+      'tipo_ocorrencia': 'Tipo de Ocorrência',
+      'sub_tipo_ocorrencia': 'Sub-tipo de Ocorrência',
+      'gravidade': 'Gravidade',
+      'numero_bo': 'Número do BO',
+      'orgao_bo': 'Órgão Registrador',
+      'data_bo': 'Data do BO'
     };
     return labels[campo] || campo;
   }
 
   /**
    * Aprova uma retificação pendente (apenas supervisor)
-   * ===== CORREÇÃO: Mantém o mesmo número da ocorrência original =====
-   * Isso alinha com sistemas oficiais onde o número da ocorrência é único e permanente
+   * Mantém o mesmo número da ocorrência original
    * @param {string} retificacaoId - ID da ocorrência de retificação pendente
    * @returns {Promise<Object>}
    */
@@ -658,7 +683,7 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência original não encontrada" };
       }
 
-      // ===== CORREÇÃO: Manter o mesmo número da original =====
+      // Manter o mesmo número da original
       const numeroOriginal = original.numero_ocorrencia;
 
       // Desativar a original e marcar como retificada
@@ -673,13 +698,13 @@ class OcorrenciaManager {
 
       if (updateOrigError) throw updateOrigError;
 
-      // Atualizar a retificação para aprovada com o MESMO número da original
+      // Atualizar a retificação para aprovada com o mesmo número
       const { data, error } = await client
         .from("ocorrencias")
         .update({
           status: 'rectified',
           esta_ativa: true,
-          numero_ocorrencia: numeroOriginal, // ← MANTÉM O MESMO NÚMERO!
+          numero_ocorrencia: numeroOriginal,
           justificativa_retificacao: retificacao.solicitacao_retificacao_justificativa,
           retificado_em: new Date().toISOString(),
           retificado_por: user.id,

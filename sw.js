@@ -1,14 +1,16 @@
 const CACHE_NAME = "guarda-pitangueiras-v1";
+const BASE_PATH = "/bomobile/";
+
 const ASSETS = [
-  "/",
-  "/index.html",
-  "/css/style.css",
-  "/js/config.js",
-  "/js/supabase.js",
-  "/js/auth.js",
-  "/js/ocorrencia.js",
-  "/js/app.js",
-  "/manifest.json",
+  BASE_PATH,
+  BASE_PATH + "index.html",
+  BASE_PATH + "css/style.css",
+  BASE_PATH + "js/config.js",
+  BASE_PATH + "js/supabase.js",
+  BASE_PATH + "js/auth.js",
+  BASE_PATH + "js/ocorrencia.js",
+  BASE_PATH + "js/app.js",
+  BASE_PATH + "manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
@@ -16,7 +18,7 @@ self.addEventListener("install", (event) => {
     caches
       .open(CACHE_NAME)
       .then((cache) => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting()),
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -28,18 +30,27 @@ self.addEventListener("activate", (event) => {
         Promise.all(
           keys
             .filter((key) => key !== CACHE_NAME)
-            .map((key) => caches.delete(key)),
-        ),
-      ),
+            .map((key) => caches.delete(key))
+        )
+      )
   );
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.url.includes("supabase.co")) return;
+  // Se for uma navegação (requisição de página HTML)
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      caches.match(BASE_PATH + "index.html").then((response) => {
+        return response || fetch(event.request);
+      })
+    );
+    return;
+  }
+
+  // Para outros recursos, tenta cache primeiro
   event.respondWith(
-    caches
-      .match(event.request)
-      .then((response) => response || fetch(event.request))
-      .catch(() => new Response("Offline", { status: 503 })),
+    caches.match(event.request).then((response) => {
+      return response || fetch(event.request);
+    })
   );
 });

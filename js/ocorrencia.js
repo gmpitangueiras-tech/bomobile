@@ -1,7 +1,7 @@
 /**
  * GERENCIADOR DE OCORRÊNCIAS
  * Guarda Municipal de Pitangueiras - PR
- * 
+ *
  * Regras de Negócio:
  * - Guarda: pode criar, editar (apenas seus rascunhos), finalizar (apenas seus rascunhos)
  * - Guarda: pode solicitar retificação (apenas de suas ocorrências finalizadas)
@@ -30,35 +30,35 @@ class OcorrenciaManager {
   get CAMPOS_RETIFICAVEIS() {
     return [
       // Dados do Solicitante (correção cadastral)
-      'nome_solicitante',
-      'telefone_solicitante',
-      'endereco_solicitante',
-      'bairro_solicitante',
-      'complemento',
-      'identificacao_adicional',
-      'codigo_municipal',
-      
+      "nome_solicitante",
+      "telefone_solicitante",
+      "endereco_solicitante",
+      "bairro_solicitante",
+      "complemento",
+      "identificacao_adicional",
+      "codigo_municipal",
+
       // Dados do Local (correção de endereço)
-      'local_ocorrencia',
-      'rodovia',
-      'bairro_ocorrencia',
-      'referencia',
-      
+      "local_ocorrencia",
+      "rodovia",
+      "bairro_ocorrencia",
+      "referencia",
+
       // Descrição (complementação de informações)
-      'observacoes',
-      
+      "observacoes",
+
       // Dados Operacionais (correção de digitação)
-      'codigo_operacional',
-      
+      "codigo_operacional",
+
       // Natureza da Ocorrência (correção de classificação)
-      'tipo_ocorrencia',
-      'sub_tipo_ocorrencia',
-      'gravidade',
-      
+      "tipo_ocorrencia",
+      "sub_tipo_ocorrencia",
+      "gravidade",
+
       // Dados do BO (correção de dados)
-      'numero_bo',
-      'orgao_bo',
-      'data_bo',
+      "numero_bo",
+      "orgao_bo",
+      "data_bo",
     ];
   }
 
@@ -69,17 +69,17 @@ class OcorrenciaManager {
    */
   get CAMPOS_IMUTAVEIS() {
     return [
-      'numero_ocorrencia',
-      'numero_temporario',
-      'criado_por',
-      'criado_em',
-      'data_hora_inicio',
-      'data_hora_encerramento',
-      'status',
-      'numero_versao',
-      'ocorrencia_original_id',
-      'forma_solicitacao',
-      'criado_em'
+      "numero_ocorrencia",
+      "numero_temporario",
+      "criado_por",
+      "criado_em",
+      "data_hora_inicio",
+      "data_hora_encerramento",
+      "status",
+      "numero_versao",
+      "ocorrencia_original_id",
+      "forma_solicitacao",
+      "criado_em",
     ];
   }
 
@@ -270,7 +270,10 @@ class OcorrenciaManager {
       // Verifica permissão: apenas o criador (se for rascunho) ou supervisor
       const podeEditar = authManager.podeEditar(ocorrencia);
       if (!podeEditar) {
-        return { success: false, error: "Permissão negada para editar esta ocorrência" };
+        return {
+          success: false,
+          error: "Permissão negada para editar esta ocorrência",
+        };
       }
 
       const client = supabaseClient.getClient();
@@ -309,12 +312,18 @@ class OcorrenciaManager {
       // Verifica permissão
       const podeFinalizar = authManager.podeFinalizar(ocorrencia);
       if (!podeFinalizar) {
-        return { success: false, error: "Permissão negada para finalizar esta ocorrência" };
+        return {
+          success: false,
+          error: "Permissão negada para finalizar esta ocorrência",
+        };
       }
 
       // Apenas rascunhos podem ser finalizados
-      if (ocorrencia.status !== 'draft') {
-        return { success: false, error: "Apenas rascunhos podem ser finalizados" };
+      if (ocorrencia.status !== "draft") {
+        return {
+          success: false,
+          error: "Apenas rascunhos podem ser finalizados",
+        };
       }
 
       let numeroOficial = null;
@@ -354,10 +363,14 @@ class OcorrenciaManager {
 
       // Apenas supervisor pode cancelar
       if (!authManager.isSupervisor()) {
-        return { success: false, error: "Permissão negada. Apenas supervisores podem cancelar ocorrências." };
+        return {
+          success: false,
+          error:
+            "Permissão negada. Apenas supervisores podem cancelar ocorrências.",
+        };
       }
 
-      if (ocorrencia.status === 'cancelled') {
+      if (ocorrencia.status === "cancelled") {
         return { success: false, error: "Esta ocorrência já está cancelada" };
       }
 
@@ -427,11 +440,17 @@ class OcorrenciaManager {
 
       const podeSolicitar = authManager.podeSolicitarRetificacao(original);
       if (!podeSolicitar) {
-        return { success: false, error: "Permissão negada para solicitar retificação" };
+        return {
+          success: false,
+          error: "Permissão negada para solicitar retificação",
+        };
       }
 
       if (!justificativa || justificativa.trim().length < 10) {
-        return { success: false, error: "Justificativa deve ter pelo menos 10 caracteres" };
+        return {
+          success: false,
+          error: "Justificativa deve ter pelo menos 10 caracteres",
+        };
       }
 
       const client = supabaseClient.getClient();
@@ -450,25 +469,29 @@ class OcorrenciaManager {
       if (pendenteError) throw pendenteError;
 
       if (pendente) {
-        return { success: false, error: "Já existe um pedido de retificação pendente para esta ocorrência" };
+        return {
+          success: false,
+          error:
+            "Já existe um pedido de retificação pendente para esta ocorrência",
+        };
       }
 
       // FILTRAR APENAS CAMPOS RETIFICÁVEIS
       const dadosFiltrados = {};
       const camposAlterados = [];
-      
+
       for (const campo of this.CAMPOS_RETIFICAVEIS) {
         if (dados[campo] !== undefined && dados[campo] !== null) {
-          const valorOriginal = original[campo] || '';
-          const valorNovo = dados[campo] || '';
-          
+          const valorOriginal = original[campo] || "";
+          const valorNovo = dados[campo] || "";
+
           if (String(valorOriginal).trim() !== String(valorNovo).trim()) {
             dadosFiltrados[campo] = dados[campo];
             camposAlterados.push({
               campo: campo,
               antes: valorOriginal,
               depois: valorNovo,
-              label: this.getCampoLabel(campo)
+              label: this.getCampoLabel(campo),
             });
           }
         }
@@ -476,7 +499,10 @@ class OcorrenciaManager {
 
       // Verifica se algum campo foi alterado
       if (Object.keys(dadosFiltrados).length === 0) {
-        return { success: false, error: "Nenhum campo foi alterado para retificação" };
+        return {
+          success: false,
+          error: "Nenhum campo foi alterado para retificação",
+        };
       }
 
       // ⚠️ GARANTE QUE DATA/HORA NÃO SEJAM ALTERADAS
@@ -496,7 +522,9 @@ class OcorrenciaManager {
         justificativa_retificacao: isSupervisor ? justificativa : null,
         retificado_em: isSupervisor ? new Date().toISOString() : null,
         retificado_por: isSupervisor ? user.id : null,
-        solicitacao_retificacao_justificativa: isSupervisor ? null : justificativa,
+        solicitacao_retificacao_justificativa: isSupervisor
+          ? null
+          : justificativa,
         solicitada_em: isSupervisor ? null : new Date().toISOString(),
         solicitada_por: isSupervisor ? null : user.id,
         aprovada_em: isSupervisor ? new Date().toISOString() : null,
@@ -520,7 +548,7 @@ class OcorrenciaManager {
         forma_solicitacao: original.forma_solicitacao,
         // Salvar campos alterados
         campos_alterados: JSON.stringify(camposAlterados),
-        versao_original: JSON.stringify(original)
+        versao_original: JSON.stringify(original),
       };
 
       // Remove campos que não devem ser inseridos
@@ -532,7 +560,7 @@ class OcorrenciaManager {
           .from("ocorrencias")
           .update({
             esta_ativa: false,
-            atualizado_em: new Date().toISOString()
+            atualizado_em: new Date().toISOString(),
           })
           .eq("id", id);
 
@@ -551,19 +579,19 @@ class OcorrenciaManager {
       // Copiar envolvidos da original para a retificação
       const envolvidosResult = await this.listarEnvolvidos(id);
       if (envolvidosResult.success && envolvidosResult.data.length > 0) {
-        const novosEnvolvidos = envolvidosResult.data.map(env => ({
+        const novosEnvolvidos = envolvidosResult.data.map((env) => ({
           ...env,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date().toISOString()
+          criado_em: new Date().toISOString(),
         }));
-        
-        novosEnvolvidos.forEach(env => delete env.id);
-        
+
+        novosEnvolvidos.forEach((env) => delete env.id);
+
         const { error: envError } = await client
           .from("envolvidos")
           .insert(novosEnvolvidos);
-        
+
         if (envError) {
           console.warn("Erro ao copiar envolvidos:", envError);
         }
@@ -572,32 +600,32 @@ class OcorrenciaManager {
       // Copiar anexos da original para a retificação
       const anexosResult = await this.listarAnexos(id);
       if (anexosResult.success && anexosResult.data.length > 0) {
-        const novosAnexos = anexosResult.data.map(anexo => ({
+        const novosAnexos = anexosResult.data.map((anexo) => ({
           ...anexo,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date().toISOString()
+          criado_em: new Date().toISOString(),
         }));
-        
-        novosAnexos.forEach(anexo => delete anexo.id);
-        
+
+        novosAnexos.forEach((anexo) => delete anexo.id);
+
         const { error: anexoError } = await client
           .from("anexos")
           .insert(novosAnexos);
-        
+
         if (anexoError) {
           console.warn("Erro ao copiar anexos:", anexoError);
         }
       }
 
       console.log("✅ Retificação criada:", novaOcorrencia.id);
-      return { 
-        success: true, 
-        data: novaOcorrencia, 
+      return {
+        success: true,
+        data: novaOcorrencia,
         original_id: id,
         status: statusFinal,
         is_pending: !isSupervisor,
-        campos_alterados: camposAlterados
+        campos_alterados: camposAlterados,
       };
     } catch (error) {
       console.error("❌ Erro ao criar retificação:", error);
@@ -612,25 +640,25 @@ class OcorrenciaManager {
    */
   getCampoLabel(campo) {
     const labels = {
-      'nome_solicitante': 'Nome do Solicitante',
-      'telefone_solicitante': 'Telefone do Solicitante',
-      'endereco_solicitante': 'Endereço do Solicitante',
-      'bairro_solicitante': 'Bairro do Solicitante',
-      'complemento': 'Complemento',
-      'identificacao_adicional': 'Identificação Adicional',
-      'codigo_municipal': 'Código Municipal',
-      'local_ocorrencia': 'Local da Ocorrência',
-      'rodovia': 'Rodovia',
-      'bairro_ocorrencia': 'Bairro da Ocorrência',
-      'referencia': 'Referência',
-      'observacoes': 'Observações',
-      'codigo_operacional': 'Código Operacional',
-      'tipo_ocorrencia': 'Tipo de Ocorrência',
-      'sub_tipo_ocorrencia': 'Sub-tipo de Ocorrência',
-      'gravidade': 'Gravidade',
-      'numero_bo': 'Número do BO',
-      'orgao_bo': 'Órgão Registrador',
-      'data_bo': 'Data do BO'
+      nome_solicitante: "Nome do Solicitante",
+      telefone_solicitante: "Telefone do Solicitante",
+      endereco_solicitante: "Endereço do Solicitante",
+      bairro_solicitante: "Bairro do Solicitante",
+      complemento: "Complemento",
+      identificacao_adicional: "Identificação Adicional",
+      codigo_municipal: "Código Municipal",
+      local_ocorrencia: "Local da Ocorrência",
+      rodovia: "Rodovia",
+      bairro_ocorrencia: "Bairro da Ocorrência",
+      referencia: "Referência",
+      observacoes: "Observações",
+      codigo_operacional: "Código Operacional",
+      tipo_ocorrencia: "Tipo de Ocorrência",
+      sub_tipo_ocorrencia: "Sub-tipo de Ocorrência",
+      gravidade: "Gravidade",
+      numero_bo: "Número do BO",
+      orgao_bo: "Órgão Registrador",
+      data_bo: "Data do BO",
     };
     return labels[campo] || campo;
   }
@@ -649,7 +677,11 @@ class OcorrenciaManager {
       }
 
       if (!authManager.isSupervisor()) {
-        return { success: false, error: "Permissão negada. Apenas supervisores podem aprovar retificações." };
+        return {
+          success: false,
+          error:
+            "Permissão negada. Apenas supervisores podem aprovar retificações.",
+        };
       }
 
       const client = supabaseClient.getClient();
@@ -668,7 +700,7 @@ class OcorrenciaManager {
         return { success: false, error: "Retificação não encontrada" };
       }
 
-      if (retificacao.status !== 'pending_rectification') {
+      if (retificacao.status !== "pending_rectification") {
         return { success: false, error: "Esta retificação não está pendente" };
       }
 
@@ -691,8 +723,8 @@ class OcorrenciaManager {
         .from("ocorrencias")
         .update({
           esta_ativa: false,
-          status: 'rectified',
-          atualizado_em: new Date().toISOString()
+          status: "rectified",
+          atualizado_em: new Date().toISOString(),
         })
         .eq("id", original.id);
 
@@ -702,10 +734,11 @@ class OcorrenciaManager {
       const { data, error } = await client
         .from("ocorrencias")
         .update({
-          status: 'rectified',
+          status: "rectified",
           esta_ativa: true,
           numero_ocorrencia: numeroOriginal,
-          justificativa_retificacao: retificacao.solicitacao_retificacao_justificativa,
+          justificativa_retificacao:
+            retificacao.solicitacao_retificacao_justificativa,
           retificado_em: new Date().toISOString(),
           retificado_por: user.id,
           aprovada_em: new Date().toISOString(),
@@ -740,7 +773,11 @@ class OcorrenciaManager {
       }
 
       if (!authManager.isSupervisor()) {
-        return { success: false, error: "Permissão negada. Apenas supervisores podem rejeitar retificações." };
+        return {
+          success: false,
+          error:
+            "Permissão negada. Apenas supervisores podem rejeitar retificações.",
+        };
       }
 
       if (!motivo || motivo.trim().length === 0) {
@@ -763,7 +800,7 @@ class OcorrenciaManager {
         return { success: false, error: "Retificação não encontrada" };
       }
 
-      if (retificacao.status !== 'pending_rectification') {
+      if (retificacao.status !== "pending_rectification") {
         return { success: false, error: "Esta retificação não está pendente" };
       }
 
@@ -771,7 +808,7 @@ class OcorrenciaManager {
       const { data, error } = await client
         .from("ocorrencias")
         .update({
-          status: 'rectification_rejected',
+          status: "rectification_rejected",
           esta_ativa: false,
           rejeitada_em: new Date().toISOString(),
           rejeitada_por: user.id,
@@ -804,7 +841,11 @@ class OcorrenciaManager {
       }
 
       if (!authManager.isSupervisor()) {
-        return { success: false, error: "Permissão negada. Apenas supervisores podem ver pedidos pendentes." };
+        return {
+          success: false,
+          error:
+            "Permissão negada. Apenas supervisores podem ver pedidos pendentes.",
+        };
       }
 
       const client = supabaseClient.getClient();
@@ -865,7 +906,7 @@ class OcorrenciaManager {
       // Monta o histórico completo
       const historico = [
         { ...original, is_original: true },
-        ...retificacoes.map(r => ({ ...r, is_original: false }))
+        ...retificacoes.map((r) => ({ ...r, is_original: false })),
       ];
 
       return { success: true, data: historico };
@@ -927,8 +968,8 @@ class OcorrenciaManager {
         data: {
           campos_alterados: camposAlterados,
           versao_original: versaoOriginal,
-          versao_atual: retificacao
-        }
+          versao_atual: retificacao,
+        },
       };
     } catch (error) {
       console.error("❌ Erro ao buscar detalhes das alterações:", error);
@@ -994,10 +1035,13 @@ class OcorrenciaManager {
           .eq("esta_ativa", true)
           .maybeSingle();
 
-        if (ativaError && ativaError.code !== 'PGRST116') throw ativaError;
+        if (ativaError && ativaError.code !== "PGRST116") throw ativaError;
 
         if (!ativa) {
-          if (ocorrencia.status === 'rectified' || ocorrencia.status === 'pending_rectification') {
+          if (
+            ocorrencia.status === "rectified" ||
+            ocorrencia.status === "pending_rectification"
+          ) {
             return { success: true, data: ocorrencia };
           }
           const { data: original, error: origError } = await client
@@ -1019,7 +1063,7 @@ class OcorrenciaManager {
         .eq("esta_ativa", true)
         .maybeSingle();
 
-      if (ativaError && ativaError.code !== 'PGRST116') throw ativaError;
+      if (ativaError && ativaError.code !== "PGRST116") throw ativaError;
 
       if (!ativa) {
         if (ocorrencia.esta_ativa) {
@@ -1395,9 +1439,7 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      const { data, error } = await client
-        .from("ocorrencias")
-        .select("*");
+      const { data, error } = await client.from("ocorrencias").select("*");
 
       if (error) throw error;
 
@@ -1410,8 +1452,12 @@ class OcorrenciaManager {
         synced: data.filter((o) => o.status === "synced").length,
         cancelled: data.filter((o) => o.status === "cancelled").length,
         rectified: data.filter((o) => o.status === "rectified").length,
-        pending_rectification: data.filter((o) => o.status === "pending_rectification").length,
-        rectification_rejected: data.filter((o) => o.status === "rectification_rejected").length,
+        pending_rectification: data.filter(
+          (o) => o.status === "pending_rectification",
+        ).length,
+        rectification_rejected: data.filter(
+          (o) => o.status === "rectification_rejected",
+        ).length,
       };
 
       return { success: true, data: stats };
@@ -1426,11 +1472,14 @@ class OcorrenciaManager {
   // ============================================
 
   gerarUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = (Math.random() * 16) | 0;
-      const v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+      /[xy]/g,
+      function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      },
+    );
   }
 }
 

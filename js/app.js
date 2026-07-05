@@ -36,20 +36,13 @@ class App {
       usuarios: { element: "page-usuarios", showHeader: true, showFab: false },
       perfil: { element: "page-perfil", showHeader: true, showFab: false },
     };
-    // Para controle de rascunho
     this.rascunhoId = null;
     this.dadosRascunho = null;
     this.alteracoesNaoSalvas = false;
-    // Filtros para página de ocorrências
     this.filtrosOcorrencias = {
       status: "",
       dataInicio: "",
       dataFim: "",
-    };
-    // Geolocalização
-    this.localizacao = {
-      latitude: null,
-      longitude: null,
     };
   }
 
@@ -109,49 +102,13 @@ class App {
         </div>
       `;
       document.body.appendChild(overlay);
-      
       window._confirmResolve = resolve;
-      
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) {
           overlay.remove();
           resolve(false);
         }
       });
-    });
-  }
-
-  // ============================================
-  // GEOLOCALIZAÇÃO
-  // ============================================
-
-  obterLocalizacao() {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        this.showToast("Geolocalização não suportada pelo navegador", "warning");
-        resolve(null);
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords;
-          this.localizacao.latitude = latitude;
-          this.localizacao.longitude = longitude;
-          this.showToast("Localização obtida com sucesso!", "success");
-          resolve({ latitude, longitude });
-        },
-        (error) => {
-          console.error("Erro ao obter localização:", error);
-          let mensagem = "Erro ao obter localização";
-          if (error.code === 1) mensagem = "Permissão de localização negada";
-          else if (error.code === 2) mensagem = "Localização indisponível";
-          else if (error.code === 3) mensagem = "Timeout ao obter localização";
-          this.showToast(mensagem, "warning");
-          resolve(null);
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-      );
     });
   }
 
@@ -244,14 +201,6 @@ class App {
           envolvidos: [],
           observacoes: data.observacoes || "",
           anexos: [],
-          latitude: data.latitude || null,
-          longitude: data.longitude || null,
-          tipo_ocorrencia: data.tipo_ocorrencia || "",
-          sub_tipo_ocorrencia: data.sub_tipo_ocorrencia || "",
-          gravidade: data.gravidade || "",
-          numero_bo: data.numero_bo || "",
-          orgao_bo: data.orgao_bo || "",
-          data_bo: data.data_bo || "",
         };
 
         const envResult = await ocorrenciaManager.listarEnvolvidos(data.id);
@@ -355,14 +304,6 @@ class App {
         atualizado_em: new Date().toISOString(),
         numero_versao: 1,
         esta_ativa: true,
-        latitude: dados.latitude || null,
-        longitude: dados.longitude || null,
-        tipo_ocorrencia: dados.tipo_ocorrencia || null,
-        sub_tipo_ocorrencia: dados.sub_tipo_ocorrencia || null,
-        gravidade: dados.gravidade || null,
-        numero_bo: dados.numero_bo || null,
-        orgao_bo: dados.orgao_bo || null,
-        data_bo: dados.data_bo || null,
       };
 
       let result;
@@ -1227,31 +1168,6 @@ class App {
                         <span class="rotulo">Versão:</span>
                         <span class="valor">${occ.numero_versao}</span>
                     </div>` : ""}
-                    ${occ.tipo_ocorrencia ? `
-                    <div class="campo">
-                        <span class="rotulo">Tipo:</span>
-                        <span class="valor">${occ.tipo_ocorrencia}</span>
-                    </div>` : ""}
-                    ${occ.sub_tipo_ocorrencia ? `
-                    <div class="campo">
-                        <span class="rotulo">Sub-tipo:</span>
-                        <span class="valor">${occ.sub_tipo_ocorrencia}</span>
-                    </div>` : ""}
-                    ${occ.gravidade ? `
-                    <div class="campo">
-                        <span class="rotulo">Gravidade:</span>
-                        <span class="valor">${occ.gravidade}</span>
-                    </div>` : ""}
-                    ${occ.latitude ? `
-                    <div class="campo">
-                        <span class="rotulo">Latitude:</span>
-                        <span class="valor">${occ.latitude}</span>
-                    </div>` : ""}
-                    ${occ.longitude ? `
-                    <div class="campo">
-                        <span class="rotulo">Longitude:</span>
-                        <span class="valor">${occ.longitude}</span>
-                    </div>` : ""}
                 </div>
 
                 <div class="card-revisao">
@@ -1963,7 +1879,7 @@ class App {
   }
 
   // ============================================
-  // NOVA OCORRÊNCIA - COM NOVOS CAMPOS
+  // NOVA OCORRÊNCIA - SOMENTE CAMPOS DO FORMULÁRIO
   // ============================================
 
   async renderNovaOcorrencia(container) {
@@ -1998,14 +1914,6 @@ class App {
           envolvidos: [],
           observacoes: "",
           anexos: [],
-          latitude: null,
-          longitude: null,
-          tipo_ocorrencia: "",
-          sub_tipo_ocorrencia: "",
-          gravidade: "",
-          numero_bo: "",
-          orgao_bo: "",
-          data_bo: "",
         },
       };
       this.alteracoesNaoSalvas = false;
@@ -2112,7 +2020,7 @@ class App {
   getEtapaSubtitulo(etapa) {
     const subtitulos = {
       1: "Informe como a solicitação chegou até você",
-      2: "Preencha os dados principais da ocorrência, incluindo tipo e gravidade",
+      2: "Preencha os dados principais da ocorrência",
       3: "Cadastre os envolvidos (autores, vítimas, testemunhas)",
       4: "Descreva detalhadamente o ocorrido",
       5: "Adicione fotos, vídeos ou documentos",
@@ -2141,7 +2049,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 1 - ORIGEM DA SOLICITAÇÃO (sem alterações)
+  // ETAPA 1 - ORIGEM DA SOLICITAÇÃO
   // ============================================
   renderEtapa1(dados) {
     const opcoesForma = [
@@ -2256,7 +2164,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 2 - DADOS DA OCORRÊNCIA (COM NOVOS CAMPOS)
+  // ETAPA 2 - DADOS DA OCORRÊNCIA (APENAS FORMULÁRIO)
   // ============================================
   renderEtapa2(dados) {
     const brasiliaNow = this.obterDataHoraBrasilia();
@@ -2277,141 +2185,8 @@ class App {
     }
 
     const dataFim = dados.data_hora_encerramento || "";
-    const latitude = dados.latitude || null;
-    const longitude = dados.longitude || null;
-
-    // Opções para Tipo de Ocorrência
-    const tipos = [
-      { value: "", label: "Selecione..." },
-      { value: "Abandono de Animal", label: "Abandono de Animal" },
-      { value: "Acidente de Trânsito", label: "Acidente de Trânsito" },
-      { value: "Agressão Física", label: "Agressão Física" },
-      { value: "Agressão Verbal", label: "Agressão Verbal" },
-      { value: "Ameaça", label: "Ameaça" },
-      { value: "Arrombamento", label: "Arrombamento" },
-      { value: "Ato Infracional", label: "Ato Infracional" },
-      { value: "Briga", label: "Briga" },
-      { value: "Crime Ambiental", label: "Crime Ambiental" },
-      { value: "Danos ao Patrimônio Público", label: "Danos ao Patrimônio Público" },
-      { value: "Desaparecimento", label: "Desaparecimento" },
-      { value: "Discriminação", label: "Discriminação" },
-      { value: "Drogas (Tráfico/Consumo)", label: "Drogas (Tráfico/Consumo)" },
-      { value: "Estelionato", label: "Estelionato" },
-      { value: "Furto", label: "Furto" },
-      { value: "Homicídio", label: "Homicídio" },
-      { value: "Importunação Sexual", label: "Importunação Sexual" },
-      { value: "Invasão de Propriedade", label: "Invasão de Propriedade" },
-      { value: "Lesão Corporal", label: "Lesão Corporal" },
-      { value: "Maus Tratos a Animais", label: "Maus Tratos a Animais" },
-      { value: "Ocorrência de Trânsito", label: "Ocorrência de Trânsito" },
-      { value: "Perturbação do Sossego", label: "Perturbação do Sossego" },
-      { value: "Poluição Sonora", label: "Poluição Sonora" },
-      { value: "Posse Ilegal de Arma", label: "Posse Ilegal de Arma" },
-      { value: "Roubo", label: "Roubo" },
-      { value: "Tráfico de Drogas", label: "Tráfico de Drogas" },
-      { value: "Violação de Direitos", label: "Violação de Direitos" },
-      { value: "Violência Doméstica", label: "Violência Doméstica" },
-      { value: "Violência Sexual", label: "Violência Sexual" },
-      { value: "Outros", label: "Outros" },
-    ];
-
-    // Sub-tipos (exemplo para Furto)
-    const subTipos = [
-      { value: "", label: "Selecione (opcional)" },
-      { value: "Furto de Veículo", label: "Furto de Veículo" },
-      { value: "Furto de Residência", label: "Furto de Residência" },
-      { value: "Furto de Estabelecimento", label: "Furto de Estabelecimento" },
-      { value: "Furto de Documentos", label: "Furto de Documentos" },
-      { value: "Furto de Equipamentos", label: "Furto de Equipamentos" },
-      { value: "Furto de Animais", label: "Furto de Animais" },
-      { value: "Furto de Carga", label: "Furto de Carga" },
-      { value: "Outro", label: "Outro" },
-    ];
-
-    // Gravidade
-    const gravidades = [
-      { value: "", label: "Selecione..." },
-      { value: "Baixa", label: "Baixa" },
-      { value: "Média", label: "Média" },
-      { value: "Alta", label: "Alta" },
-      { value: "Crítica", label: "Crítica" },
-    ];
-
-    // Órgãos para BO
-    const orgaos = [
-      { value: "", label: "Selecione..." },
-      { value: "Polícia Civil", label: "Polícia Civil" },
-      { value: "Polícia Militar", label: "Polícia Militar" },
-      { value: "Polícia Rodoviária Federal", label: "Polícia Rodoviária Federal" },
-      { value: "Polícia Federal", label: "Polícia Federal" },
-      { value: "Guarda Municipal", label: "Guarda Municipal" },
-      { value: "Outro", label: "Outro" },
-    ];
 
     return `
-            <div class="form-group">
-                <label for="tipo_ocorrencia">
-                    <i class="fas fa-tag" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                    Tipo de Ocorrência <span class="required">*</span>
-                </label>
-                <div class="input-wrapper">
-                    <i class="fas fa-tag input-icon-left"></i>
-                    <select id="tipo_ocorrencia" class="form-control" required>
-                        ${tipos
-                          .map(
-                            (op) => `
-                            <option value="${op.value}" ${dados.tipo_ocorrencia === op.value ? "selected" : ""}>
-                                ${op.label}
-                            </option>
-                        `,
-                          )
-                          .join("")}
-                    </select>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="sub_tipo_ocorrencia">
-                    <i class="fas fa-tags" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                    Sub-tipo (opcional)
-                </label>
-                <div class="input-wrapper">
-                    <i class="fas fa-tags input-icon-left"></i>
-                    <select id="sub_tipo_ocorrencia" class="form-control">
-                        ${subTipos
-                          .map(
-                            (op) => `
-                            <option value="${op.value}" ${dados.sub_tipo_ocorrencia === op.value ? "selected" : ""}>
-                                ${op.label}
-                            </option>
-                        `,
-                          )
-                          .join("")}
-                    </select>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="gravidade">
-                    <i class="fas fa-exclamation-triangle" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                    Gravidade <span class="required">*</span>
-                </label>
-                <div class="input-wrapper">
-                    <i class="fas fa-exclamation-triangle input-icon-left"></i>
-                    <select id="gravidade" class="form-control" required>
-                        ${gravidades
-                          .map(
-                            (op) => `
-                            <option value="${op.value}" ${dados.gravidade === op.value ? "selected" : ""}>
-                                ${op.label}
-                            </option>
-                        `,
-                          )
-                          .join("")}
-                    </select>
-                </div>
-            </div>
-
             <div class="form-group">
                 <label for="codigo_operacional">
                     <i class="fas fa-barcode" style="margin-right:6px;color:var(--azul-bandeira);"></i>
@@ -2432,22 +2207,6 @@ class App {
                     <i class="fas fa-map-marker-alt input-icon-left"></i>
                     <input type="text" id="local_ocorrencia" class="form-control" placeholder="Endereço completo" required value="${dados.local_ocorrencia || ""}">
                 </div>
-                <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-                    <button type="button" class="btn-secondary" onclick="app.obterLocalizacaoParaOcorrencia()" style="padding:6px 12px;font-size:12px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
-                        <i class="fas fa-location-dot" style="margin-right:4px;"></i> Usar minha localização
-                    </button>
-                    ${latitude && longitude ? `
-                        <span style="font-size:12px;color:var(--verde-bandeira);display:flex;align-items:center;gap:4px;">
-                            <i class="fas fa-check-circle"></i> Localização capturada
-                        </span>
-                    ` : `
-                        <span style="font-size:12px;color:var(--cinza-medio);display:flex;align-items:center;gap:4px;">
-                            <i class="fas fa-info-circle"></i> Nenhuma localização capturada
-                        </span>
-                    `}
-                </div>
-                <input type="hidden" id="latitude" value="${latitude || ''}">
-                <input type="hidden" id="longitude" value="${longitude || ''}">
             </div>
 
             <div class="form-group">
@@ -2512,62 +2271,7 @@ class App {
                     Deixe em branco se ainda não encerrou
                 </div>
             </div>
-
-            <!-- Seção: Dados do BO (Outros Órgãos) -->
-            <div style="margin-top:16px;border-top:2px solid var(--cinza-claro);padding-top:16px;">
-                <p style="font-weight:600;font-size:14px;color:var(--azul-bandeira);margin-bottom:12px;">
-                    <i class="fas fa-file-alt" style="margin-right:6px;"></i>
-                    Dados do BO (se registrado em outro órgão)
-                </p>
-                <div class="form-group">
-                    <label for="numero_bo">Número do BO</label>
-                    <input type="text" id="numero_bo" class="form-control" placeholder="Número do BO" value="${dados.numero_bo || ""}">
-                </div>
-                <div class="form-group">
-                    <label for="orgao_bo">Órgão Registrador</label>
-                    <select id="orgao_bo" class="form-control">
-                        ${orgaos
-                          .map(
-                            (op) => `
-                            <option value="${op.value}" ${dados.orgao_bo === op.value ? "selected" : ""}>
-                                ${op.label}
-                            </option>
-                        `,
-                          )
-                          .join("")}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="data_bo">Data do BO</label>
-                    <input type="date" id="data_bo" class="form-control" value="${dados.data_bo || ""}">
-                </div>
-            </div>
         `;
-  }
-
-  async obterLocalizacaoParaOcorrencia() {
-    const result = await this.obterLocalizacao();
-    if (result) {
-      const { latitude, longitude } = result;
-      const latField = document.getElementById("latitude");
-      const lngField = document.getElementById("longitude");
-      if (latField) latField.value = latitude;
-      if (lngField) lngField.value = longitude;
-      
-      if (this.novaOcorrencia) {
-        this.novaOcorrencia.dados.latitude = latitude;
-        this.novaOcorrencia.dados.longitude = longitude;
-      }
-      
-      const container = document.getElementById("novaOcorrenciaContent");
-      if (container) {
-        this.renderizarEtapa(container);
-        const localField = document.getElementById("local_ocorrencia");
-        if (localField) {
-          localField.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }
-    }
   }
 
   // ============================================
@@ -2631,7 +2335,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 4 - OBSERVAÇÕES
+  // ETAPA 4 - OBSERVAÇÕES E RELATO DOS FATOS
   // ============================================
   renderEtapa4(dados) {
     return `
@@ -2719,7 +2423,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 6 - REVISÃO E FINALIZAÇÃO (COM NOVOS CAMPOS)
+  // ETAPA 6 - REVISÃO E FINALIZAÇÃO
   // ============================================
   renderEtapa6(dados) {
     const envolvidos = dados.envolvidos || [];
@@ -2731,25 +2435,6 @@ class App {
                     <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
                     Revise todos os dados antes de finalizar a ocorrência.
                 </p>
-            </div>
-
-            <div class="card-revisao">
-                <h4>
-                    <i class="fas fa-tag"></i>
-                    Natureza da Ocorrência
-                </h4>
-                <div class="campo">
-                    <span class="rotulo">Tipo:</span>
-                    <span class="valor">${dados.tipo_ocorrencia || "Não informado"}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Sub-tipo:</span>
-                    <span class="valor">${dados.sub_tipo_ocorrencia || "Não informado"}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Gravidade:</span>
-                    <span class="valor">${dados.gravidade || "Não informado"}</span>
-                </div>
             </div>
 
             <div class="card-revisao">
@@ -2805,35 +2490,6 @@ class App {
                     <span class="rotulo">Encerramento:</span>
                     <span class="valor">${new Date(dados.data_hora_encerramento).toLocaleString("pt-BR")}</span>
                 </div>` : ""}
-                ${dados.latitude ? `
-                <div class="campo">
-                    <span class="rotulo">Latitude:</span>
-                    <span class="valor">${dados.latitude}</span>
-                </div>` : ""}
-                ${dados.longitude ? `
-                <div class="campo">
-                    <span class="rotulo">Longitude:</span>
-                    <span class="valor">${dados.longitude}</span>
-                </div>` : ""}
-            </div>
-
-            <div class="card-revisao">
-                <h4>
-                    <i class="fas fa-file-alt"></i>
-                    Dados do BO
-                </h4>
-                <div class="campo">
-                    <span class="rotulo">Número:</span>
-                    <span class="valor">${dados.numero_bo || "Não informado"}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Órgão:</span>
-                    <span class="valor">${dados.orgao_bo || "Não informado"}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Data:</span>
-                    <span class="valor">${dados.data_bo ? new Date(dados.data_bo).toLocaleDateString("pt-BR") : "Não informado"}</span>
-                </div>
             </div>
 
             <div class="card-revisao">
@@ -2954,11 +2610,6 @@ class App {
           document.getElementById("identificacao_adicional")?.value || "";
         break;
       case 2:
-        dados.tipo_ocorrencia =
-          document.getElementById("tipo_ocorrencia")?.value || "";
-        dados.sub_tipo_ocorrencia =
-          document.getElementById("sub_tipo_ocorrencia")?.value || "";
-        dados.gravidade = document.getElementById("gravidade")?.value || "";
         dados.codigo_operacional =
           document.getElementById("codigo_operacional")?.value || "";
         dados.local_ocorrencia =
@@ -2971,11 +2622,6 @@ class App {
           document.getElementById("data_hora_inicio")?.value || "";
         dados.data_hora_encerramento =
           document.getElementById("data_hora_encerramento")?.value || "";
-        dados.latitude = document.getElementById("latitude")?.value || null;
-        dados.longitude = document.getElementById("longitude")?.value || null;
-        dados.numero_bo = document.getElementById("numero_bo")?.value || "";
-        dados.orgao_bo = document.getElementById("orgao_bo")?.value || "";
-        dados.data_bo = document.getElementById("data_bo")?.value || "";
         break;
       case 4:
         dados.observacoes = document.getElementById("observacoes")?.value || "";
@@ -3026,19 +2672,11 @@ class App {
       case 2:
         const local = document.getElementById("local_ocorrencia")?.value;
         const dataInicio = document.getElementById("data_hora_inicio")?.value;
-        const tipo = document.getElementById("tipo_ocorrencia")?.value;
-        const gravidade = document.getElementById("gravidade")?.value;
         if (!local) {
           mensagem = "Informe o local da ocorrência";
           isValid = false;
         } else if (!dataInicio) {
           mensagem = "Informe a data e hora do início";
-          isValid = false;
-        } else if (!tipo) {
-          mensagem = "Selecione o tipo de ocorrência";
-          isValid = false;
-        } else if (!gravidade) {
-          mensagem = "Selecione a gravidade da ocorrência";
           isValid = false;
         }
         break;
@@ -3270,20 +2908,6 @@ class App {
       return;
     }
 
-    if (!dados.tipo_ocorrencia || dados.tipo_ocorrencia === "") {
-      this.showToast("Selecione o tipo de ocorrência", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-
-    if (!dados.gravidade || dados.gravidade === "") {
-      this.showToast("Selecione a gravidade da ocorrência", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-
     if (!dados.observacoes || dados.observacoes.trim().length < 10) {
       this.showToast(
         "Descreva o ocorrido com pelo menos 10 caracteres",
@@ -3466,14 +3090,6 @@ class App {
         envolvidos: [],
         observacoes: "",
         anexos: [],
-        latitude: null,
-        longitude: null,
-        tipo_ocorrencia: "",
-        sub_tipo_ocorrencia: "",
-        gravidade: "",
-        numero_bo: "",
-        orgao_bo: "",
-        data_bo: "",
       },
     };
     this.alteracoesNaoSalvas = false;

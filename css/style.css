@@ -64,7 +64,7 @@ body {
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
-  background: var(--branco-fumaca);
+  background: #f1f5f9;
   color: var(--cinza-escuro);
   line-height: 1.5;
   min-height: 100vh;
@@ -83,7 +83,7 @@ body {
   height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--branco-fumaca);
+  background: #f1f5f9;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--cinza-claro);
@@ -438,7 +438,7 @@ body {
   border-radius: var(--border-radius);
   font-size: 14px;
   transition: all 0.3s ease;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
   font-family: inherit;
 }
@@ -483,6 +483,14 @@ body {
   padding: 10px 12px;
   min-height: 60px;
   resize: vertical;
+}
+.form-group .input-wrapper input:disabled,
+.form-group .input-wrapper select:disabled,
+.form-group .input-wrapper textarea:disabled {
+  background: #eef2f6;
+  opacity: 0.8;
+  cursor: not-allowed;
+  border-color: #d1d5db;
 }
 .options-row {
   display: flex;
@@ -984,7 +992,7 @@ body {
   border: 2px solid var(--cinza-claro);
   border-radius: var(--border-radius);
   font-size: 13px;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
 }
 .filtros-container .filtro-group select:focus,
@@ -1131,7 +1139,7 @@ body {
   border-radius: var(--border-radius);
   font-size: 14px;
   transition: all 0.3s ease;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
   font-family: inherit;
 }
@@ -1160,7 +1168,7 @@ body {
   border: 2px solid var(--cinza-claro);
   border-radius: var(--border-radius);
   font-size: 14px;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
   transition: all 0.3s ease;
   font-family: inherit;
@@ -1170,6 +1178,15 @@ body {
   border-color: var(--azul-bandeira);
   background: var(--branco);
   box-shadow: 0 0 0 3px var(--azul-transparente);
+}
+#formOcorrencia .input-wrapper input:disabled,
+#formOcorrencia .input-wrapper select:disabled,
+#formOcorrencia .input-wrapper textarea:disabled,
+#formOcorrencia .form-group textarea.form-control:disabled {
+  background: #eef2f6;
+  opacity: 0.8;
+  cursor: not-allowed;
+  border-color: #d1d5db;
 }
 
 #formOcorrencia .input-hint {
@@ -1192,7 +1209,7 @@ body {
   padding-top: 16px;
   border-top: 2px solid var(--cinza-claro);
   padding-bottom: 16px;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   border-radius: 0 0 var(--border-radius) var(--border-radius);
 }
 
@@ -1567,7 +1584,7 @@ body {
   border: 2px solid var(--cinza-claro);
   border-radius: var(--border-radius);
   font-size: 13px;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
   transition: all 0.3s ease;
   font-family: inherit;
@@ -1583,6 +1600,14 @@ body {
 .modal-overlay .modal .modal-body #formEnvolvido .form-group textarea {
   min-height: 50px;
   resize: vertical;
+}
+.modal-overlay .modal .modal-body #formEnvolvido .form-group input:disabled,
+.modal-overlay .modal .modal-body #formEnvolvido .form-group select:disabled,
+.modal-overlay .modal .modal-body #formEnvolvido .form-group textarea:disabled {
+  background: #eef2f6;
+  opacity: 0.8;
+  cursor: not-allowed;
+  border-color: #d1d5db;
 }
 .modal-overlay .modal .modal-footer {
   padding: 12px 16px 14px 16px;
@@ -1714,7 +1739,7 @@ body {
   border: 2px solid var(--cinza-claro);
   border-radius: var(--border-radius);
   font-size: 14px;
-  background: var(--branco-fumaca);
+  background: var(--branco);
   color: var(--cinza-escuro);
   transition: all 0.3s ease;
 }
@@ -1725,8 +1750,10 @@ body {
   box-shadow: 0 0 0 3px var(--azul-transparente);
 }
 #formPerfil .form-group input:disabled {
-  opacity: 0.7;
+  background: #eef2f6;
+  opacity: 0.8;
   cursor: not-allowed;
+  border-color: #d1d5db;
 }
 
 /* ============================================
@@ -1751,7 +1778,7 @@ body {
   .form-group .input-wrapper input,
   .form-group .input-wrapper select,
   .form-group .input-wrapper textarea {
-    background: #0f172a;
+    background: #1e293b;
     color: #e2e8f0;
     border-color: #334155;
   }
@@ -1760,6 +1787,13 @@ body {
   .form-group .input-wrapper textarea:focus {
     border-color: #60a5fa;
     box-shadow: 0 0 0 3px rgba(96,165,250,0.15);
+  }
+  .form-group .input-wrapper input:disabled,
+  .form-group .input-wrapper select:disabled,
+  .form-group .input-wrapper textarea:disabled {
+    background: #1e293b;
+    opacity: 0.6;
+    border-color: #334155;
   }
   .stat-card { background: #1e293b; }
   .stat-card .value { color: #60a5fa; }
@@ -1849,6 +1883,11 @@ body {
   #formPerfil .form-group input:focus {
     border-color: var(--azul-claro);
     box-shadow: 0 0 0 3px rgba(33,150,243,0.15);
+  }
+  #formPerfil .form-group input:disabled {
+    background: var(--cinza-escuro);
+    opacity: 0.6;
+    border-color: var(--cinza-claro);
   }
 }
 

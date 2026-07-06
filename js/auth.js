@@ -1,7 +1,7 @@
 /**
  * GERENCIADOR DE AUTENTICAÇÃO
  * Guarda Municipal de Pitangueiras - PR
- * 
+ *
  * Regras de Negócio:
  * - Supervisor: pode listar, criar, editar, ativar/desativar, resetar senha de qualquer usuário
  * - Guarda: pode editar apenas seus próprios dados (nome, telefone, email)
@@ -119,12 +119,8 @@ class AuthManager {
         }),
       );
 
-      // Registrar log de acesso
-      await this.registrarLogAcesso(
-        usuario.id,
-        null, // IP será pego pelo servidor ou podemos passar depois
-        navigator.userAgent
-      );
+      // Registrar log de acesso (não crítico - continua mesmo se falhar)
+      await this.registrarLogAcesso(usuario.id, null, navigator.userAgent);
 
       await client
         .from("usuarios")
@@ -236,9 +232,11 @@ class AuthManager {
   podeEditar(ocorrencia) {
     if (!this.user) return false;
     if (this.isSupervisor()) {
-      return ocorrencia.status === 'draft';
+      return ocorrencia.status === "draft";
     }
-    return ocorrencia.criado_por === this.user.id && ocorrencia.status === 'draft';
+    return (
+      ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
+    );
   }
 
   /**
@@ -257,9 +255,11 @@ class AuthManager {
   podeFinalizar(ocorrencia) {
     if (!this.user) return false;
     if (this.isSupervisor()) {
-      return ocorrencia.status === 'draft';
+      return ocorrencia.status === "draft";
     }
-    return ocorrencia.criado_por === this.user.id && ocorrencia.status === 'draft';
+    return (
+      ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
+    );
   }
 
   /**
@@ -269,18 +269,21 @@ class AuthManager {
   podeCancelar(ocorrencia) {
     if (!this.user) return false;
     if (!this.isSupervisor()) return false;
-    return ocorrencia.status !== 'cancelled';
+    return ocorrencia.status !== "cancelled";
   }
 
   /**
    * Verifica se o usuário pode solicitar retificação
-   * Regra: 
+   * Regra:
    *   - Supervisor pode solicitar para qualquer ocorrência finalizada
    *   - Guarda pode solicitar apenas para suas próprias ocorrências finalizadas
    */
   podeSolicitarRetificacao(ocorrencia) {
     if (!this.user) return false;
-    if (ocorrencia.status !== 'synced' && ocorrencia.status !== 'pending_sync') {
+    if (
+      ocorrencia.status !== "synced" &&
+      ocorrencia.status !== "pending_sync"
+    ) {
       return false;
     }
     if (this.isSupervisor()) {
@@ -295,7 +298,7 @@ class AuthManager {
    */
   podeAprovarRetificacao(ocorrencia) {
     if (!this.user) return false;
-    return this.isSupervisor() && ocorrencia.status === 'pending_rectification';
+    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
   }
 
   /**
@@ -304,7 +307,7 @@ class AuthManager {
    */
   podeRejeitarRetificacao(ocorrencia) {
     if (!this.user) return false;
-    return this.isSupervisor() && ocorrencia.status === 'pending_rectification';
+    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
   }
 
   /**
@@ -342,7 +345,10 @@ class AuthManager {
    */
   async listarUsuarios(filtros = {}) {
     if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem listar usuários." };
+      return {
+        success: false,
+        error: "Permissão negada. Apenas supervisores podem listar usuários.",
+      };
     }
 
     try {
@@ -359,7 +365,7 @@ class AuthManager {
       }
       if (filtros.search) {
         query = query.or(
-          `nome_completo.ilike.%${filtros.search}%,cpf.ilike.%${filtros.search}%,matricula.ilike.%${filtros.search}%`
+          `nome_completo.ilike.%${filtros.search}%,cpf.ilike.%${filtros.search}%,matricula.ilike.%${filtros.search}%`,
         );
       }
 
@@ -379,7 +385,10 @@ class AuthManager {
    */
   async criarUsuario(dados) {
     if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem criar usuários." };
+      return {
+        success: false,
+        error: "Permissão negada. Apenas supervisores podem criar usuários.",
+      };
     }
 
     try {
@@ -432,10 +441,10 @@ class AuthManager {
       if (error) throw error;
 
       // Retornar a senha temporária (para o supervisor repassar ao usuário)
-      return { 
-        success: true, 
-        data, 
-        senha_temporaria: senhaTemp 
+      return {
+        success: true,
+        data,
+        senha_temporaria: senhaTemp,
       };
     } catch (error) {
       console.error("❌ Erro ao criar usuário:", error);
@@ -459,10 +468,13 @@ class AuthManager {
       // Se não for supervisor, verifica se está editando a si mesmo
       if (!this.isSupervisor()) {
         if (id !== this.user.id) {
-          return { success: false, error: "Permissão negada. Você só pode editar seu próprio perfil." };
+          return {
+            success: false,
+            error: "Permissão negada. Você só pode editar seu próprio perfil.",
+          };
         }
         // Guarda só pode editar campos permitidos
-        const camposPermitidos = ['nome_completo', 'telefone', 'email'];
+        const camposPermitidos = ["nome_completo", "telefone", "email"];
         const dadosFiltrados = {};
         for (const campo of camposPermitidos) {
           if (dados[campo] !== undefined) {
@@ -492,13 +504,16 @@ class AuthManager {
       // Se o usuário atualizou a si mesmo, atualizar o objeto local
       if (id === this.user.id) {
         this.user = { ...this.user, ...dados };
-        localStorage.setItem("auth_user", JSON.stringify({
-          id: this.user.id,
-          nome_completo: this.user.nome_completo,
-          cpf: this.user.cpf,
-          perfil: this.user.perfil,
-          matricula: this.user.matricula,
-        }));
+        localStorage.setItem(
+          "auth_user",
+          JSON.stringify({
+            id: this.user.id,
+            nome_completo: this.user.nome_completo,
+            cpf: this.user.cpf,
+            perfil: this.user.perfil,
+            matricula: this.user.matricula,
+          }),
+        );
       }
 
       console.log("✅ Usuário atualizado:", id);
@@ -517,11 +532,18 @@ class AuthManager {
    */
   async ativarDesativarUsuario(id, status) {
     if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem alterar status de usuários." };
+      return {
+        success: false,
+        error:
+          "Permissão negada. Apenas supervisores podem alterar status de usuários.",
+      };
     }
 
-    if (!['ativo', 'inativo', 'bloqueado'].includes(status)) {
-      return { success: false, error: "Status inválido. Use 'ativo', 'inativo' ou 'bloqueado'." };
+    if (!["ativo", "inativo", "bloqueado"].includes(status)) {
+      return {
+        success: false,
+        error: "Status inválido. Use 'ativo', 'inativo' ou 'bloqueado'.",
+      };
     }
 
     try {
@@ -557,7 +579,10 @@ class AuthManager {
    */
   async resetarSenha(id) {
     if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem resetar senhas." };
+      return {
+        success: false,
+        error: "Permissão negada. Apenas supervisores podem resetar senhas.",
+      };
     }
 
     try {
@@ -573,7 +598,7 @@ class AuthManager {
         .from("usuarios")
         .update({
           senha_hash: hashData,
-          status: 'primeiro_acesso',
+          status: "primeiro_acesso",
           primeiro_acesso: true,
           atualizado_por: this.user.id,
           atualizado_em: new Date().toISOString(),
@@ -585,10 +610,10 @@ class AuthManager {
       if (error) throw error;
 
       console.log(`✅ Senha resetada para usuário ${id}`);
-      return { 
-        success: true, 
+      return {
+        success: true,
         data,
-        senha_temporaria: senhaTemp 
+        senha_temporaria: senhaTemp,
       };
     } catch (error) {
       console.error("❌ Erro ao resetar senha:", error);
@@ -601,13 +626,14 @@ class AuthManager {
    * @returns {string}
    */
   gerarSenhaTemporaria() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let senha = '';
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let senha = "";
     for (let i = 0; i < 8; i++) {
       senha += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     // Garantir pelo menos um número e uma letra maiúscula
-    senha = 'Temp' + senha + '123';
+    senha = "Temp" + senha + "123";
     return senha;
   }
 
@@ -619,13 +645,15 @@ class AuthManager {
    * @param {string} acao - Tipo de ação (default: 'login')
    * @returns {Promise<Object>}
    */
-  async registrarLogAcesso(usuarioId, ip = null, userAgent = null, acao = 'login') {
+  async registrarLogAcesso(
+    usuarioId,
+    ip = null,
+    userAgent = null,
+    acao = "login",
+  ) {
     try {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
-
-      // Se o IP não foi fornecido, tenta obter via serviço externo (opcional)
-      // Ou pode deixar null
 
       const { data, error } = await client
         .from("logs_acesso")
@@ -639,13 +667,21 @@ class AuthManager {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        // Log do erro, mas não falha a operação principal (login)
+        console.warn(
+          "⚠️ Erro ao registrar log de acesso (não crítico):",
+          error,
+        );
+        return { success: false, error: error.message, nonCritical: true };
+      }
+
       console.log(`✅ Log de acesso registrado para usuário ${usuarioId}`);
       return { success: true, data };
     } catch (error) {
-      console.error("❌ Erro ao registrar log de acesso:", error);
       // Não falha o login se o log falhar, apenas loga o erro
-      return { success: false, error: error.message };
+      console.warn("⚠️ Erro não crítico ao registrar log de acesso:", error);
+      return { success: false, error: error.message, nonCritical: true };
     }
   }
 
@@ -656,7 +692,10 @@ class AuthManager {
    */
   async listarLogsAcesso(filtros = {}) {
     if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem visualizar logs." };
+      return {
+        success: false,
+        error: "Permissão negada. Apenas supervisores podem visualizar logs.",
+      };
     }
 
     try {
@@ -714,11 +753,14 @@ class AuthManager {
   // ============================================
 
   gerarUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = (Math.random() * 16) | 0;
-      const v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+      /[xy]/g,
+      function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      },
+    );
   }
 }
 

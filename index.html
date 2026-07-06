@@ -106,12 +106,21 @@
             <span>Início</span>
           </button>
           <button class="menu-item" data-page="ocorrencias">
-            <i class="fas fa-list"></i>
+            <i class="fas fa-file-alt"></i>
             <span>Minhas Ocorrências</span>
           </button>
           <button class="menu-item" data-page="nova-ocorrencia">
             <i class="fas fa-plus-circle"></i>
             <span>Nova Ocorrência</span>
+          </button>
+          <button
+            class="menu-item"
+            data-page="retificacoes"
+            id="menuRetificacoes"
+            style="display: none"
+          >
+            <i class="fas fa-sync-alt"></i>
+            <span>Retificações Pendentes</span>
           </button>
           <button
             class="menu-item"
@@ -310,6 +319,13 @@
         <!-- Detalhe da Ocorrência -->
         <div id="page-detalhe-ocorrencia" class="page" style="display: none">
           <div class="container" id="detalheOcorrenciaContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Retificações Pendentes -->
+        <div id="page-retificacoes" class="page" style="display: none">
+          <div class="container" id="retificacoesContent">
             <!-- Carregado via JavaScript -->
           </div>
         </div>

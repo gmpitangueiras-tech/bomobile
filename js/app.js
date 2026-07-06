@@ -68,7 +68,7 @@ class App {
       { value: "incendio", label: "Incêndio" },
       { value: "desaparecimento", label: "Desaparecimento" },
       { value: "atendimento_social", label: "Atendimento Social" },
-      { value: "outro", label: "Outro" },
+      { value: "outro", label: "Outro" }
     ];
   }
 
@@ -619,11 +619,7 @@ class App {
       this.filtroStatusAtual = null;
     }
 
-    if (
-      page === "relatorios" ||
-      page === "usuarios" ||
-      page === "retificacoes"
-    ) {
+    if (page === "relatorios" || page === "usuarios" || page === "retificacoes") {
       if (!authManager.isSupervisor()) {
         this.showToast("Acesso restrito a supervisores", "warning");
         page = "dashboard";
@@ -750,11 +746,14 @@ class App {
 
     // Buscar retificações pendentes (apenas supervisor)
     let pendentesCount = 0;
+    let pendentesData = [];
     if (authManager.isSupervisor()) {
-      const pendentesResult =
-        await ocorrenciaManager.buscarRetificacoesPendentes();
+      const pendentesResult = await ocorrenciaManager.buscarRetificacoesPendentes();
+      console.log("📋 Dashboard - Resultado da busca de retificações:", pendentesResult);
       if (pendentesResult.success) {
-        pendentesCount = pendentesResult.data.length;
+        pendentesData = pendentesResult.data || [];
+        pendentesCount = pendentesData.length;
+        console.log(`📋 Dashboard - Retificações pendentes: ${pendentesCount}`);
       }
     }
 
@@ -806,9 +805,7 @@ class App {
                 </div>
 
                 <!-- Card de Retificações Pendentes (apenas supervisor) -->
-                ${
-                  authManager.isSupervisor()
-                    ? `
+                ${authManager.isSupervisor() ? `
                 <div style="margin-top:12px;background:var(--branco);border-radius:var(--border-radius);padding:12px 16px;box-shadow:var(--sombra-suave);border-left:4px solid var(--azul-bandeira);display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="app.navigateTo('retificacoes')">
                   <div>
                     <span style="font-weight:600;font-size:14px;">
@@ -823,9 +820,7 @@ class App {
                     ${pendentesCount}
                   </span>
                 </div>
-                `
-                    : ""
-                }
+                ` : ''}
 
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;margin-bottom:8px;">
                     <h3 style="font-size:16px;font-weight:700;margin:0;">
@@ -922,7 +917,7 @@ class App {
       const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
       const tipoBadge = occ.tipo_ocorrencia
         ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
-        : "";
+        : '';
 
       const versaoBadge =
         occ.status === "rectified" && occ.numero_versao > 1
@@ -1113,7 +1108,7 @@ class App {
       const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
       const tipoBadge = occ.tipo_ocorrencia
         ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
-        : "";
+        : '';
 
       const versaoBadge =
         occ.status === "rectified" && occ.numero_versao > 1
@@ -1226,9 +1221,7 @@ class App {
     let original = null;
     let camposAlterados = [];
     if (isRetificacao) {
-      const origResult = await ocorrenciaManager.buscar(
-        occ.ocorrencia_original_id,
-      );
+      const origResult = await ocorrenciaManager.buscar(occ.ocorrencia_original_id);
       if (origResult.success) {
         original = origResult.data;
       }
@@ -1293,10 +1286,10 @@ class App {
         <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
           <p style="font-size:14px;font-weight:600;margin:0 0 6px 0;">
             <i class="fas fa-code-branch" style="color:var(--azul-bandeira);margin-right:6px;"></i>
-            Esta é uma retificação da ocorrência #${original.numero_ocorrencia || original.numero_temporario || "original"}
+            Esta é uma retificação da ocorrência #${original.numero_ocorrencia || original.numero_temporario || 'original'}
           </p>
           <p style="font-size:13px;color:var(--cinza-escuro);margin:0;">
-            Status: ${statusLabel} ${occ.status === "pending_rectification" ? "⏳ Aguardando aprovação" : occ.status === "rectified" ? "✅ Aprovada" : "❌ Rejeitada"}
+            Status: ${statusLabel} ${occ.status === 'pending_rectification' ? '⏳ Aguardando aprovação' : occ.status === 'rectified' ? '✅ Aprovada' : '❌ Rejeitada'}
           </p>
         </div>
       `;
@@ -1308,7 +1301,7 @@ class App {
             <h4 style="color:var(--azul-bandeira);"><i class="fas fa-edit"></i> Campos Alterados</h4>
             <div style="background:var(--branco);border-radius:var(--border-radius);overflow:hidden;box-shadow:var(--sombra-suave);">
         `;
-        camposAlterados.forEach((campo) => {
+        camposAlterados.forEach(campo => {
           html += `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px 12px;border-bottom:1px solid var(--cinza-claro);">
               <div style="font-weight:600;color:var(--cinza-escuro);font-size:13px;">
@@ -1316,11 +1309,11 @@ class App {
               </div>
               <div style="display:flex;gap:8px;align-items:center;font-size:13px;flex-wrap:wrap;">
                 <span style="color:var(--cinza-medio);text-decoration:line-through;font-size:12px;">
-                  ${campo.antes || "(vazio)"}
+                  ${campo.antes || '(vazio)'}
                 </span>
                 <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:10px;"></i>
                 <span style="color:var(--verde-bandeira);font-weight:500;">
-                  ${campo.depois || "(vazio)"}
+                  ${campo.depois || '(vazio)'}
                 </span>
               </div>
             </div>
@@ -1335,9 +1328,9 @@ class App {
       html += `
         <div class="card-revisao" style="margin-bottom:12px;opacity:0.8;">
           <h4><i class="fas fa-history"></i> Versão Original (para referência)</h4>
-          <div class="campo"><span class="rotulo">Local:</span><span class="valor">${original.local_ocorrencia || "Não informado"}</span></div>
-          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${original.data_hora_inicio ? new Date(original.data_hora_inicio).toLocaleString("pt-BR") : "Não informado"}</span></div>
-          <div class="campo"><span class="rotulo">Observações:</span><span class="valor" style="white-space:pre-wrap;">${original.observacoes || "Nenhuma"}</span></div>
+          <div class="campo"><span class="rotulo">Local:</span><span class="valor">${original.local_ocorrencia || 'Não informado'}</span></div>
+          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${original.data_hora_inicio ? new Date(original.data_hora_inicio).toLocaleString('pt-BR') : 'Não informado'}</span></div>
+          <div class="campo"><span class="rotulo">Observações:</span><span class="valor" style="white-space:pre-wrap;">${original.observacoes || 'Nenhuma'}</span></div>
           <button class="btn-secondary" style="margin-top:6px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;" onclick="app.navigateTo('detalhe-ocorrencia', {id: '${original.id}'})">
             <i class="fas fa-eye"></i> Ver versão original completa
           </button>
@@ -1350,93 +1343,72 @@ class App {
       <div class="card-revisao">
         <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
         <div class="campo"><span class="rotulo">Local:</span><span class="valor">${occ.local_ocorrencia || "Não informado"}</span></div>
-        ${occ.rodovia ? `<div class="campo"><span class="rotulo">Rodovia:</span><span class="valor">${occ.rodovia}</span></div>` : ""}
-        ${occ.bairro_ocorrencia ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_ocorrencia}</span></div>` : ""}
-        ${occ.referencia ? `<div class="campo"><span class="rotulo">Referência:</span><span class="valor">${occ.referencia}</span></div>` : ""}
+        ${occ.rodovia ? `<div class="campo"><span class="rotulo">Rodovia:</span><span class="valor">${occ.rodovia}</span></div>` : ''}
+        ${occ.bairro_ocorrencia ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_ocorrencia}</span></div>` : ''}
+        ${occ.referencia ? `<div class="campo"><span class="rotulo">Referência:</span><span class="valor">${occ.referencia}</span></div>` : ''}
         <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${dataInicio}</span></div>
         <div class="campo"><span class="rotulo">Data/Hora Encerramento:</span><span class="valor">${dataEncerramento}</span></div>
-        ${occ.codigo_operacional ? `<div class="campo"><span class="rotulo">Código Operacional:</span><span class="valor">${occ.codigo_operacional}</span></div>` : ""}
-        ${occ.tipo_ocorrencia ? `<div class="campo"><span class="rotulo">Tipo de Ocorrência:</span><span class="valor">${this.getTipoLabel(occ.tipo_ocorrencia)}</span></div>` : ""}
-        ${occ.codigo_municipal ? `<div class="campo"><span class="rotulo">Código Municipal:</span><span class="valor">${occ.codigo_municipal}</span></div>` : ""}
-        ${occ.complemento ? `<div class="campo"><span class="rotulo">Complemento:</span><span class="valor">${occ.complemento}</span></div>` : ""}
-        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ""}
-        ${occ.numero_versao ? `<div class="campo"><span class="rotulo">Versão:</span><span class="valor">${occ.numero_versao}</span></div>` : ""}
-        ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ""}
+        ${occ.codigo_operacional ? `<div class="campo"><span class="rotulo">Código Operacional:</span><span class="valor">${occ.codigo_operacional}</span></div>` : ''}
+        ${occ.tipo_ocorrencia ? `<div class="campo"><span class="rotulo">Tipo de Ocorrência:</span><span class="valor">${this.getTipoLabel(occ.tipo_ocorrencia)}</span></div>` : ''}
+        ${occ.codigo_municipal ? `<div class="campo"><span class="rotulo">Código Municipal:</span><span class="valor">${occ.codigo_municipal}</span></div>` : ''}
+        ${occ.complemento ? `<div class="campo"><span class="rotulo">Complemento:</span><span class="valor">${occ.complemento}</span></div>` : ''}
+        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ''}
+        ${occ.numero_versao ? `<div class="campo"><span class="rotulo">Versão:</span><span class="valor">${occ.numero_versao}</span></div>` : ''}
+        ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ''}
       </div>
 
       <div class="card-revisao">
         <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
         <div class="campo"><span class="rotulo">Forma:</span><span class="valor">${occ.forma_solicitacao || "Não informado"}</span></div>
-        ${occ.nome_solicitante ? `<div class="campo"><span class="rotulo">Solicitante:</span><span class="valor">${occ.nome_solicitante}</span></div>` : ""}
-        ${occ.telefone_solicitante ? `<div class="campo"><span class="rotulo">Telefone:</span><span class="valor">${occ.telefone_solicitante}</span></div>` : ""}
-        ${occ.endereco_solicitante ? `<div class="campo"><span class="rotulo">Endereço:</span><span class="valor">${occ.endereco_solicitante}</span></div>` : ""}
-        ${occ.bairro_solicitante ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_solicitante}</span></div>` : ""}
-        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ""}
+        ${occ.nome_solicitante ? `<div class="campo"><span class="rotulo">Solicitante:</span><span class="valor">${occ.nome_solicitante}</span></div>` : ''}
+        ${occ.telefone_solicitante ? `<div class="campo"><span class="rotulo">Telefone:</span><span class="valor">${occ.telefone_solicitante}</span></div>` : ''}
+        ${occ.endereco_solicitante ? `<div class="campo"><span class="rotulo">Endereço:</span><span class="valor">${occ.endereco_solicitante}</span></div>` : ''}
+        ${occ.bairro_solicitante ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_solicitante}</span></div>` : ''}
+        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ''}
       </div>
 
       <div class="card-revisao">
         <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-        ${
-          envolvidos.length === 0
-            ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>'
-            : envolvidos
-                .map(
-                  (env) => `
+        ${envolvidos.length === 0 ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>' :
+          envolvidos.map(env => `
             <div class="envolvido-item">
               <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
               <strong>${env.nome_completo}</strong>
-              ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - CPF: ${env.cpf}</span>` : ""}
-              ${env.telefone ? `<span style="color:var(--cinza-medio);font-size:12px;"> - Tel: ${env.telefone}</span>` : ""}
+              ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - CPF: ${env.cpf}</span>` : ''}
+              ${env.telefone ? `<span style="color:var(--cinza-medio);font-size:12px;"> - Tel: ${env.telefone}</span>` : ''}
             </div>
-          `,
-                )
-                .join("")
+          `).join('')
         }
       </div>
 
       <div class="card-revisao">
         <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
         <p style="font-size:14px;white-space:pre-wrap;margin:0;">${occ.observacoes || "Nenhuma observação registrada"}</p>
-        ${
-          occ.justificativa_retificacao
-            ? `
+        ${occ.justificativa_retificacao ? `
           <div style="margin-top:8px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
             <strong><i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i> Justificativa da Retificação:</strong>
             ${occ.justificativa_retificacao}
           </div>
-        `
-            : ""
-        }
-        ${
-          occ.solicitacao_retificacao_justificativa &&
-          occ.status === "pending_rectification"
-            ? `
+        ` : ''}
+        ${occ.solicitacao_retificacao_justificativa && occ.status === 'pending_rectification' ? `
           <div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
             <strong><i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i> Solicitação de Retificação Pendente:</strong>
             ${occ.solicitacao_retificacao_justificativa}
           </div>
-        `
-            : ""
-        }
+        ` : ''}
       </div>
 
       <div class="card-revisao">
         <h4><i class="fas fa-paperclip"></i> Anexos (${anexos.length})</h4>
-        ${
-          anexos.length === 0
-            ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>'
-            : anexos
-                .map(
-                  (anexo) => `
+        ${anexos.length === 0 ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>' :
+          anexos.map(anexo => `
             <div style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);display:flex;align-items:center;gap:10px;">
               <i class="fas ${this.getIconAnexo(anexo.tipo_arquivo)}" style="color:var(--azul-bandeira);font-size:18px;"></i>
               <span style="flex:1;">${anexo.nome_arquivo}</span>
               <span style="color:var(--cinza-medio);font-size:12px;">${this.formatarTamanho(anexo.tamanho || 0)}</span>
-              ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);"><i class="fas fa-external-link-alt"></i></a>` : ""}
+              ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);"><i class="fas fa-external-link-alt"></i></a>` : ''}
             </div>
-          `,
-                )
-                .join("")
+          `).join('')
         }
       </div>
     `;
@@ -1447,7 +1419,7 @@ class App {
     `;
 
     // Supervisor pode aprovar/rejeitar retificação pendente direto da página de detalhes
-    if (authManager.isSupervisor() && occ.status === "pending_rectification") {
+    if (authManager.isSupervisor() && occ.status === 'pending_rectification') {
       html += `
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <button class="btn-success" onclick="app.aprovarRetificacao('${occ.id}')" style="flex:1;min-width:120px;">
@@ -1669,10 +1641,9 @@ class App {
                   <label for="ret_tipo_ocorrencia">Tipo de Ocorrência</label>
                   <select id="ret_tipo_ocorrencia" class="form-control">
                     <option value="">Selecione o tipo...</option>
-                    ${this.TIPOS_OCORRENCIA.map(
-                      (op) =>
-                        `<option value="${op.value}" ${occ.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`,
-                    ).join("")}
+                    ${this.TIPOS_OCORRENCIA.map(op => 
+                      `<option value="${op.value}" ${occ.tipo_ocorrencia === op.value ? 'selected' : ''}>${op.label}</option>`
+                    ).join('')}
                   </select>
                 </div>
               </div>
@@ -1818,9 +1789,7 @@ class App {
       dadosCorrigidos.codigo_operacional = codigo_operacional.trim();
     }
 
-    const tipo_ocorrencia = document.getElementById(
-      "ret_tipo_ocorrencia",
-    )?.value;
+    const tipo_ocorrencia = document.getElementById("ret_tipo_ocorrencia")?.value;
     if (tipo_ocorrencia && tipo_ocorrencia.trim() !== "") {
       dadosCorrigidos.tipo_ocorrencia = tipo_ocorrencia.trim();
     }
@@ -2175,8 +2144,8 @@ class App {
   // ============================================
 
   getTipoLabel(value) {
-    const tipo = this.TIPOS_OCORRENCIA.find((t) => t.value === value);
-    return tipo ? tipo.label : value || "Não informado";
+    const tipo = this.TIPOS_OCORRENCIA.find(t => t.value === value);
+    return tipo ? tipo.label : value || 'Não informado';
   }
 
   // ============================================
@@ -2201,7 +2170,10 @@ class App {
       return;
     }
 
+    console.log("📋 Renderizando página de retificações pendentes...");
     const result = await ocorrenciaManager.buscarRetificacoesPendentes();
+    console.log("📋 Resultado da busca:", result);
+
     if (!result.success) {
       container.innerHTML = `
         <div class="container">
@@ -2219,6 +2191,7 @@ class App {
     }
 
     const pendentes = result.data || [];
+    console.log(`📋 Total de pendentes para renderizar: ${pendentes.length}`);
 
     let html = `
       <div class="container">
@@ -2245,16 +2218,25 @@ class App {
         </div>
       `;
     } else {
-      pendentes.forEach((ret) => {
-        const dataSolicitacao = ret.solicitada_em
-          ? new Date(ret.solicitada_em).toLocaleString("pt-BR")
-          : "Data desconhecida";
-        const numeroOriginal =
-          ret.numero_ocorrencia || ret.numero_temporario || "Sem número";
+      // Ordenar por data de solicitação (mais recente primeiro)
+      const sorted = [...pendentes].sort((a, b) => {
+        const dateA = a.solicitada_em || a.criado_em || '';
+        const dateB = b.solicitada_em || b.criado_em || '';
+        return dateB.localeCompare(dateA);
+      });
+
+      sorted.forEach((ret) => {
+        const dataSolicitacao = ret.solicitada_em 
+          ? new Date(ret.solicitada_em).toLocaleString('pt-BR') 
+          : ret.criado_em 
+            ? new Date(ret.criado_em).toLocaleString('pt-BR')
+            : 'Data desconhecida';
+        
+        const numeroOriginal = ret.numero_ocorrencia || ret.numero_temporario || 'Sem número';
         const tipoLabel = this.getTipoLabel(ret.tipo_ocorrencia);
         const tipoBadge = ret.tipo_ocorrencia
           ? `<span class="badge badge-tipo badge-tipo-${ret.tipo_ocorrencia}" style="font-size:10px;">${tipoLabel}</span>`
-          : "";
+          : '';
 
         html += `
           <div class="card-revisao" style="margin-bottom:12px;border-left:4px solid var(--aviso);">
@@ -2270,10 +2252,10 @@ class App {
               <span class="badge badge-pending" style="font-size:12px;">Pendente</span>
             </div>
             <div style="margin-top:6px;font-size:14px;">
-              <strong>Justificativa:</strong> ${ret.solicitacao_retificacao_justificativa || "Não informada"}
+              <strong>Justificativa:</strong> ${ret.solicitacao_retificacao_justificativa || 'Não informada'}
             </div>
             <div style="margin-top:4px;font-size:13px;color:var(--cinza-medio);">
-              <i class="fas fa-map-marker-alt"></i> ${ret.local_ocorrencia || "Local não informado"}
+              <i class="fas fa-map-marker-alt"></i> ${ret.local_ocorrencia || 'Local não informado'}
             </div>
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn-primary" style="padding:6px 14px;font-size:13px;min-height:auto;width:auto;background:var(--verde-bandeira);" onclick="app.aprovarRetificacao('${ret.id}')">
@@ -2605,10 +2587,9 @@ class App {
     const dataFim = dados.data_hora_encerramento || "";
 
     // Gerar HTML para tipos de ocorrência
-    const tipoOptions = this.TIPOS_OCORRENCIA.map(
-      (op) =>
-        `<option value="${op.value}" ${dados.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`,
-    ).join("");
+    const tipoOptions = this.TIPOS_OCORRENCIA.map(op => 
+      `<option value="${op.value}" ${dados.tipo_ocorrencia === op.value ? 'selected' : ''}>${op.label}</option>`
+    ).join('');
 
     return `
             <div class="form-group">
@@ -4577,10 +4558,7 @@ class App {
         }
 
         const page = item.dataset.page;
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
+        if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
           e.preventDefault();
           this.paginaDestino = page;
           this.paramsDestino = null;
@@ -4598,10 +4576,7 @@ class App {
         // Fecha o menu antes de qualquer ação
         this.closeMenu();
 
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
+        if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
           this.paginaDestino = "login";
           this.paramsDestino = null;
           this.perguntarSalvarRascunho("login", async () => {

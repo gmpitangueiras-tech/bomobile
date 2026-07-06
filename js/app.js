@@ -1185,7 +1185,7 @@ class App {
   }
 
   // ============================================
-  // DETALHES DA OCORRÊNCIA - VISUALIZAÇÃO COMPLETA COM COMPARAÇÃO
+  // DETALHES DA OCORRÊNCIA - COM CORREÇÕES
   // ============================================
 
   verDetalhes(ocorrenciaId) {
@@ -1294,21 +1294,56 @@ class App {
                 </p>
     `;
 
-    // Se for retificação, exibir comparação
-    if (isRetificacao && original) {
+    // ============================================
+    // CORREÇÃO 1: JUSTIFICATIVA NO TOPO (se for retificação)
+    // ============================================
+    if (isRetificacao && occ.justificativa_retificacao) {
       html += `
         <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
-          <p style="font-size:14px;font-weight:600;margin:0 0 6px 0;">
-            <i class="fas fa-code-branch" style="color:var(--azul-bandeira);margin-right:6px;"></i>
+          <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:var(--azul-bandeira);">
+            <i class="fas fa-quote-left" style="margin-right:6px;"></i>
+            Justificativa da Retificação
+          </p>
+          <p style="font-size:14px;color:var(--cinza-escuro);margin:0;">
+            ${occ.justificativa_retificacao}
+          </p>
+        </div>
+      `;
+    }
+
+    // Se for retificação pendente, mostrar solicitação
+    if (
+      occ.status === "pending_rectification" &&
+      occ.solicitacao_retificacao_justificativa
+    ) {
+      html += `
+        <div style="background:#fef3c7;padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:16px;">
+          <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:#92400e;">
+            <i class="fas fa-clock" style="margin-right:6px;"></i>
+            Solicitação de Retificação Pendente
+          </p>
+          <p style="font-size:14px;color:#92400e;margin:0;">
+            ${occ.solicitacao_retificacao_justificativa}
+          </p>
+        </div>
+      `;
+    }
+
+    // Se for retificação, exibir comparação com campos alterados
+    if (isRetificacao && original) {
+      html += `
+        <div style="background:var(--verde-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:16px;">
+          <p style="font-size:14px;font-weight:600;margin:0 0 6px 0;color:var(--verde-escuro);">
+            <i class="fas fa-code-branch" style="margin-right:6px;"></i>
             Esta é uma retificação da ocorrência #${original.numero_ocorrencia || original.numero_temporario || "original"}
           </p>
           <p style="font-size:13px;color:var(--cinza-escuro);margin:0;">
-            Status: ${statusLabel} ${occ.status === "pending_rectification" ? "⏳ Aguardando aprovação" : occ.status === "rectified" ? "✅ Aprovada" : "❌ Rejeitada"}
+            Status: ${statusLabel} ${occ.status === "pending_rectification" ? "⏳ Aguardando aprovação" : occ.status === "rectified" ? "✅ Aprovada" : ""}
           </p>
         </div>
       `;
 
-      // Exibir campos alterados
+      // Exibir campos alterados (comparação)
       if (camposAlterados.length > 0) {
         html += `
           <div style="margin-bottom:16px;">
@@ -1334,8 +1369,6 @@ class App {
           `;
         });
         html += `</div></div>`;
-      } else {
-        html += `<p style="color:var(--cinza-medio);">Nenhuma alteração de campo registrada.</p>`;
       }
 
       // Exibir dados da ocorrência original (resumo)
@@ -1352,35 +1385,129 @@ class App {
       `;
     }
 
-    // Exibição normal (com todos os campos)
+    // ============================================
+    // CORREÇÃO 2: EXIBIR APENAS CAMPOS PREENCHIDOS
+    // ============================================
+
+    // Informações Gerais - apenas campos preenchidos
+    const camposGerais = [
+      {
+        chave: "local_ocorrencia",
+        label: "Local",
+        valor: occ.local_ocorrencia,
+      },
+      { chave: "rodovia", label: "Rodovia", valor: occ.rodovia },
+      {
+        chave: "bairro_ocorrencia",
+        label: "Bairro da Ocorrência",
+        valor: occ.bairro_ocorrencia,
+      },
+      { chave: "referencia", label: "Referência", valor: occ.referencia },
+      {
+        chave: "codigo_operacional",
+        label: "Código Operacional",
+        valor: occ.codigo_operacional,
+      },
+      {
+        chave: "tipo_ocorrencia",
+        label: "Tipo de Ocorrência",
+        valor: occ.tipo_ocorrencia
+          ? this.getTipoLabel(occ.tipo_ocorrencia)
+          : null,
+      },
+      {
+        chave: "codigo_municipal",
+        label: "Código Municipal",
+        valor: occ.codigo_municipal,
+      },
+      { chave: "complemento", label: "Complemento", valor: occ.complemento },
+      {
+        chave: "identificacao_adicional",
+        label: "Identificação Adicional",
+        valor: occ.identificacao_adicional,
+      },
+      { chave: "numero_versao", label: "Versão", valor: occ.numero_versao },
+    ];
+
+    const camposGeraisPreenchidos = camposGerais.filter(
+      (c) => c.valor && c.valor.toString().trim() !== "",
+    );
+
+    if (
+      camposGeraisPreenchidos.length > 0 ||
+      dataInicio ||
+      dataEncerramento ||
+      versaoInfo
+    ) {
+      html += `
+        <div class="card-revisao">
+          <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
+          ${camposGeraisPreenchidos
+            .map(
+              (c) => `
+            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
+          `,
+            )
+            .join("")}
+          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${dataInicio}</span></div>
+          ${dataEncerramento ? `<div class="campo"><span class="rotulo">Data/Hora Encerramento:</span><span class="valor">${dataEncerramento}</span></div>` : ""}
+          ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ""}
+        </div>
+      `;
+    }
+
+    // ============================================
+    // CORREÇÃO 3: ORIGEM DA SOLICITAÇÃO - SEMPRE EXIBIR SE PREENCHIDO
+    // ============================================
+    const camposSolicitante = [
+      {
+        chave: "forma_solicitacao",
+        label: "Forma",
+        valor: occ.forma_solicitacao,
+      },
+      {
+        chave: "nome_solicitante",
+        label: "Solicitante",
+        valor: occ.nome_solicitante,
+      },
+      {
+        chave: "telefone_solicitante",
+        label: "Telefone",
+        valor: occ.telefone_solicitante,
+      },
+      {
+        chave: "endereco_solicitante",
+        label: "Endereço",
+        valor: occ.endereco_solicitante,
+      },
+      {
+        chave: "bairro_solicitante",
+        label: "Bairro",
+        valor: occ.bairro_solicitante,
+      },
+    ];
+
+    const camposSolicitantePreenchidos = camposSolicitante.filter(
+      (c) => c.valor && c.valor.toString().trim() !== "",
+    );
+
+    if (camposSolicitantePreenchidos.length > 0) {
+      html += `
+        <div class="card-revisao">
+          <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
+          ${camposSolicitantePreenchidos
+            .map(
+              (c) => `
+            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
+          `,
+            )
+            .join("")}
+        </div>
+      `;
+    }
+
+    // Envolvidos
     html += `
-      <div class="card-revisao">
-        <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
-        <div class="campo"><span class="rotulo">Local:</span><span class="valor">${occ.local_ocorrencia || "Não informado"}</span></div>
-        ${occ.rodovia ? `<div class="campo"><span class="rotulo">Rodovia:</span><span class="valor">${occ.rodovia}</span></div>` : ""}
-        ${occ.bairro_ocorrencia ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_ocorrencia}</span></div>` : ""}
-        ${occ.referencia ? `<div class="campo"><span class="rotulo">Referência:</span><span class="valor">${occ.referencia}</span></div>` : ""}
-        <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${dataInicio}</span></div>
-        <div class="campo"><span class="rotulo">Data/Hora Encerramento:</span><span class="valor">${dataEncerramento}</span></div>
-        ${occ.codigo_operacional ? `<div class="campo"><span class="rotulo">Código Operacional:</span><span class="valor">${occ.codigo_operacional}</span></div>` : ""}
-        ${occ.tipo_ocorrencia ? `<div class="campo"><span class="rotulo">Tipo de Ocorrência:</span><span class="valor">${this.getTipoLabel(occ.tipo_ocorrencia)}</span></div>` : ""}
-        ${occ.codigo_municipal ? `<div class="campo"><span class="rotulo">Código Municipal:</span><span class="valor">${occ.codigo_municipal}</span></div>` : ""}
-        ${occ.complemento ? `<div class="campo"><span class="rotulo">Complemento:</span><span class="valor">${occ.complemento}</span></div>` : ""}
-        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ""}
-        ${occ.numero_versao ? `<div class="campo"><span class="rotulo">Versão:</span><span class="valor">${occ.numero_versao}</span></div>` : ""}
-        ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ""}
-      </div>
-
-      <div class="card-revisao">
-        <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
-        <div class="campo"><span class="rotulo">Forma:</span><span class="valor">${occ.forma_solicitacao || "Não informado"}</span></div>
-        ${occ.nome_solicitante ? `<div class="campo"><span class="rotulo">Solicitante:</span><span class="valor">${occ.nome_solicitante}</span></div>` : ""}
-        ${occ.telefone_solicitante ? `<div class="campo"><span class="rotulo">Telefone:</span><span class="valor">${occ.telefone_solicitante}</span></div>` : ""}
-        ${occ.endereco_solicitante ? `<div class="campo"><span class="rotulo">Endereço:</span><span class="valor">${occ.endereco_solicitante}</span></div>` : ""}
-        ${occ.bairro_solicitante ? `<div class="campo"><span class="rotulo">Bairro:</span><span class="valor">${occ.bairro_solicitante}</span></div>` : ""}
-        ${occ.identificacao_adicional ? `<div class="campo"><span class="rotulo">Identificação Adicional:</span><span class="valor">${occ.identificacao_adicional}</span></div>` : ""}
-      </div>
-
       <div class="card-revisao">
         <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
         ${
@@ -1400,33 +1527,20 @@ class App {
                 .join("")
         }
       </div>
+    `;
 
-      <div class="card-revisao">
-        <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
-        <p style="font-size:14px;white-space:pre-wrap;margin:0;">${occ.observacoes || "Nenhuma observação registrada"}</p>
-        ${
-          occ.justificativa_retificacao
-            ? `
-          <div style="margin-top:8px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
-            <strong><i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i> Justificativa da Retificação:</strong>
-            ${occ.justificativa_retificacao}
-          </div>
-        `
-            : ""
-        }
-        ${
-          occ.solicitacao_retificacao_justificativa &&
-          occ.status === "pending_rectification"
-            ? `
-          <div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
-            <strong><i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i> Solicitação de Retificação Pendente:</strong>
-            ${occ.solicitacao_retificacao_justificativa}
-          </div>
-        `
-            : ""
-        }
-      </div>
+    // Observações - apenas se preenchido
+    if (occ.observacoes && occ.observacoes.trim() !== "") {
+      html += `
+        <div class="card-revisao">
+          <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
+          <p style="font-size:14px;white-space:pre-wrap;margin:0;">${occ.observacoes}</p>
+        </div>
+      `;
+    }
 
+    // Anexos
+    html += `
       <div class="card-revisao">
         <h4><i class="fas fa-paperclip"></i> Anexos (${anexos.length})</h4>
         ${
@@ -2889,11 +3003,47 @@ class App {
   }
 
   // ============================================
-  // ETAPA 6 - REVISÃO E FINALIZAÇÃO
+  // ETAPA 6 - REVISÃO E FINALIZAÇÃO (COM FILTRO DE CAMPOS PREENCHIDOS)
   // ============================================
   renderEtapa6(dados) {
     const envolvidos = dados.envolvidos || [];
     const anexos = dados.anexos || [];
+
+    // ===== CORREÇÃO: Filtrar apenas campos preenchidos =====
+    const camposSolicitante = [
+      { label: "Forma", valor: dados.forma_solicitacao },
+      { label: "Solicitante", valor: dados.nome_solicitante },
+      { label: "Telefone", valor: dados.telefone_solicitante },
+      { label: "Endereço", valor: dados.endereco_solicitante },
+      { label: "Código Municipal", valor: dados.codigo_municipal },
+      { label: "Complemento", valor: dados.complemento },
+      { label: "Bairro", valor: dados.bairro_solicitante },
+      {
+        label: "Identificação Adicional",
+        valor: dados.identificacao_adicional,
+      },
+    ];
+
+    const camposOcorrencia = [
+      {
+        label: "Tipo",
+        valor: dados.tipo_ocorrencia
+          ? this.getTipoLabel(dados.tipo_ocorrencia)
+          : null,
+      },
+      { label: "Local", valor: dados.local_ocorrencia },
+      { label: "Rodovia", valor: dados.rodovia },
+      { label: "Bairro", valor: dados.bairro_ocorrencia },
+      { label: "Referência", valor: dados.referencia },
+      { label: "Código Operacional", valor: dados.codigo_operacional },
+    ];
+
+    const camposSolicitantePreenchidos = camposSolicitante.filter(
+      (c) => c.valor && c.valor.toString().trim() !== "",
+    );
+    const camposOcorrenciaPreenchidos = camposOcorrencia.filter(
+      (c) => c.valor && c.valor.toString().trim() !== "",
+    );
 
     return `
             <div style="margin-bottom:16px;">
@@ -2903,70 +3053,47 @@ class App {
                 </p>
             </div>
 
+            ${
+              camposSolicitantePreenchidos.length > 0
+                ? `
             <div class="card-revisao">
                 <h4>
                     <i class="fas fa-phone-alt"></i>
                     Origem da Solicitação
                 </h4>
-                <div class="campo">
-                    <span class="rotulo">Forma:</span>
-                    <span class="valor">${dados.forma_solicitacao || "Não informado"}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Solicitante:</span>
-                    <span class="valor">${dados.nome_solicitante || "Não informado"}</span>
-                </div>
-                ${
-                  dados.telefone_solicitante
-                    ? `
-                <div class="campo">
-                    <span class="rotulo">Telefone:</span>
-                    <span class="valor">${dados.telefone_solicitante}</span>
-                </div>`
-                    : ""
-                }
-                ${
-                  dados.endereco_solicitante
-                    ? `
-                <div class="campo">
-                    <span class="rotulo">Endereço:</span>
-                    <span class="valor">${dados.endereco_solicitante}</span>
-                </div>`
-                    : ""
-                }
+                ${camposSolicitantePreenchidos
+                  .map(
+                    (c) => `
+                    <div class="campo">
+                        <span class="rotulo">${c.label}:</span>
+                        <span class="valor">${c.valor}</span>
+                    </div>
+                  `,
+                  )
+                  .join("")}
             </div>
+            `
+                : ""
+            }
 
+            ${
+              camposOcorrenciaPreenchidos.length > 0 || dados.data_hora_inicio
+                ? `
             <div class="card-revisao">
                 <h4>
                     <i class="fas fa-map-marker-alt"></i>
                     Dados da Ocorrência
                 </h4>
-                <div class="campo">
-                    <span class="rotulo">Tipo:</span>
-                    <span class="valor">${this.getTipoLabel(dados.tipo_ocorrencia)}</span>
-                </div>
-                <div class="campo">
-                    <span class="rotulo">Local:</span>
-                    <span class="valor">${dados.local_ocorrencia || "Não informado"}</span>
-                </div>
-                ${
-                  dados.rodovia
-                    ? `
-                <div class="campo">
-                    <span class="rotulo">Rodovia:</span>
-                    <span class="valor">${dados.rodovia}</span>
-                </div>`
-                    : ""
-                }
-                ${
-                  dados.bairro_ocorrencia
-                    ? `
-                <div class="campo">
-                    <span class="rotulo">Bairro:</span>
-                    <span class="valor">${dados.bairro_ocorrencia}</span>
-                </div>`
-                    : ""
-                }
+                ${camposOcorrenciaPreenchidos
+                  .map(
+                    (c) => `
+                    <div class="campo">
+                        <span class="rotulo">${c.label}:</span>
+                        <span class="valor">${c.valor}</span>
+                    </div>
+                  `,
+                  )
+                  .join("")}
                 <div class="campo">
                     <span class="rotulo">Início:</span>
                     <span class="valor">${dados.data_hora_inicio ? new Date(dados.data_hora_inicio).toLocaleString("pt-BR") : "Não informado"}</span>
@@ -2981,6 +3108,9 @@ class App {
                     : ""
                 }
             </div>
+            `
+                : ""
+            }
 
             <div class="card-revisao">
                 <h4>
@@ -3008,13 +3138,19 @@ class App {
                 }
             </div>
 
+            ${
+              dados.observacoes && dados.observacoes.trim() !== ""
+                ? `
             <div class="card-revisao">
                 <h4>
                     <i class="fas fa-pencil-alt"></i>
                     Observações
                 </h4>
-                <p style="font-size:14px;white-space:pre-wrap;">${dados.observacoes || "Nenhuma observação registrada"}</p>
+                <p style="font-size:14px;white-space:pre-wrap;">${dados.observacoes}</p>
             </div>
+            `
+                : ""
+            }
 
             <div class="card-revisao">
                 <h4>

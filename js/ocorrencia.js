@@ -11,7 +11,7 @@
  * - Baseado em sistemas policiais oficiais (BO, BAT, DIAO, SRO)
  * - Ao solicitar retificação, NÃO copia o número da ocorrência original para evitar duplicidade
  * - Um novo número é gerado apenas quando a retificação é aprovada pelo supervisor
- * - Na listagem, apenas ocorrências raiz (ocorrencia_original_id IS NULL) são exibidas
+ * - Na listagem, apenas ocorrências ativas (esta_ativa = true) são exibidas
  * - Ao aprovar retificação, mantém o mesmo número da ocorrência original
  * - Suporte a geolocalização (latitude/longitude)
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
@@ -188,8 +188,12 @@ class OcorrenciaManager {
 
       let query = client.from("ocorrencias").select("*");
 
-      // ===== NOVA REGRA: Mostrar apenas ocorrências raiz (não retificações) =====
-      query = query.is("ocorrencia_original_id", null);
+      // ===== CORREÇÃO: Buscar apenas ocorrências ATIVAS =====
+      // Em vez de filtrar por ocorrencia_original_id IS NULL,
+      // buscamos apenas ocorrências ativas (esta_ativa = true)
+      // Isso garante que quando uma retificação é aprovada,
+      // a versão retificada (com dados atualizados) apareça na listagem
+      query = query.eq("esta_ativa", true);
 
       // Filtros
       if (filtros.status) {
@@ -853,8 +857,7 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // CORREÇÃO: Removido o select com relacionamento ambíguo
-      // Busca apenas os dados da ocorrência sem tentar fazer join com usuarios
+      // Busca apenas ocorrências com status pending_rectification
       const { data, error } = await client
         .from("ocorrencias")
         .select("*")

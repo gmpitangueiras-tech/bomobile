@@ -139,6 +139,95 @@ class App {
   }
 
   // ============================================
+  // MODAL DE INPUT PERSONALIZADO (para motivo da rejeição)
+  // ============================================
+
+  inputModal(
+    mensagem,
+    titulo = "Informe o motivo",
+    placeholder = "Digite o motivo...",
+  ) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:450px;">
+          <div class="modal-header">
+            <div class="title">
+              <i class="fas fa-pencil-alt" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+              ${titulo}
+            </div>
+            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._inputResolve(null);">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p style="font-size:14px;color:var(--cinza-escuro);margin-bottom:12px;">
+              ${mensagem}
+            </p>
+            <div class="form-group">
+              <label for="inputMotivo">Motivo <span class="required">*</span></label>
+              <textarea id="inputMotivo" class="form-control" rows="3" placeholder="${placeholder}" required></textarea>
+              <div class="input-hint">
+                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                Mínimo 5 caracteres
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer" style="flex-direction:row;gap:10px;">
+            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._inputResolve(null);" style="flex:1;">
+              Cancelar
+            </button>
+            <button type="button" class="btn-primary" onclick="app.confirmarInputModal();" style="flex:1;">
+              <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      window._inputResolve = resolve;
+
+      // Focar no textarea
+      setTimeout(() => {
+        const textarea = document.getElementById("inputMotivo");
+        if (textarea) textarea.focus();
+      }, 300);
+
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+          resolve(null);
+        }
+      });
+
+      // Enter para confirmar (Ctrl+Enter)
+      document.addEventListener("keydown", function handler(e) {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          app.confirmarInputModal();
+        }
+      });
+    });
+  }
+
+  confirmarInputModal() {
+    const textarea = document.getElementById("inputMotivo");
+    if (!textarea) return;
+
+    const valor = textarea.value.trim();
+    if (valor.length < 5) {
+      this.showToast("O motivo deve ter pelo menos 5 caracteres", "warning");
+      return;
+    }
+
+    const overlay = textarea.closest(".modal-overlay");
+    if (overlay) {
+      window._inputResolve(valor);
+      overlay.remove();
+    }
+  }
+
+  // ============================================
   // INICIALIZAÇÃO
   // ============================================
 
@@ -729,7 +818,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - DASHBOARD (com card de retificações pendentes)
+  // RENDERIZAÇÃO - DASHBOARD
   // ============================================
 
   async renderDashboard(container) {
@@ -875,7 +964,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS (com tag de tipo)
+  // RENDERIZAÇÃO - LISTA DE OCORRÊNCIAS
   // ============================================
 
   async renderOcorrenciasLista(container, statusFilter = null) {
@@ -925,7 +1014,6 @@ class App {
         minute: "2-digit",
       });
 
-      // Tag de tipo de ocorrência
       const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
       const tipoBadge = occ.tipo_ocorrencia
         ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
@@ -969,7 +1057,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - OCORRÊNCIAS (com tag de tipo)
+  // RENDERIZAÇÃO - OCORRÊNCIAS
   // ============================================
 
   async renderOcorrencias(container) {
@@ -1116,7 +1204,6 @@ class App {
         minute: "2-digit",
       });
 
-      // Tag de tipo de ocorrência
       const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
       const tipoBadge = occ.tipo_ocorrencia
         ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
@@ -1185,7 +1272,7 @@ class App {
   }
 
   // ============================================
-  // DETALHES DA OCORRÊNCIA - COM CORREÇÕES
+  // DETALHES DA OCORRÊNCIA
   // ============================================
 
   verDetalhes(ocorrenciaId) {
@@ -1229,7 +1316,6 @@ class App {
     const occ = result.data;
     const isRetificacao = occ.ocorrencia_original_id !== null;
 
-    // Buscar original se for retificação
     let original = null;
     let camposAlterados = [];
     if (isRetificacao) {
@@ -1294,9 +1380,7 @@ class App {
                 </p>
     `;
 
-    // ============================================
-    // CORREÇÃO 1: JUSTIFICATIVA NO TOPO (se for retificação)
-    // ============================================
+    // Justificativa no topo
     if (isRetificacao && occ.justificativa_retificacao) {
       html += `
         <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
@@ -1311,7 +1395,6 @@ class App {
       `;
     }
 
-    // Se for retificação pendente, mostrar solicitação
     if (
       occ.status === "pending_rectification" &&
       occ.solicitacao_retificacao_justificativa
@@ -1329,7 +1412,6 @@ class App {
       `;
     }
 
-    // Se for retificação, exibir comparação com campos alterados
     if (isRetificacao && original) {
       html += `
         <div style="background:var(--verde-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:16px;">
@@ -1343,7 +1425,6 @@ class App {
         </div>
       `;
 
-      // Exibir campos alterados (comparação)
       if (camposAlterados.length > 0) {
         html += `
           <div style="margin-bottom:16px;">
@@ -1371,7 +1452,6 @@ class App {
         html += `</div></div>`;
       }
 
-      // Exibir dados da ocorrência original (resumo)
       html += `
         <div class="card-revisao" style="margin-bottom:12px;opacity:0.8;">
           <h4><i class="fas fa-history"></i> Versão Original (para referência)</h4>
@@ -1384,10 +1464,6 @@ class App {
         </div>
       `;
     }
-
-    // ============================================
-    // CORREÇÃO 2: EXIBIR APENAS CAMPOS PREENCHIDOS
-    // ============================================
 
     // Informações Gerais - apenas campos preenchidos
     const camposGerais = [
@@ -1456,9 +1532,7 @@ class App {
       `;
     }
 
-    // ============================================
-    // CORREÇÃO 3: ORIGEM DA SOLICITAÇÃO - SEMPRE EXIBIR SE PREENCHIDO
-    // ============================================
+    // Origem da Solicitação
     const camposSolicitante = [
       {
         chave: "forma_solicitacao",
@@ -1567,7 +1641,6 @@ class App {
       <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
     `;
 
-    // Supervisor pode aprovar/rejeitar retificação pendente direto da página de detalhes
     if (authManager.isSupervisor() && occ.status === "pending_rectification") {
       html += `
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1608,7 +1681,7 @@ class App {
   }
 
   // ============================================
-  // RETIFICAÇÃO - Modal com CSS aplicado
+  // RETIFICAÇÃO
   // ============================================
 
   async solicitarRetificacao(id) {
@@ -1657,7 +1730,6 @@ class App {
             </p>
           </div>
 
-          <!-- CAMPOS IMUTÁVEIS - APENAS EXIBIÇÃO -->
           <div style="background:var(--cinza-claro);padding:12px;border-radius:var(--border-radius);margin-bottom:16px;opacity:0.7;">
             <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
               <i class="fas fa-lock" style="margin-right:6px;"></i>
@@ -1674,7 +1746,6 @@ class App {
           </div>
 
           <form id="formRetificacao">
-            <!-- JUSTIFICATIVA -->
             <div class="form-group">
               <label for="ret_justificativa">
                 <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
@@ -1696,7 +1767,6 @@ class App {
                 Deixe em branco os campos que NÃO precisam ser alterados
               </p>
               
-              <!-- DADOS DO SOLICITANTE -->
               <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
                 <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
                   <i class="fas fa-user" style="margin-right:6px;"></i>
@@ -1732,7 +1802,6 @@ class App {
                 </div>
               </div>
 
-              <!-- DADOS DO LOCAL -->
               <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
                 <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
                   <i class="fas fa-map-marker-alt" style="margin-right:6px;"></i>
@@ -1756,7 +1825,6 @@ class App {
                 </div>
               </div>
 
-              <!-- OBSERVAÇÕES -->
               <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
                 <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
                   <i class="fas fa-pencil-alt" style="margin-right:6px;"></i>
@@ -1768,7 +1836,6 @@ class App {
                 </div>
               </div>
 
-              <!-- DADOS OPERACIONAIS -->
               <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
                 <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
                   <i class="fas fa-barcode" style="margin-right:6px;"></i>
@@ -1780,7 +1847,6 @@ class App {
                 </div>
               </div>
 
-              <!-- TIPO DE OCORRÊNCIA -->
               <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
                 <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
                   <i class="fas fa-tag" style="margin-right:6px;"></i>
@@ -1798,7 +1864,6 @@ class App {
                 </div>
               </div>
 
-              <!-- ENVOLVIDOS - APENAS EXIBIÇÃO -->
               <div style="background:var(--cinza-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;opacity:0.7;">
                 <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
                   <i class="fas fa-users" style="margin-right:6px;"></i>
@@ -1985,6 +2050,10 @@ class App {
     );
   }
 
+  // ============================================
+  // APROVAR RETIFICAÇÃO - COM ATUALIZAÇÃO DA LISTA
+  // ============================================
+
   async aprovarRetificacao(id) {
     const confirmado = await this.confirmar(
       "Confirma a aprovação desta retificação? A versão original será substituída.",
@@ -1994,33 +2063,79 @@ class App {
     const result = await ocorrenciaManager.aprovarRetificacao(id);
     if (result.success) {
       this.showToast("Retificação aprovada com sucesso!", "success");
-      // Recarregar a página de detalhes ou redirecionar
-      setTimeout(() => {
+
+      // ===== CORREÇÃO: Recarregar a página atual =====
+      // Verifica em qual página está e recarrega o conteúdo
+      const paginaAtual = this.currentPage;
+
+      // Recarregar a página de detalhes se estiver nela
+      if (paginaAtual === "detalhe-ocorrencia") {
         this.loadPageContent("detalhe-ocorrencia");
-      }, 1000);
+      }
+
+      // Recarregar a lista de retificações se estiver nela
+      if (paginaAtual === "retificacoes") {
+        this.loadPageContent("retificacoes");
+      }
+
+      // Recarregar o dashboard se estiver nele
+      if (paginaAtual === "dashboard") {
+        this.loadPageContent("dashboard");
+      }
+
+      // Recarregar a lista de ocorrências se estiver nela
+      if (paginaAtual === "ocorrencias") {
+        this.loadPageContent("ocorrencias");
+      }
     } else {
       this.showToast("Erro ao aprovar retificação: " + result.error, "error");
     }
   }
 
+  // ============================================
+  // REJEITAR RETIFICAÇÃO - COM MODAL PERSONALIZADO E ATUALIZAÇÃO DA LISTA
+  // ============================================
+
   async rejeitarRetificacao(id) {
-    const motivo = prompt("Digite o motivo da rejeição:");
-    if (!motivo || motivo.trim() === "") {
-      this.showToast("Motivo da rejeição é obrigatório", "warning");
+    // ===== CORREÇÃO 1: Modal personalizado em vez de prompt =====
+    const motivo = await this.inputModal(
+      "Informe o motivo da rejeição da retificação:",
+      "Rejeitar Retificação",
+      "Digite o motivo da rejeição...",
+    );
+
+    if (!motivo) {
+      this.showToast("Operação cancelada", "info");
       return;
     }
 
     const confirmado = await this.confirmar(
-      "Confirma a rejeição desta retificação?",
+      `Confirma a rejeição desta retificação?\n\nMotivo: ${motivo}`,
     );
     if (!confirmado) return;
 
     const result = await ocorrenciaManager.rejeitarRetificacao(id, motivo);
     if (result.success) {
       this.showToast("Retificação rejeitada", "info");
-      setTimeout(() => {
+
+      // ===== CORREÇÃO 2: Recarregar a página atual =====
+      const paginaAtual = this.currentPage;
+
+      if (paginaAtual === "detalhe-ocorrencia") {
         this.loadPageContent("detalhe-ocorrencia");
-      }, 1000);
+      }
+
+      if (paginaAtual === "retificacoes") {
+        this.loadPageContent("retificacoes");
+      }
+
+      if (paginaAtual === "dashboard") {
+        this.loadPageContent("dashboard");
+      }
+
+      if (paginaAtual === "ocorrencias") {
+        this.loadPageContent("ocorrencias");
+      }
     } else {
       this.showToast("Erro ao rejeitar retificação: " + result.error, "error");
     }
@@ -2204,9 +2319,15 @@ class App {
   }
 
   async cancelarOcorrencia(id) {
-    const motivo = prompt("Digite o motivo do cancelamento:");
-    if (!motivo || motivo.trim() === "") {
-      this.showToast("Motivo do cancelamento é obrigatório", "warning");
+    // Usar modal personalizado também para cancelamento
+    const motivo = await this.inputModal(
+      "Informe o motivo do cancelamento:",
+      "Cancelar Ocorrência",
+      "Digite o motivo do cancelamento...",
+    );
+
+    if (!motivo) {
+      this.showToast("Operação cancelada", "info");
       return;
     }
 
@@ -2373,7 +2494,6 @@ class App {
         </div>
       `;
     } else {
-      // Ordenar por data de solicitação (mais recente primeiro)
       const sorted = [...pendentes].sort((a, b) => {
         const dateA = a.solicitada_em || a.criado_em || "";
         const dateB = b.solicitada_em || b.criado_em || "";
@@ -2434,7 +2554,7 @@ class App {
   }
 
   // ============================================
-  // NOVA OCORRÊNCIA - SOMENTE CAMPOS DO FORMULÁRIO
+  // NOVA OCORRÊNCIA
   // ============================================
 
   async renderNovaOcorrencia(container) {
@@ -2720,7 +2840,7 @@ class App {
   }
 
   // ============================================
-  // ETAPA 2 - DADOS DA OCORRÊNCIA (COM TIPO DE OCORRÊNCIA)
+  // ETAPA 2 - DADOS DA OCORRÊNCIA
   // ============================================
   renderEtapa2(dados) {
     const brasiliaNow = this.obterDataHoraBrasilia();
@@ -2742,7 +2862,6 @@ class App {
 
     const dataFim = dados.data_hora_encerramento || "";
 
-    // Gerar HTML para tipos de ocorrência
     const tipoOptions = this.TIPOS_OCORRENCIA.map(
       (op) =>
         `<option value="${op.value}" ${dados.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`,
@@ -3003,13 +3122,12 @@ class App {
   }
 
   // ============================================
-  // ETAPA 6 - REVISÃO E FINALIZAÇÃO (COM FILTRO DE CAMPOS PREENCHIDOS)
+  // ETAPA 6 - REVISÃO E FINALIZAÇÃO
   // ============================================
   renderEtapa6(dados) {
     const envolvidos = dados.envolvidos || [];
     const anexos = dados.anexos || [];
 
-    // ===== CORREÇÃO: Filtrar apenas campos preenchidos =====
     const camposSolicitante = [
       { label: "Forma", valor: dados.forma_solicitacao },
       { label: "Solicitante", valor: dados.nome_solicitante },
@@ -3511,7 +3629,7 @@ class App {
   }
 
   // ============================================
-  // FINALIZAR OCORRÊNCIA (COM VALIDAÇÃO RIGOROSA)
+  // FINALIZAR OCORRÊNCIA
   // ============================================
 
   async finalizarOcorrencia() {
@@ -3751,7 +3869,7 @@ class App {
   }
 
   // ============================================
-  // RENDERIZAÇÃO - USUÁRIOS (APENAS SUPERVISOR)
+  // RENDERIZAÇÃO - USUÁRIOS
   // ============================================
 
   async renderUsuarios(container) {
@@ -4729,7 +4847,6 @@ class App {
 
     document.querySelectorAll(".menu-item[data-page]").forEach((item) => {
       item.addEventListener("click", (e) => {
-        // Verifica se o usuário está logado antes de navegar
         if (!authManager.isLoggedIn()) {
           this.closeMenu();
           this.navigateTo("login");
@@ -4755,7 +4872,6 @@ class App {
     document
       .getElementById("btnLogout")
       ?.addEventListener("click", async () => {
-        // Fecha o menu antes de qualquer ação
         this.closeMenu();
 
         if (

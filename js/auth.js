@@ -6,7 +6,7 @@
  * - Supervisor: pode listar, criar, editar, ativar/desativar, resetar senha de qualquer usuário
  * - Guarda: pode editar apenas seus próprios dados (nome, telefone, email)
  * - Nenhum usuário pode alterar CPF, matrícula ou perfil de si mesmo
- * - Logs de acesso: registrados automaticamente no login
+ * - Logs de acesso: registrados automaticamente no login, logout e ações importantes
  * - Apenas supervisores podem visualizar logs
  */
 
@@ -78,6 +78,169 @@ class AuthManager {
     }
   }
 
+  // ============================================
+  // OBTENÇÃO DE IP REAL
+  // ============================================
+
+  async obterIP() {
+    try {
+      const response = await fetch("https://api.ipify.org?format=json");
+      const data = await response.json();
+      return data.ip;
+    } catch (error) {
+      console.warn("⚠️ Erro ao obter IP:", error);
+      return null;
+    }
+  }
+
+  // ============================================
+  // REGISTRO DE LOGS DE ACESSO
+  // ============================================
+
+  async registrarLogAcesso(
+    usuarioId,
+    acao = "login",
+    entidade = null,
+    detalhes = null,
+  ) {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar" };
+
+      // Obter IP automaticamente
+      const ip = await this.obterIP();
+
+      const logData = {
+        usuario_id: usuarioId,
+        ip: ip,
+        user_agent: navigator?.userAgent || null,
+        acao: acao,
+        entidade: entidade || null,
+        detalhes: detalhes ? JSON.stringify(detalhes) : null,
+        data_hora: new Date().toISOString(),
+      };
+
+      const { data, error } = await client
+        .from("logs_acesso")
+        .insert([logData])
+        .select()
+        .single();
+
+      if (error) {
+        console.warn(
+          "⚠️ Erro ao registrar log de acesso (não crítico):",
+          error,
+        );
+        return { success: false, error: error.message, nonCritical: true };
+      }
+
+      console.log(
+        `✅ Log de acesso registrado: ${acao} - Usuário ${usuarioId}`,
+      );
+      return { success: true, data };
+    } catch (error) {
+      console.warn("⚠️ Erro não crítico ao registrar log de acesso:", error);
+      return { success: false, error: error.message, nonCritical: true };
+    }
+  }
+
+  // ============================================
+  // MÉTODOS ESPECÍFICOS DE LOG (WRAPPERS)
+  // ============================================
+
+  async logLogin(usuarioId) {
+    return this.registrarLogAcesso(usuarioId, "login");
+  }
+
+  async logLogout(usuarioId) {
+    return this.registrarLogAcesso(usuarioId, "logout");
+  }
+
+  async logCriarOcorrencia(usuarioId, ocorrenciaId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "criar_ocorrencia",
+      "ocorrencia",
+      { ocorrencia_id: ocorrenciaId },
+    );
+  }
+
+  async logFinalizarOcorrencia(usuarioId, ocorrenciaId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "finalizar_ocorrencia",
+      "ocorrencia",
+      { ocorrencia_id: ocorrenciaId },
+    );
+  }
+
+  async logCancelarOcorrencia(usuarioId, ocorrenciaId, motivo) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "cancelar_ocorrencia",
+      "ocorrencia",
+      { ocorrencia_id: ocorrenciaId, motivo: motivo },
+    );
+  }
+
+  async logSolicitarRetificacao(usuarioId, ocorrenciaId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "solicitar_retificacao",
+      "ocorrencia",
+      { ocorrencia_id: ocorrenciaId },
+    );
+  }
+
+  async logAprovarRetificacao(usuarioId, retificacaoId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "aprovar_retificacao",
+      "ocorrencia",
+      { retificacao_id: retificacaoId },
+    );
+  }
+
+  async logRejeitarRetificacao(usuarioId, retificacaoId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "rejeitar_retificacao",
+      "ocorrencia",
+      { retificacao_id: retificacaoId },
+    );
+  }
+
+  async logCriarUsuario(usuarioId, novoUsuarioId) {
+    return this.registrarLogAcesso(usuarioId, "criar_usuario", "usuario", {
+      usuario_id: novoUsuarioId,
+    });
+  }
+
+  async logEditarUsuario(usuarioId, usuarioAlteradoId) {
+    return this.registrarLogAcesso(usuarioId, "editar_usuario", "usuario", {
+      usuario_id: usuarioAlteradoId,
+    });
+  }
+
+  async logResetarSenha(usuarioId, usuarioAlteradoId) {
+    return this.registrarLogAcesso(usuarioId, "resetar_senha", "usuario", {
+      usuario_id: usuarioAlteradoId,
+    });
+  }
+
+  async logAtivarDesativarUsuario(usuarioId, usuarioAlteradoId) {
+    return this.registrarLogAcesso(
+      usuarioId,
+      "ativar_desativar_usuario",
+      "usuario",
+      { usuario_id: usuarioAlteradoId },
+    );
+  }
+
+  // ============================================
+  // AUTENTICAÇÃO
+  // ============================================
+
   async login(cpf, senha) {
     try {
       const cpfClean = cpf.replace(/[^0-9]/g, "");
@@ -119,15 +282,17 @@ class AuthManager {
         }),
       );
 
-      // Registrar log de acesso (não crítico - continua mesmo se falhar)
-      await this.registrarLogAcesso(usuario.id, null, navigator.userAgent);
+      // ===== REGISTRAR LOG DE LOGIN =====
+      await this.logLogin(usuario.id);
 
+      // Atualizar último login (não crítico)
       await client
         .from("usuarios")
         .update({
           ultimo_login: new Date().toISOString(),
         })
-        .eq("id", usuario.id);
+        .eq("id", usuario.id)
+        .catch((e) => console.warn("⚠️ Erro ao atualizar último login:", e));
 
       this.notifyListeners("login", usuario);
 
@@ -173,6 +338,9 @@ class AuthManager {
       if (telefone) this.user.telefone = telefone;
       if (email) this.user.email = email;
 
+      // ===== REGISTRAR LOG DE PRIMEIRO ACESSO =====
+      await this.registrarLogAcesso(this.user.id, "primeiro_acesso");
+
       this.notifyListeners("primeiro_acesso", this.user);
       return { success: true, usuario: this.user };
     } catch (error) {
@@ -182,6 +350,13 @@ class AuthManager {
   }
 
   async logout() {
+    const usuarioId = this.user?.id;
+
+    // ===== REGISTRAR LOG DE LOGOUT =====
+    if (usuarioId) {
+      await this.logLogout(usuarioId);
+    }
+
     this._isLoggedIn = false;
     this.user = null;
     localStorage.removeItem("auth_user");
@@ -189,31 +364,42 @@ class AuthManager {
     return { success: true };
   }
 
-  // ========== MÉTODOS PÚBLICOS ==========
+  // ============================================
+  // MÉTODOS PÚBLICOS
+  // ============================================
+
   isLoggedIn() {
     return this._isLoggedIn;
   }
+
   getUser() {
     return this.user;
   }
+
   getPerfil() {
     return this.user?.perfil || null;
   }
+
   getUserId() {
     return this.user?.id || null;
   }
+
   getNome() {
     return this.user?.nome_completo || null;
   }
+
   getMatricula() {
     return this.user?.matricula || null;
   }
+
   isSupervisor() {
     return this.user?.perfil === "supervisor";
   }
+
   isGuarda() {
     return this.user?.perfil === "guarda";
   }
+
   isPrimeiroAcesso() {
     return (
       this.user?.status === "primeiro_acesso" ||
@@ -222,7 +408,7 @@ class AuthManager {
   }
 
   // ============================================
-  // PERMISSÕES - ATUALIZADO PARA GUARDA/Supervisor
+  // PERMISSÕES
   // ============================================
 
   /**
@@ -335,7 +521,7 @@ class AuthManager {
   }
 
   // ============================================
-  // GERENCIAMENTO DE USUÁRIOS - MÉTODOS NOVOS
+  // GERENCIAMENTO DE USUÁRIOS
   // ============================================
 
   /**
@@ -440,6 +626,9 @@ class AuthManager {
 
       if (error) throw error;
 
+      // ===== REGISTRAR LOG DE CRIAÇÃO DE USUÁRIO =====
+      await this.logCriarUsuario(this.user.id, data.id);
+
       // Retornar a senha temporária (para o supervisor repassar ao usuário)
       return {
         success: true,
@@ -500,6 +689,9 @@ class AuthManager {
         .single();
 
       if (error) throw error;
+
+      // ===== REGISTRAR LOG DE EDIÇÃO DE USUÁRIO =====
+      await this.logEditarUsuario(this.user.id, id);
 
       // Se o usuário atualizou a si mesmo, atualizar o objeto local
       if (id === this.user.id) {
@@ -563,6 +755,9 @@ class AuthManager {
 
       if (error) throw error;
 
+      // ===== REGISTRAR LOG DE ATIVAÇÃO/DESATIVAÇÃO =====
+      await this.logAtivarDesativarUsuario(this.user.id, id);
+
       console.log(`✅ Usuário ${id} alterado para status: ${status}`);
       return { success: true, data };
     } catch (error) {
@@ -609,6 +804,9 @@ class AuthManager {
 
       if (error) throw error;
 
+      // ===== REGISTRAR LOG DE RESET DE SENHA =====
+      await this.logResetarSenha(this.user.id, id);
+
       console.log(`✅ Senha resetada para usuário ${id}`);
       return {
         success: true,
@@ -637,57 +835,13 @@ class AuthManager {
     return senha;
   }
 
-  /**
-   * Registra log de acesso
-   * @param {string} usuarioId - ID do usuário
-   * @param {string} ip - Endereço IP (opcional)
-   * @param {string} userAgent - User-Agent (opcional)
-   * @param {string} acao - Tipo de ação (default: 'login')
-   * @returns {Promise<Object>}
-   */
-  async registrarLogAcesso(
-    usuarioId,
-    ip = null,
-    userAgent = null,
-    acao = "login",
-  ) {
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
-
-      const { data, error } = await client
-        .from("logs_acesso")
-        .insert({
-          usuario_id: usuarioId,
-          ip: ip,
-          user_agent: userAgent,
-          acao: acao,
-          data_hora: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-      if (error) {
-        // Log do erro, mas não falha a operação principal (login)
-        console.warn(
-          "⚠️ Erro ao registrar log de acesso (não crítico):",
-          error,
-        );
-        return { success: false, error: error.message, nonCritical: true };
-      }
-
-      console.log(`✅ Log de acesso registrado para usuário ${usuarioId}`);
-      return { success: true, data };
-    } catch (error) {
-      // Não falha o login se o log falhar, apenas loga o erro
-      console.warn("⚠️ Erro não crítico ao registrar log de acesso:", error);
-      return { success: false, error: error.message, nonCritical: true };
-    }
-  }
+  // ============================================
+  // LISTAGEM DE LOGS DE ACESSO (APENAS SUPERVISOR)
+  // ============================================
 
   /**
    * Lista logs de acesso (apenas supervisor)
-   * @param {object} filtros - { usuario_id, data_inicio, data_fim, limit }
+   * @param {object} filtros - { usuario_id, acao, data_inicio, data_fim, limit }
    * @returns {Promise<Object>}
    */
   async listarLogsAcesso(filtros = {}) {
@@ -710,6 +864,9 @@ class AuthManager {
       if (filtros.usuario_id) {
         query = query.eq("usuario_id", filtros.usuario_id);
       }
+      if (filtros.acao) {
+        query = query.eq("acao", filtros.acao);
+      }
       if (filtros.data_inicio) {
         query = query.gte("data_hora", filtros.data_inicio);
       }
@@ -726,6 +883,72 @@ class AuthManager {
       return { success: true, data: data || [] };
     } catch (error) {
       console.error("❌ Erro ao listar logs de acesso:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Obtém estatísticas de logs (apenas supervisor)
+   * @param {object} filtros - { data_inicio, data_fim }
+   * @returns {Promise<Object>}
+   */
+  async getLogStats(filtros = {}) {
+    if (!this.isSupervisor()) {
+      return {
+        success: false,
+        error:
+          "Permissão negada. Apenas supervisores podem visualizar estatísticas de logs.",
+      };
+    }
+
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar" };
+
+      let query = client.from("logs_acesso").select("*");
+
+      if (filtros.data_inicio) {
+        query = query.gte("data_hora", filtros.data_inicio);
+      }
+      if (filtros.data_fim) {
+        query = query.lte("data_hora", filtros.data_fim);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Agrupar por ação
+      const porAcao = {};
+      const porUsuario = {};
+      const porDia = {};
+
+      data.forEach((log) => {
+        // Por ação
+        if (!porAcao[log.acao]) porAcao[log.acao] = 0;
+        porAcao[log.acao]++;
+
+        // Por usuário
+        if (!porUsuario[log.usuario_id]) porUsuario[log.usuario_id] = 0;
+        porUsuario[log.usuario_id]++;
+
+        // Por dia
+        const dia = log.data_hora.slice(0, 10);
+        if (!porDia[dia]) porDia[dia] = 0;
+        porDia[dia]++;
+      });
+
+      return {
+        success: true,
+        data: {
+          total: data.length,
+          por_acao: porAcao,
+          por_usuario: porUsuario,
+          por_dia: porDia,
+          logs: data.slice(0, 100),
+        },
+      };
+    } catch (error) {
+      console.error("❌ Erro ao obter estatísticas de logs:", error);
       return { success: false, error: error.message };
     }
   }

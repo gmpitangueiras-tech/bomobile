@@ -2104,6 +2104,70 @@ body {
 }
 
 /* ============================================
+   PÁGINA DE LOGS
+   ============================================ */
+
+/* Badges específicos para ações de logs */
+.badge-azul {
+  background: var(--azul-muito-claro);
+  color: var(--azul-escuro);
+}
+
+.badge-verde {
+  background: var(--verde-muito-claro);
+  color: var(--verde-escuro);
+}
+
+.badge-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-draft {
+  background: var(--cinza-claro);
+  color: var(--cinza-escuro);
+}
+
+.badge-synced {
+  background: var(--verde-muito-claro);
+  color: var(--verde-escuro);
+}
+
+/* Ajustes para a tabela de logs */
+.table-wrapper table td {
+  font-size: 12px;
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+
+.table-wrapper table td .badge {
+  font-size: 10px;
+  padding: 2px 10px;
+}
+
+.table-wrapper table tr:hover {
+  background: var(--azul-muito-claro);
+  cursor: default;
+}
+
+/* Estatísticas rápidas - mobile */
+@media (max-width: 480px) {
+  .table-wrapper table td {
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+  .table-wrapper table td .badge {
+    font-size: 9px;
+    padding: 1px 8px;
+  }
+}
+
+/* ============================================
    MODO ESCURO
    ============================================ */
 @media (prefers-color-scheme: dark) {
@@ -2304,18 +2368,43 @@ body {
     opacity: 0.6;
     border-color: var(--cinza-claro);
   }
-  .badge-tipo-furto { background: #d97706; }
-  .badge-tipo-roubo { background: #dc2626; }
-  .badge-tipo-vandalismo { background: #d97706; }
-  .badge-tipo-dano_ao_patrimonio { background: #d97706; }
-  .badge-tipo-ameaca { background: #dc2626; }
-  .badge-tipo-lesao_corporal { background: #dc2626; }
-  .badge-tipo-perturbacao { background: #d97706; }
-  .badge-tipo-acidente { background: #ca8a04; color: #1e293b; }
-  .badge-tipo-incendio { background: #dc2626; }
-  .badge-tipo-desaparecimento { background: #7c3aed; }
-  .badge-tipo-atendimento_social { background: #0891b2; }
-  .badge-tipo-outro { background: #6b7280; }
+  .badge-tipo-furto {
+    background: #d97706;
+  }
+  .badge-tipo-roubo {
+    background: #dc2626;
+  }
+  .badge-tipo-vandalismo {
+    background: #d97706;
+  }
+  .badge-tipo-dano_ao_patrimonio {
+    background: #d97706;
+  }
+  .badge-tipo-ameaca {
+    background: #dc2626;
+  }
+  .badge-tipo-lesao_corporal {
+    background: #dc2626;
+  }
+  .badge-tipo-perturbacao {
+    background: #d97706;
+  }
+  .badge-tipo-acidente {
+    background: #ca8a04;
+    color: #1e293b;
+  }
+  .badge-tipo-incendio {
+    background: #dc2626;
+  }
+  .badge-tipo-desaparecimento {
+    background: #7c3aed;
+  }
+  .badge-tipo-atendimento_social {
+    background: #0891b2;
+  }
+  .badge-tipo-outro {
+    background: #6b7280;
+  }
 }
 
 /* ============================================

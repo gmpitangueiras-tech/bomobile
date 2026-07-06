@@ -853,9 +853,11 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
+      // CORREÇÃO: Removido o select com relacionamento ambíguo
+      // Busca apenas os dados da ocorrência sem tentar fazer join com usuarios
       const { data, error } = await client
         .from("ocorrencias")
-        .select("*, usuarios(nome_completo)")
+        .select("*")
         .eq("status", "pending_rectification")
         .order("solicitada_em", { ascending: true });
 

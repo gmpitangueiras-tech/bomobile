@@ -10,6 +10,11 @@ class App {
     this.filtroStatusAtual = null;
     this.paginaDestino = null;
     this.paramsDestino = null;
+    this.relatorioAtivo = null;
+    this.relatorioFiltros = {
+      dataInicio: null,
+      dataFim: null,
+    };
     this.pages = {
       login: { element: "page-login", showHeader: false, showFab: false },
       dashboard: { element: "page-dashboard", showHeader: true, showFab: true },
@@ -187,7 +192,6 @@ class App {
       document.body.appendChild(overlay);
       window._inputResolve = resolve;
 
-      // Focar no textarea
       setTimeout(() => {
         const textarea = document.getElementById("inputMotivo");
         if (textarea) textarea.focus();
@@ -200,7 +204,6 @@ class App {
         }
       });
 
-      // Enter para confirmar (Ctrl+Enter)
       document.addEventListener("keydown", function handler(e) {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
@@ -690,7 +693,6 @@ class App {
   }
 
   executarNavegacao(page, params = null) {
-    // Verifica autenticação antes de navegar
     if (!authManager.isLoggedIn() && page !== "login") {
       this.showPage("login");
       return;
@@ -837,7 +839,6 @@ class App {
           pending_rectification: 0,
         };
 
-    // Buscar retificações pendentes (apenas supervisor)
     let pendentesCount = 0;
     let pendentesData = [];
     if (authManager.isSupervisor()) {
@@ -901,7 +902,6 @@ class App {
                     </div>
                 </div>
 
-                <!-- Card de Retificações Pendentes (apenas supervisor) -->
                 ${
                   authManager.isSupervisor()
                     ? `
@@ -1380,7 +1380,6 @@ class App {
                 </p>
     `;
 
-    // Justificativa no topo
     if (isRetificacao && occ.justificativa_retificacao) {
       html += `
         <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
@@ -1465,7 +1464,6 @@ class App {
       `;
     }
 
-    // Informações Gerais - apenas campos preenchidos
     const camposGerais = [
       {
         chave: "local_ocorrencia",
@@ -1532,7 +1530,6 @@ class App {
       `;
     }
 
-    // Origem da Solicitação
     const camposSolicitante = [
       {
         chave: "forma_solicitacao",
@@ -1580,7 +1577,6 @@ class App {
       `;
     }
 
-    // Envolvidos
     html += `
       <div class="card-revisao">
         <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
@@ -1603,7 +1599,6 @@ class App {
       </div>
     `;
 
-    // Observações - apenas se preenchido
     if (occ.observacoes && occ.observacoes.trim() !== "") {
       html += `
         <div class="card-revisao">
@@ -1613,7 +1608,6 @@ class App {
       `;
     }
 
-    // Anexos
     html += `
       <div class="card-revisao">
         <h4><i class="fas fa-paperclip"></i> Anexos (${anexos.length})</h4>
@@ -1636,7 +1630,6 @@ class App {
       </div>
     `;
 
-    // Botões de ação
     html += `
       <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
     `;
@@ -2044,6 +2037,13 @@ class App {
       this.showToast("Retificação criada com sucesso!", "success");
     }
 
+    // ===== REGISTRAR LOG DE SOLICITAÇÃO DE RETIFICAÇÃO =====
+    await authManager.logSolicitarRetificacao(
+      authManager.getUserId(),
+      id,
+      result.campos_alterados || [],
+    );
+
     setTimeout(
       () => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }),
       1500,
@@ -2051,7 +2051,7 @@ class App {
   }
 
   // ============================================
-  // APROVAR RETIFICAÇÃO - COM ATUALIZAÇÃO DA LISTA
+  // APROVAR RETIFICAÇÃO
   // ============================================
 
   async aprovarRetificacao(id) {
@@ -2064,26 +2064,23 @@ class App {
     if (result.success) {
       this.showToast("Retificação aprovada com sucesso!", "success");
 
-      // ===== CORREÇÃO: Recarregar a página atual =====
-      // Verifica em qual página está e recarrega o conteúdo
+      // ===== REGISTRAR LOG DE APROVAÇÃO DE RETIFICAÇÃO =====
+      await authManager.logAprovarRetificacao(authManager.getUserId(), id);
+
       const paginaAtual = this.currentPage;
 
-      // Recarregar a página de detalhes se estiver nela
       if (paginaAtual === "detalhe-ocorrencia") {
         this.loadPageContent("detalhe-ocorrencia");
       }
 
-      // Recarregar a lista de retificações se estiver nela
       if (paginaAtual === "retificacoes") {
         this.loadPageContent("retificacoes");
       }
 
-      // Recarregar o dashboard se estiver nele
       if (paginaAtual === "dashboard") {
         this.loadPageContent("dashboard");
       }
 
-      // Recarregar a lista de ocorrências se estiver nela
       if (paginaAtual === "ocorrencias") {
         this.loadPageContent("ocorrencias");
       }
@@ -2093,11 +2090,10 @@ class App {
   }
 
   // ============================================
-  // REJEITAR RETIFICAÇÃO - COM MODAL PERSONALIZADO E ATUALIZAÇÃO DA LISTA
+  // REJEITAR RETIFICAÇÃO
   // ============================================
 
   async rejeitarRetificacao(id) {
-    // ===== CORREÇÃO 1: Modal personalizado em vez de prompt =====
     const motivo = await this.inputModal(
       "Informe o motivo da rejeição da retificação:",
       "Rejeitar Retificação",
@@ -2118,7 +2114,13 @@ class App {
     if (result.success) {
       this.showToast("Retificação rejeitada", "info");
 
-      // ===== CORREÇÃO 2: Recarregar a página atual =====
+      // ===== REGISTRAR LOG DE REJEIÇÃO DE RETIFICAÇÃO =====
+      await authManager.logRejeitarRetificacao(
+        authManager.getUserId(),
+        id,
+        motivo,
+      );
+
       const paginaAtual = this.currentPage;
 
       if (paginaAtual === "detalhe-ocorrencia") {
@@ -2309,6 +2311,10 @@ class App {
     const result = await ocorrenciaManager.finalizar(id);
     if (result.success) {
       this.showToast("Ocorrência finalizada com sucesso!", "success");
+
+      // ===== REGISTRAR LOG DE FINALIZAÇÃO DE OCORRÊNCIA =====
+      await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
+
       if (this.filtroStatusAtual) {
         this.loadPageContent("dashboard");
       }
@@ -2319,7 +2325,6 @@ class App {
   }
 
   async cancelarOcorrencia(id) {
-    // Usar modal personalizado também para cancelamento
     const motivo = await this.inputModal(
       "Informe o motivo do cancelamento:",
       "Cancelar Ocorrência",
@@ -2339,6 +2344,14 @@ class App {
     const result = await ocorrenciaManager.cancelar(id, motivo);
     if (result.success) {
       this.showToast("Ocorrência cancelada com sucesso!", "success");
+
+      // ===== REGISTRAR LOG DE CANCELAMENTO DE OCORRÊNCIA =====
+      await authManager.logCancelarOcorrencia(
+        authManager.getUserId(),
+        id,
+        motivo,
+      );
+
       if (this.filtroStatusAtual) {
         this.loadPageContent("dashboard");
       }
@@ -2551,6 +2564,1632 @@ class App {
 
     html += `</div>`;
     container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIOS - MÓDULO COMPLETO
+  // ============================================
+
+  async renderRelatorios(container) {
+    if (!authManager.isSupervisor()) {
+      container.innerHTML = `
+        <div class="container">
+          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
+            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+              <i class="fas fa-lock"></i>
+            </div>
+            <p style="font-weight:500;">Acesso restrito a supervisores</p>
+            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+              Voltar
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    if (this.relatorioAtivo) {
+      await this.renderRelatorioDetalhado(container, this.relatorioAtivo);
+      return;
+    }
+
+    const relatorios = [
+      {
+        id: "executivo",
+        nome: "Relatório Executivo",
+        descricao: "Visão geral das ocorrências",
+        icon: "fa-chart-pie",
+        cor: "azul",
+      },
+      {
+        id: "por-tipo",
+        nome: "Ocorrências por Tipo",
+        descricao: "Análise detalhada por natureza da ocorrência",
+        icon: "fa-tag",
+        cor: "verde",
+      },
+      {
+        id: "por-local",
+        nome: "Ocorrências por Localidade",
+        descricao: "Distribuição geográfica das ocorrências",
+        icon: "fa-map-marker-alt",
+        cor: "vermelho",
+      },
+      {
+        id: "atendimento",
+        nome: "Tempo Médio de Atendimento",
+        descricao: "Análise de eficiência operacional",
+        icon: "fa-clock",
+        cor: "amarelo",
+      },
+      {
+        id: "desempenho",
+        nome: "Desempenho por Guarda",
+        descricao: "Avaliação individual dos agentes",
+        icon: "fa-user-tie",
+        cor: "roxo",
+      },
+      {
+        id: "retificacoes",
+        nome: "Relatório de Retificações",
+        descricao: "Acompanhamento de correções de ocorrências",
+        icon: "fa-sync-alt",
+        cor: "azul",
+      },
+      {
+        id: "cancelamentos",
+        nome: "Relatório de Cancelamentos",
+        descricao: "Análise de ocorrências canceladas",
+        icon: "fa-times-circle",
+        cor: "vermelho",
+      },
+      {
+        id: "tendencias",
+        nome: "Tendências e Sazonalidade",
+        descricao: "Padrões temporais das ocorrências",
+        icon: "fa-chart-line",
+        cor: "verde",
+      },
+      {
+        id: "produtividade",
+        nome: "Produtividade do Setor",
+        descricao: "Eficiência e capacidade de atendimento",
+        icon: "fa-rocket",
+        cor: "azul",
+      },
+      {
+        id: "detalhado",
+        nome: "Ocorrências Detalhado",
+        descricao: "Listagem completa com todos os campos",
+        icon: "fa-list-ul",
+        cor: "cinza",
+      },
+    ];
+
+    const dataInicio =
+      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
+    const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;">
+            <i class="fas fa-chart-bar" style="margin-right:8px;"></i>
+            Relatórios
+          </h2>
+          <button onclick="app.navigateTo('dashboard')" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i> Voltar
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:13px;">
+          Selecione um relatório para visualizar
+        </p>
+
+        <div class="filtros-container" style="margin-bottom:16px;">
+          <div class="filtros-row">
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
+              <input type="date" id="relatorioDataInicio" value="${dataInicio}">
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
+              <input type="date" id="relatorioDataFim" value="${dataFim}">
+            </div>
+            <div class="filtros-actions">
+              <button onclick="app.aplicarFiltrosRelatorios()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
+                <i class="fas fa-search"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+    `;
+
+    relatorios.forEach((rel) => {
+      const corMap = {
+        azul: "var(--azul-bandeira)",
+        verde: "var(--verde-bandeira)",
+        vermelho: "var(--erro)",
+        amarelo: "var(--aviso)",
+        roxo: "#8b5cf6",
+        cinza: "var(--cinza-medio)",
+      };
+
+      const bgMap = {
+        azul: "var(--azul-muito-claro)",
+        verde: "var(--verde-muito-claro)",
+        vermelho: "var(--erro-claro)",
+        amarelo: "#fef3c7",
+        roxo: "#ede9fe",
+        cinza: "var(--cinza-claro)",
+      };
+
+      html += `
+        <div class="relatorio-card" onclick="app.abrirRelatorio('${rel.id}')" style="
+          background:var(--branco);
+          border-radius:var(--border-radius);
+          padding:12px;
+          box-shadow:var(--sombra-suave);
+          cursor:pointer;
+          transition:all 0.15s ease;
+          border-left:3px solid ${corMap[rel.cor]};
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          text-align:center;
+          gap:6px;
+        " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='var(--sombra-media)'" onmouseout="this.style.transform='none';this.style.boxShadow='var(--sombra-suave)'">
+          <div style="
+            width:40px;
+            height:40px;
+            border-radius:50%;
+            background:${bgMap[rel.cor]};
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            flex-shrink:0;
+          ">
+            <i class="fas ${rel.icon}" style="color:${corMap[rel.cor]};font-size:18px;"></i>
+          </div>
+          <div style="font-weight:600;font-size:12px;line-height:1.2;">${rel.nome}</div>
+          <div style="font-size:10px;color:var(--cinza-medio);line-height:1.2;">${rel.descricao}</div>
+        </div>
+      `;
+    });
+
+    html += `
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  async abrirRelatorio(tipo) {
+    this.relatorioAtivo = tipo;
+
+    const dataInicio =
+      document.getElementById("relatorioDataInicio")?.value ||
+      this.obterPrimeiroDiaMes();
+    const dataFim =
+      document.getElementById("relatorioDataFim")?.value ||
+      this.obterDataAtual();
+
+    this.relatorioFiltros = {
+      dataInicio: dataInicio,
+      dataFim: dataFim,
+    };
+
+    this.loadPageContent("relatorios");
+  }
+
+  voltarRelatorios() {
+    this.relatorioAtivo = null;
+    this.loadPageContent("relatorios");
+  }
+
+  aplicarFiltrosRelatorios() {
+    const dataInicio = document.getElementById("relatorioDataInicio")?.value;
+    const dataFim = document.getElementById("relatorioDataFim")?.value;
+
+    if (dataInicio && dataFim && dataFim < dataInicio) {
+      this.showToast(
+        "Data final deve ser maior ou igual à data inicial",
+        "warning",
+      );
+      return;
+    }
+
+    this.relatorioFiltros = {
+      dataInicio: dataInicio || this.obterPrimeiroDiaMes(),
+      dataFim: dataFim || this.obterDataAtual(),
+    };
+
+    if (this.relatorioAtivo) {
+      this.loadPageContent("relatorios");
+    }
+  }
+
+  obterPrimeiroDiaMes() {
+    const data = new Date();
+    data.setDate(1);
+    return data.toISOString().slice(0, 10);
+  }
+
+  obterDataAtual() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  async renderRelatorioDetalhado(container, tipo) {
+    const dataInicio =
+      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
+    const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
+
+    container.innerHTML = `
+      <div class="container" style="text-align:center;padding:40px 20px;">
+        <div class="spinner-azul" style="margin:0 auto;"></div>
+        <p style="margin-top:12px;color:var(--cinza-medio);">Carregando relatório...</p>
+      </div>
+    `;
+
+    const ocorrencias = await this.buscarOcorrenciasPeriodo(
+      dataInicio,
+      dataFim,
+    );
+
+    switch (tipo) {
+      case "executivo":
+        await this.renderRelatorioExecutivo(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "por-tipo":
+        await this.renderRelatorioPorTipo(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "por-local":
+        await this.renderRelatorioPorLocal(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "atendimento":
+        await this.renderRelatorioAtendimento(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "desempenho":
+        await this.renderRelatorioDesempenho(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "retificacoes":
+        await this.renderRelatorioRetificacoes(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "cancelamentos":
+        await this.renderRelatorioCancelamentos(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "tendencias":
+        await this.renderRelatorioTendencias(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "produtividade":
+        await this.renderRelatorioProdutividade(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      case "detalhado":
+        await this.renderRelatorioDetalhadoLista(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
+      default:
+        container.innerHTML = `<p>Relatório não encontrado</p>`;
+    }
+  }
+
+  async buscarOcorrenciasPeriodo(dataInicio, dataFim) {
+    const client = supabaseClient.getClient();
+    if (!client) return [];
+
+    try {
+      const { data, error } = await client
+        .from("ocorrencias")
+        .select("*")
+        .gte("criado_em", dataInicio)
+        .lte("criado_em", dataFim + "T23:59:59");
+
+      if (error) throw error;
+
+      console.log(`📊 Buscou ${data?.length || 0} ocorrências no período`);
+      return data || [];
+    } catch (error) {
+      console.error("❌ Erro ao buscar ocorrências:", error);
+      return [];
+    }
+  }
+
+  // ============================================
+  // RELATÓRIO EXECUTIVO
+  // ============================================
+
+  async renderRelatorioExecutivo(container, ocorrencias, dataInicio, dataFim) {
+    const stats = this.calcularEstatisticas(ocorrencias);
+    const porTipo = this.agruparPorTipo(ocorrencias);
+    const porMes = this.agruparPorMes(ocorrencias);
+
+    const total = stats.total || 1;
+    const taxaResolutividade = ((stats.finalizadas / total) * 100).toFixed(1);
+    const mediaDiaria = this.calcularMediaDiaria(
+      ocorrencias,
+      dataInicio,
+      dataFim,
+    );
+
+    const coresPizza = [
+      "#003F87",
+      "#00843D",
+      "#DC2626",
+      "#F59E0B",
+      "#8B5CF6",
+      "#EC4899",
+      "#06B6D4",
+      "#F97316",
+      "#14B8A6",
+      "#6366F1",
+    ];
+
+    const html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-chart-pie" style="margin-right:8px;"></i>
+            Relatório Executivo
+          </h2>
+          <div style="display:flex;gap:4px;">
+            <button class="btn-secondary" onclick="app.exportarRelatorioPDF()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+              <i class="fas fa-file-pdf"></i>
+            </button>
+            <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+              <i class="fas fa-arrow-left"></i>
+            </button>
+          </div>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${total}</div>
+            <div style="font-size:9px;opacity:0.8;">Total</div>
+          </div>
+          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${stats.finalizadas}</div>
+            <div style="font-size:9px;opacity:0.8;">Finalizadas</div>
+          </div>
+          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${stats.pendentes}</div>
+            <div style="font-size:9px;opacity:0.8;">Pendentes</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
+            <div style="font-size:16px;font-weight:800;color:var(--verde-bandeira);">${taxaResolutividade}%</div>
+            <div style="font-size:9px;color:var(--cinza-medio);">Resolutividade</div>
+          </div>
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
+            <div style="font-size:16px;font-weight:800;color:var(--azul-bandeira);">${mediaDiaria}</div>
+            <div style="font-size:9px;color:var(--cinza-medio);">Média Diária</div>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-chart-pie" style="margin-right:4px;"></i>
+            Tipos de Ocorrência
+          </h4>
+          <div style="height:200px;position:relative;">
+            <canvas id="chartRelatorioPizza"></canvas>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
+            Evolução Mensal
+          </h4>
+          <div style="height:150px;position:relative;">
+            <canvas id="chartRelatorioMensal"></canvas>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-table" style="margin-right:4px;"></i>
+            Detalhamento por Tipo
+          </h4>
+          <div class="table-wrapper">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th style="text-align:center;">Total</th>
+                  <th style="text-align:center;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${porTipo
+                  .slice(0, 8)
+                  .map(
+                    (t) => `
+                  <tr>
+                    <td style="font-size:11px;">${t.tipo}</td>
+                    <td style="text-align:center;font-weight:600;">${t.total}</td>
+                    <td style="text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+                ${
+                  porTipo.length > 8
+                    ? `
+                  <tr>
+                    <td colspan="3" style="text-align:center;color:var(--cinza-medio);font-size:11px;">
+                      + ${porTipo.length - 8} outros tipos
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    await this.renderizarGraficoPizza(
+      "chartRelatorioPizza",
+      porTipo.slice(0, 8),
+      coresPizza,
+    );
+    await this.renderizarGraficoBarras("chartRelatorioMensal", porMes);
+  }
+
+  // ============================================
+  // RELATÓRIO OCORRÊNCIAS POR TIPO
+  // ============================================
+
+  async renderRelatorioPorTipo(container, ocorrencias, dataInicio, dataFim) {
+    const porTipo = this.agruparPorTipo(ocorrencias);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-tag" style="margin-right:8px;"></i>
+            Ocorrências por Tipo
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+          ${porTipo
+            .map(
+              (t) => `
+            <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;padding:4px 12px;">
+              ${t.tipo}: ${t.total}
+            </span>
+          `,
+            )
+            .join("")}
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <div class="table-wrapper">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th style="text-align:center;">Total</th>
+                  <th style="text-align:center;">%</th>
+                  <th style="text-align:center;">Finalizadas</th>
+                  <th style="text-align:center;">Pendentes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${porTipo
+                  .map(
+                    (t) => `
+                  <tr>
+                    <td>${t.tipo}</td>
+                    <td style="text-align:center;font-weight:600;">${t.total}</td>
+                    <td style="text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
+                    <td style="text-align:center;color:var(--verde-bandeira);">${t.finalizadas}</td>
+                    <td style="text-align:center;color:var(--aviso);">${t.pendentes}</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO OCORRÊNCIAS POR LOCAL
+  // ============================================
+
+  async renderRelatorioPorLocal(container, ocorrencias, dataInicio, dataFim) {
+    const porBairro = this.agruparPorBairro(ocorrencias);
+    const topBairros = porBairro.slice(0, 10);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-map-marker-alt" style="margin-right:8px;"></i>
+            Ocorrências por Localidade
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-trophy" style="margin-right:4px;"></i>
+            Top 10 Bairros
+          </h4>
+          ${topBairros
+            .map(
+              (b, index) => `
+            <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
+              <span style="font-weight:700;color:var(--cinza-medio);min-width:20px;font-size:12px;">${index + 1}º</span>
+              <span style="flex:1;font-weight:500;">${b.bairro}</span>
+              <span style="font-weight:700;color:var(--azul-bandeira);">${b.total}</span>
+              <span style="font-size:11px;color:var(--cinza-medio);">(${b.percentual}%)</span>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
+            Distribuição por Bairro
+          </h4>
+          <div style="height:200px;">
+            <canvas id="chartRelatorioBairros"></canvas>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    await this.renderizarGraficoBarras(
+      "chartRelatorioBairros",
+      topBairros.map((b) => ({
+        label: b.bairro.length > 15 ? b.bairro.slice(0, 12) + "..." : b.bairro,
+        value: b.total,
+      })),
+    );
+  }
+
+  // ============================================
+  // RELATÓRIO TEMPO MÉDIO DE ATENDIMENTO
+  // ============================================
+
+  async renderRelatorioAtendimento(
+    container,
+    ocorrencias,
+    dataInicio,
+    dataFim,
+  ) {
+    const comTempo = ocorrencias.filter(
+      (o) => o.data_hora_inicio && o.data_hora_encerramento,
+    );
+    const tempos = comTempo
+      .map((o) => {
+        const inicio = new Date(o.data_hora_inicio);
+        const fim = new Date(o.data_hora_encerramento);
+        const diff = (fim - inicio) / (1000 * 60);
+        return { ...o, tempoMinutos: diff };
+      })
+      .filter((t) => t.tempoMinutos > 0);
+
+    const mediaGeral =
+      tempos.length > 0
+        ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length
+        : 0;
+    const maisRapida =
+      tempos.length > 0
+        ? tempos.reduce((a, b) => (a.tempoMinutos < b.tempoMinutos ? a : b))
+        : null;
+    const maisLenta =
+      tempos.length > 0
+        ? tempos.reduce((a, b) => (a.tempoMinutos > b.tempoMinutos ? a : b))
+        : null;
+
+    const porTipo = {};
+    tempos.forEach((t) => {
+      const tipo = t.tipo_ocorrencia || "Não informado";
+      if (!porTipo[tipo]) porTipo[tipo] = [];
+      porTipo[tipo].push(t.tempoMinutos);
+    });
+
+    const mediaPorTipo = Object.keys(porTipo)
+      .map((key) => ({
+        tipo: this.getTipoLabel(key),
+        media: porTipo[key].reduce((s, v) => s + v, 0) / porTipo[key].length,
+        total: porTipo[key].length,
+      }))
+      .sort((a, b) => b.media - a.media);
+
+    const formatarTempo = (minutos) => {
+      if (minutos < 1) return "< 1 min";
+      if (minutos < 60) return `${Math.round(minutos)} min`;
+      const horas = Math.floor(minutos / 60);
+      const mins = Math.round(minutos % 60);
+      return `${horas}h ${mins}min`;
+    };
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-clock" style="margin-right:8px;"></i>
+            Tempo Médio de Atendimento
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${formatarTempo(mediaGeral)}</div>
+            <div style="font-size:9px;opacity:0.8;">Média Geral</div>
+          </div>
+          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${maisRapida ? formatarTempo(maisRapida.tempoMinutos) : "-"}</div>
+            <div style="font-size:9px;opacity:0.8;">Mais Rápida</div>
+          </div>
+          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${maisLenta ? formatarTempo(maisLenta.tempoMinutos) : "-"}</div>
+            <div style="font-size:9px;opacity:0.8;">Mais Lenta</div>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
+            Tempo Médio por Tipo
+          </h4>
+          <div class="table-wrapper">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th style="text-align:center;">Média</th>
+                  <th style="text-align:center;">Ocorrências</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${mediaPorTipo
+                  .map(
+                    (t) => `
+                  <tr>
+                    <td>${t.tipo}</td>
+                    <td style="text-align:center;font-weight:600;color:var(--azul-bandeira);">${formatarTempo(t.media)}</td>
+                    <td style="text-align:center;color:var(--cinza-medio);">${t.total}</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+                ${
+                  mediaPorTipo.length === 0
+                    ? `
+                  <tr>
+                    <td colspan="3" style="text-align:center;color:var(--cinza-medio);padding:16px;">
+                      Nenhuma ocorrência com tempo registrado
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO DESEMPENHO POR GUARDA
+  // ============================================
+
+  async renderRelatorioDesempenho(container, ocorrencias, dataInicio, dataFim) {
+    const client = supabaseClient.getClient();
+    const { data: usuarios } = await client
+      .from("usuarios")
+      .select("id, nome_completo")
+      .eq("status", "ativo");
+
+    const mapaUsuarios = {};
+    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
+
+    const porGuarda = {};
+    ocorrencias.forEach((o) => {
+      const guardaId = o.criado_por;
+      const nome = mapaUsuarios[guardaId] || "Desconhecido";
+      if (!porGuarda[guardaId]) {
+        porGuarda[guardaId] = {
+          nome,
+          total: 0,
+          finalizadas: 0,
+          pendentes: 0,
+          canceladas: 0,
+          retificadas: 0,
+        };
+      }
+      porGuarda[guardaId].total++;
+      if (o.status === "synced") porGuarda[guardaId].finalizadas++;
+      if (o.status === "pending_sync") porGuarda[guardaId].pendentes++;
+      if (o.status === "cancelled") porGuarda[guardaId].canceladas++;
+      if (o.status === "rectified") porGuarda[guardaId].retificadas++;
+    });
+
+    const ranking = Object.values(porGuarda)
+      .map((g) => ({
+        ...g,
+        taxa: g.total > 0 ? ((g.finalizadas / g.total) * 100).toFixed(1) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-user-tie" style="margin-right:8px;"></i>
+            Desempenho por Guarda
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <div class="table-wrapper">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Guarda</th>
+                  <th style="text-align:center;">Total</th>
+                  <th style="text-align:center;">Finalizadas</th>
+                  <th style="text-align:center;">Taxa</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ranking
+                  .map(
+                    (g, i) => `
+                  <tr>
+                    <td>
+                      <span style="font-weight:600;">${g.nome}</span>
+                      ${i === 0 ? ' <span style="font-size:10px;">🏆</span>' : ""}
+                    </td>
+                    <td style="text-align:center;font-weight:600;">${g.total}</td>
+                    <td style="text-align:center;color:var(--verde-bandeira);">${g.finalizadas}</td>
+                    <td style="text-align:center;font-weight:600;color:${g.taxa >= 70 ? "var(--verde-bandeira)" : g.taxa >= 50 ? "var(--aviso)" : "var(--erro)"};">${g.taxa}%</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+                ${
+                  ranking.length === 0
+                    ? `
+                  <tr>
+                    <td colspan="4" style="text-align:center;color:var(--cinza-medio);padding:16px;">
+                      Nenhuma ocorrência no período
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO DE RETIFICAÇÕES
+  // ============================================
+
+  async renderRelatorioRetificacoes(
+    container,
+    ocorrencias,
+    dataInicio,
+    dataFim,
+  ) {
+    const retificacoes = ocorrencias.filter((o) => o.status === "rectified");
+    const pendentes = ocorrencias.filter(
+      (o) => o.status === "pending_rectification",
+    );
+    const rejeitadas = ocorrencias.filter(
+      (o) => o.status === "rectification_rejected",
+    );
+
+    const client = supabaseClient.getClient();
+    const { data: usuarios } = await client
+      .from("usuarios")
+      .select("id, nome_completo");
+
+    const mapaUsuarios = {};
+    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
+
+    const camposMaisAlterados = {};
+    retificacoes.forEach((r) => {
+      if (r.campos_alterados) {
+        try {
+          const campos = JSON.parse(r.campos_alterados);
+          campos.forEach((c) => {
+            const label = c.label || c.campo;
+            if (!camposMaisAlterados[label]) camposMaisAlterados[label] = 0;
+            camposMaisAlterados[label]++;
+          });
+        } catch (e) {}
+      }
+    });
+
+    const topCampos = Object.keys(camposMaisAlterados)
+      .map((key) => ({ campo: key, total: camposMaisAlterados[key] }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
+            Relatório de Retificações
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${retificacoes.length}</div>
+            <div style="font-size:9px;opacity:0.8;">Aprovadas</div>
+          </div>
+          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${pendentes.length}</div>
+            <div style="font-size:9px;opacity:0.8;">Pendentes</div>
+          </div>
+          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${rejeitadas.length}</div>
+            <div style="font-size:9px;opacity:0.8;">Rejeitadas</div>
+          </div>
+        </div>
+
+        ${
+          topCampos.length > 0
+            ? `
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+            <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+              <i class="fas fa-edit" style="margin-right:4px;"></i>
+              Campos Mais Alterados
+            </h4>
+            ${topCampos
+              .map(
+                (c) => `
+              <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
+                <span style="flex:1;">${c.campo}</span>
+                <span style="font-weight:700;color:var(--azul-bandeira);">${c.total}</span>
+                <span style="font-size:11px;color:var(--cinza-medio);">vezes</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+        `
+            : ""
+        }
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-list" style="margin-right:4px;"></i>
+            Últimas Retificações
+          </h4>
+          ${retificacoes
+            .slice(0, 10)
+            .map(
+              (r) => `
+            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
+              <span>#${r.numero_ocorrencia || r.numero_temporario || "N/A"}</span>
+              <span style="color:var(--cinza-medio);">${new Date(r.criado_em).toLocaleDateString("pt-BR")}</span>
+            </div>
+          `,
+            )
+            .join("")}
+          ${
+            retificacoes.length === 0
+              ? `
+            <p style="text-align:center;color:var(--cinza-medio);padding:12px;font-size:13px;">
+              Nenhuma retificação no período
+            </p>
+          `
+              : ""
+          }
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO DE CANCELAMENTOS
+  // ============================================
+
+  async renderRelatorioCancelamentos(
+    container,
+    ocorrencias,
+    dataInicio,
+    dataFim,
+  ) {
+    const canceladas = ocorrencias.filter((o) => o.status === "cancelled");
+
+    const motivos = {};
+    canceladas.forEach((o) => {
+      const motivo = o.motivo_cancelamento || "Não informado";
+      if (!motivos[motivo]) motivos[motivo] = 0;
+      motivos[motivo]++;
+    });
+
+    const topMotivos = Object.keys(motivos)
+      .map((key) => ({ motivo: key, total: motivos[key] }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-times-circle" style="margin-right:8px;"></i>
+            Relatório de Cancelamentos
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${canceladas.length}</div>
+            <div style="font-size:9px;opacity:0.8;">Total Canceladas</div>
+          </div>
+          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${ocorrencias.length > 0 ? ((canceladas.length / ocorrencias.length) * 100).toFixed(1) : 0}%</div>
+            <div style="font-size:9px;opacity:0.8;">Taxa de Cancelamento</div>
+          </div>
+        </div>
+
+        ${
+          topMotivos.length > 0
+            ? `
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+            <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+              <i class="fas fa-list" style="margin-right:4px;"></i>
+              Principais Motivos
+            </h4>
+            ${topMotivos
+              .map(
+                (m) => `
+              <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
+                <span style="flex:1;">${m.motivo}</span>
+                <span style="font-weight:700;color:var(--erro);">${m.total}</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+        `
+            : ""
+        }
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO DE TENDÊNCIAS E SAZONALIDADE
+  // ============================================
+
+  async renderRelatorioTendencias(container, ocorrencias, dataInicio, dataFim) {
+    const porDiaSemana = {};
+    const porHora = {};
+    const porMes = this.agruparPorMes(ocorrencias);
+
+    const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+    ocorrencias.forEach((o) => {
+      const data = new Date(o.criado_em);
+      const diaSemana = data.getDay();
+      const hora = data.getHours();
+
+      if (!porDiaSemana[diaSemana]) porDiaSemana[diaSemana] = 0;
+      porDiaSemana[diaSemana]++;
+
+      if (!porHora[hora]) porHora[hora] = 0;
+      porHora[hora]++;
+    });
+
+    const dadosDiaSemana = Object.keys(porDiaSemana)
+      .map((key) => ({
+        dia: diasSemana[parseInt(key)],
+        total: porDiaSemana[key],
+      }))
+      .sort((a, b) => diasSemana.indexOf(a.dia) - diasSemana.indexOf(b.dia));
+
+    const dadosHora = Object.keys(porHora)
+      .map((key) => ({ hora: parseInt(key), total: porHora[key] }))
+      .sort((a, b) => a.hora - b.hora);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-chart-line" style="margin-right:8px;"></i>
+            Tendências e Sazonalidade
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
+            Evolução Mensal
+          </h4>
+          <div style="height:150px;">
+            <canvas id="chartTendenciasMensal"></canvas>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-calendar-week" style="margin-right:4px;"></i>
+            Ocorrências por Dia da Semana
+          </h4>
+          <div style="height:120px;">
+            <canvas id="chartTendenciasDiaSemana"></canvas>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-clock" style="margin-right:4px;"></i>
+            Ocorrências por Hora do Dia
+          </h4>
+          <div style="height:120px;">
+            <canvas id="chartTendenciasHora"></canvas>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    await this.renderizarGraficoBarras("chartTendenciasMensal", porMes);
+    await this.renderizarGraficoBarras(
+      "chartTendenciasDiaSemana",
+      dadosDiaSemana.map((d) => ({ label: d.dia, value: d.total })),
+    );
+    await this.renderizarGraficoBarras(
+      "chartTendenciasHora",
+      dadosHora.map((d) => ({
+        label: String(d.hora).padStart(2, "0") + "h",
+        value: d.total,
+      })),
+    );
+  }
+
+  // ============================================
+  // RELATÓRIO DE PRODUTIVIDADE
+  // ============================================
+
+  async renderRelatorioProdutividade(
+    container,
+    ocorrencias,
+    dataInicio,
+    dataFim,
+  ) {
+    const total = ocorrencias.length;
+    const finalizadas = ocorrencias.filter((o) => o.status === "synced").length;
+    const pendentes = ocorrencias.filter(
+      (o) => o.status === "pending_sync",
+    ).length;
+    const totalDias = this.calcularDiasPeriodo(dataInicio, dataFim);
+    const mediaDiaria = totalDias > 0 ? (total / totalDias).toFixed(1) : 0;
+    const projecao = mediaDiaria * 30;
+
+    const dataAnteriorInicio = this.calcularDataAnterior(dataInicio, dataFim);
+    const dataAnteriorFim = dataInicio;
+    const ocorrenciasAnterior = await this.buscarOcorrenciasPeriodo(
+      dataAnteriorInicio,
+      dataAnteriorFim,
+    );
+    const totalAnterior = ocorrenciasAnterior.length;
+    const variacao =
+      totalAnterior > 0
+        ? (((total - totalAnterior) / totalAnterior) * 100).toFixed(1)
+        : 0;
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-rocket" style="margin-right:8px;"></i>
+            Produtividade do Setor
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${total}</div>
+            <div style="font-size:9px;opacity:0.8;">Ocorrências</div>
+          </div>
+          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
+            <div style="font-size:16px;font-weight:800;">${mediaDiaria}</div>
+            <div style="font-size:9px;opacity:0.8;">Média Diária</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
+            <div style="font-size:16px;font-weight:800;color:var(--cinza-escuro);">${projecao}</div>
+            <div style="font-size:9px;color:var(--cinza-medio);">Projeção Mensal</div>
+          </div>
+          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
+            <div style="font-size:16px;font-weight:800;color:${variacao >= 0 ? "var(--verde-bandeira)" : "var(--erro)"};">${variacao >= 0 ? "+" : ""}${variacao}%</div>
+            <div style="font-size:9px;color:var(--cinza-medio);">Variação vs Período Anterior</div>
+          </div>
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
+            <i class="fas fa-info-circle" style="margin-right:4px;"></i>
+            Resumo do Período
+          </h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;">
+            <div><span style="color:var(--cinza-medio);">Finalizadas:</span> <strong>${finalizadas}</strong></div>
+            <div><span style="color:var(--cinza-medio);">Pendentes:</span> <strong>${pendentes}</strong></div>
+            <div><span style="color:var(--cinza-medio);">Dias no período:</span> <strong>${totalDias}</strong></div>
+            <div><span style="color:var(--cinza-medio);">Taxa resolução:</span> <strong>${total > 0 ? ((finalizadas / total) * 100).toFixed(1) : 0}%</strong></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // RELATÓRIO DETALHADO (LISTA COMPLETA)
+  // ============================================
+
+  async renderRelatorioDetalhadoLista(
+    container,
+    ocorrencias,
+    dataInicio,
+    dataFim,
+  ) {
+    const porTipo = this.agruparPorTipo(ocorrencias);
+
+    let html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-list-ul" style="margin-right:8px;"></i>
+            Ocorrências Detalhado
+          </h2>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
+          <i class="fas fa-calendar" style="margin-right:4px;"></i>
+          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          <span style="margin-left:8px;font-weight:600;">${ocorrencias.length} ocorrências</span>
+        </p>
+
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">
+          ${porTipo
+            .slice(0, 5)
+            .map(
+              (t) => `
+            <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:10px;padding:2px 10px;">
+              ${t.tipo}: ${t.total}
+            </span>
+          `,
+            )
+            .join("")}
+        </div>
+
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <div class="table-wrapper">
+            <table style="font-size:11px;">
+              <thead>
+                <tr>
+                  <th>Nº</th>
+                  <th>Data</th>
+                  <th>Tipo</th>
+                  <th>Local</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ocorrencias
+                  .slice(0, 50)
+                  .map(
+                    (o) => `
+                  <tr onclick="app.verDetalhes('${o.id}')" style="cursor:pointer;">
+                    <td style="font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || "Rascunho"}</td>
+                    <td style="font-size:10px;color:var(--cinza-medio);">${new Date(o.criado_em).toLocaleDateString("pt-BR")}</td>
+                    <td>${this.getTipoLabel(o.tipo_ocorrencia)}</td>
+                    <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || "-"}</td>
+                    <td><span class="badge badge-${this.getStatusClass(o.status)}" style="font-size:9px;">${this.getStatusLabel(o.status)}</span></td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+                ${
+                  ocorrencias.length > 50
+                    ? `
+                  <tr>
+                    <td colspan="5" style="text-align:center;color:var(--cinza-medio);font-size:12px;padding:12px;">
+                      + ${ocorrencias.length - 50} outras ocorrências
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+                ${
+                  ocorrencias.length === 0
+                    ? `
+                  <tr>
+                    <td colspan="5" style="text-align:center;color:var(--cinza-medio);padding:20px;font-size:13px;">
+                      Nenhuma ocorrência no período
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // FUNÇÕES AUXILIARES PARA RELATÓRIOS
+  // ============================================
+
+  calcularEstatisticas(ocorrencias) {
+    return {
+      total: ocorrencias.length,
+      finalizadas: ocorrencias.filter((o) => o.status === "synced").length,
+      pendentes: ocorrencias.filter((o) => o.status === "pending_sync").length,
+      canceladas: ocorrencias.filter((o) => o.status === "cancelled").length,
+      retificadas: ocorrencias.filter((o) => o.status === "rectified").length,
+    };
+  }
+
+  agruparPorTipo(ocorrencias) {
+    const tipos = {};
+    const total = ocorrencias.length || 1;
+
+    ocorrencias.forEach((o) => {
+      const tipo = o.tipo_ocorrencia || "Não informado";
+      if (!tipos[tipo]) {
+        tipos[tipo] = { total: 0, finalizadas: 0, pendentes: 0 };
+      }
+      tipos[tipo].total++;
+      if (o.status === "synced") tipos[tipo].finalizadas++;
+      if (o.status === "pending_sync") tipos[tipo].pendentes++;
+    });
+
+    return Object.keys(tipos)
+      .map((key) => ({
+        tipo: this.getTipoLabel(key),
+        total: tipos[key].total,
+        finalizadas: tipos[key].finalizadas,
+        pendentes: tipos[key].pendentes,
+        percentual: ((tipos[key].total / total) * 100).toFixed(1),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }
+
+  agruparPorMes(ocorrencias) {
+    const meses = {};
+    ocorrencias.forEach((o) => {
+      const data = new Date(o.criado_em);
+      const mes = `${String(data.getMonth() + 1).padStart(2, "0")}/${data.getFullYear()}`;
+      if (!meses[mes]) meses[mes] = 0;
+      meses[mes]++;
+    });
+
+    return Object.keys(meses)
+      .sort((a, b) => {
+        const [mesA, anoA] = a.split("/");
+        const [mesB, anoB] = b.split("/");
+        return `${anoA}${mesA}`.localeCompare(`${anoB}${mesB}`);
+      })
+      .map((mes) => ({
+        label: mes,
+        value: meses[mes],
+      }));
+  }
+
+  agruparPorBairro(ocorrencias) {
+    const bairros = {};
+    const total = ocorrencias.length || 1;
+
+    ocorrencias.forEach((o) => {
+      const bairro = o.bairro_ocorrencia || "Não informado";
+      if (!bairros[bairro]) bairros[bairro] = 0;
+      bairros[bairro]++;
+    });
+
+    return Object.keys(bairros)
+      .map((key) => ({
+        bairro: key,
+        total: bairros[key],
+        percentual: ((bairros[key] / total) * 100).toFixed(1),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }
+
+  calcularMediaDiaria(ocorrencias, dataInicio, dataFim) {
+    const dias = this.calcularDiasPeriodo(dataInicio, dataFim);
+    return dias > 0 ? (ocorrencias.length / dias).toFixed(1) : 0;
+  }
+
+  calcularDiasPeriodo(dataInicio, dataFim) {
+    const inicio = new Date(dataInicio);
+    const fim = new Date(dataFim);
+    return Math.ceil((fim - inicio) / (1000 * 60 * 60 * 24)) + 1;
+  }
+
+  calcularDataAnterior(dataInicio, dataFim) {
+    const inicio = new Date(dataInicio);
+    const fim = new Date(dataFim);
+    const diff = fim - inicio;
+    const data = new Date(inicio);
+    data.setTime(data.getTime() - diff);
+    return data.toISOString().slice(0, 10);
+  }
+
+  // ============================================
+  // RENDERIZAÇÃO DE GRÁFICOS (Chart.js)
+  // ============================================
+
+  async renderizarGraficoPizza(canvasId, dados, cores) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    if (typeof Chart === "undefined") {
+      await this.carregarChartJS();
+    }
+
+    const defaultCores = [
+      "#003F87",
+      "#00843D",
+      "#DC2626",
+      "#F59E0B",
+      "#8B5CF6",
+      "#EC4899",
+      "#06B6D4",
+      "#F97316",
+      "#14B8A6",
+      "#6366F1",
+    ];
+
+    new Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: dados.map((d) => d.tipo),
+        datasets: [
+          {
+            data: dados.map((d) => d.total),
+            backgroundColor: (cores || defaultCores).slice(0, dados.length),
+            borderWidth: 2,
+            borderColor: "#fff",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: {
+              font: { size: 10 },
+              boxWidth: 10,
+              padding: 6,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async renderizarGraficoBarras(canvasId, dados) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    if (typeof Chart === "undefined") {
+      await this.carregarChartJS();
+    }
+
+    new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: dados.map((d) => d.label),
+        datasets: [
+          {
+            label: "Ocorrências",
+            data: dados.map((d) => d.value),
+            backgroundColor: "rgba(0, 63, 135, 0.7)",
+            borderColor: "#003F87",
+            borderWidth: 1,
+            borderRadius: 3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false,
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1, font: { size: 9 } },
+          },
+          x: {
+            ticks: { font: { size: 9 } },
+          },
+        },
+      },
+    });
+  }
+
+  carregarChartJS() {
+    return new Promise((resolve) => {
+      if (document.querySelector('script[src*="chart.js"]')) {
+        resolve();
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/chart.js";
+      script.onload = resolve;
+      document.head.appendChild(script);
+    });
+  }
+
+  async exportarRelatorioPDF() {
+    this.showToast("Exportação para PDF em desenvolvimento", "info");
+  }
+
+  async exportarRelatorioCSV() {
+    this.showToast("Exportação para CSV em desenvolvimento", "info");
   }
 
   // ============================================
@@ -3817,6 +5456,13 @@ class App {
       this.showToast("Ocorrência finalizada com sucesso!", "success");
     }
 
+    // ===== REGISTRAR LOG DE CRIAÇÃO DE OCORRÊNCIA =====
+    await authManager.logCriarOcorrencia(
+      authManager.getUserId(),
+      ocorrenciaId,
+      dadosParaSalvar,
+    );
+
     if (this.rascunhoId) {
       try {
         const client = supabaseClient.getClient();
@@ -4640,42 +6286,6 @@ class App {
     if (modal) modal.remove();
 
     this.showToast("Senha alterada com sucesso!", "success");
-  }
-
-  // ============================================
-  // RELATÓRIOS - PLACEHOLDER
-  // ============================================
-
-  async renderRelatorios(container) {
-    if (!authManager.isSupervisor()) {
-      container.innerHTML = `
-                <div class="container">
-                    <h2 style="color:var(--azul-bandeira);"><i class="fas fa-chart-bar" style="margin-right:8px;"></i>Relatórios</h2>
-                    <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-                        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-                            <i class="fas fa-lock"></i>
-                        </div>
-                        <p style="font-weight:500;">Acesso restrito a supervisores</p>
-                        <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-                            Voltar
-                        </button>
-                    </div>
-                </div>
-            `;
-      return;
-    }
-
-    container.innerHTML = `
-            <div class="container">
-                <h2 style="color:var(--azul-bandeira);"><i class="fas fa-chart-bar" style="margin-right:8px;"></i>Relatórios</h2>
-                <div class="card">
-                    <p style="color:var(--cinza-medio);text-align:center;padding:20px;">
-                        <i class="fas fa-chart-line" style="font-size:32px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
-                        Módulo de relatórios em desenvolvimento
-                    </p>
-                </div>
-            </div>
-        `;
   }
 
   // ============================================

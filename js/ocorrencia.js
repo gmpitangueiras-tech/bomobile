@@ -15,6 +15,7 @@
  * - Ao aprovar retificação, mantém o mesmo número da ocorrência original
  * - Suporte a geolocalização (latitude/longitude)
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
+ * - Logs: todas as ações importantes são registradas na tabela logs_acesso
  */
 
 class OcorrenciaManager {
@@ -167,6 +168,10 @@ class OcorrenciaManager {
       if (error) throw error;
 
       console.log("✅ Ocorrência criada:", data.id);
+
+      // ===== REGISTRAR LOG DE CRIAÇÃO DE OCORRÊNCIA =====
+      await authManager.logCriarOcorrencia(user.id, data.id, dados);
+
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao criar ocorrência:", error);
@@ -188,9 +193,7 @@ class OcorrenciaManager {
 
       let query = client.from("ocorrencias").select("*");
 
-      // ===== CORREÇÃO: Buscar apenas ocorrências ATIVAS =====
-      // Em vez de filtrar por ocorrencia_original_id IS NULL,
-      // buscamos apenas ocorrências ativas (esta_ativa = true)
+      // Buscar apenas ocorrências ATIVAS
       // Isso garante que quando uma retificação é aprovada,
       // a versão retificada (com dados atualizados) apareça na listagem
       query = query.eq("esta_ativa", true);
@@ -346,12 +349,19 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
-      return this.atualizar(id, {
+      const result = await this.atualizar(id, {
         status: status,
         numero_ocorrencia: numeroOficial,
         data_hora_encerramento: new Date().toISOString(),
         esta_ativa: true,
       });
+
+      if (result.success) {
+        // ===== REGISTRAR LOG DE FINALIZAÇÃO DE OCORRÊNCIA =====
+        await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
+      }
+
+      return result;
     } catch (error) {
       console.error("❌ Erro ao finalizar ocorrência:", error);
       return { success: false, error: error.message };
@@ -409,6 +419,10 @@ class OcorrenciaManager {
       if (error) throw error;
 
       console.log("✅ Ocorrência cancelada:", id);
+
+      // ===== REGISTRAR LOG DE CANCELAMENTO DE OCORRÊNCIA =====
+      await authManager.logCancelarOcorrencia(user.id, id, motivo);
+
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao cancelar ocorrência:", error);
@@ -623,6 +637,10 @@ class OcorrenciaManager {
       }
 
       console.log("✅ Retificação criada:", novaOcorrencia.id);
+
+      // ===== REGISTRAR LOG DE SOLICITAÇÃO DE RETIFICAÇÃO =====
+      await authManager.logSolicitarRetificacao(user.id, id, camposAlterados);
+
       return {
         success: true,
         data: novaOcorrencia,
@@ -756,6 +774,10 @@ class OcorrenciaManager {
       if (error) throw error;
 
       console.log("✅ Retificação aprovada:", retificacaoId);
+
+      // ===== REGISTRAR LOG DE APROVAÇÃO DE RETIFICAÇÃO =====
+      await authManager.logAprovarRetificacao(user.id, retificacaoId);
+
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao aprovar retificação:", error);
@@ -826,6 +848,10 @@ class OcorrenciaManager {
       if (error) throw error;
 
       console.log("❌ Retificação rejeitada:", retificacaoId);
+
+      // ===== REGISTRAR LOG DE REJEIÇÃO DE RETIFICAÇÃO =====
+      await authManager.logRejeitarRetificacao(user.id, retificacaoId, motivo);
+
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao rejeitar retificação:", error);
@@ -1444,7 +1470,11 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      const { data, error } = await client.from("ocorrencias").select("*");
+      // Buscar apenas ocorrências ativas
+      const { data, error } = await client
+        .from("ocorrencias")
+        .select("*")
+        .eq("esta_ativa", true);
 
       if (error) throw error;
 

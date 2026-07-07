@@ -8,6 +8,8 @@
  * - Nenhum usuário pode alterar CPF, matrícula ou perfil de si mesmo
  * - Logs de acesso: registrados automaticamente no login, logout e ações importantes
  * - Apenas supervisores podem visualizar logs
+ * - IP do usuário é capturado automaticamente via api.ipify.org
+ * - Informações do dispositivo (navegador, tipo) são registradas nos logs
  */
 
 class AuthManager {
@@ -94,6 +96,31 @@ class AuthManager {
   }
 
   // ============================================
+  // OBTENÇÃO DE INFORMAÇÕES DO DISPOSITIVO
+  // ============================================
+
+  obterInfoDispositivo() {
+    const userAgent = navigator?.userAgent || null;
+    
+    let tipo = 'Desktop';
+    if (/mobile/i.test(userAgent)) tipo = 'Mobile';
+    if (/tablet/i.test(userAgent)) tipo = 'Tablet';
+    
+    let navegador = 'Desconhecido';
+    if (userAgent?.includes('Chrome') && !userAgent?.includes('Edg')) navegador = 'Chrome';
+    else if (userAgent?.includes('Firefox')) navegador = 'Firefox';
+    else if (userAgent?.includes('Safari') && !userAgent?.includes('Chrome')) navegador = 'Safari';
+    else if (userAgent?.includes('Edg')) navegador = 'Edge';
+    else if (userAgent?.includes('Opera')) navegador = 'Opera';
+    
+    return {
+      userAgent: userAgent,
+      tipo: tipo,
+      navegador: navegador
+    };
+  }
+
+  // ============================================
   // REGISTRO DE LOGS DE ACESSO
   // ============================================
 
@@ -104,14 +131,24 @@ class AuthManager {
 
       // Obter IP automaticamente
       const ip = await this.obterIP();
+      
+      // Obter informações do dispositivo
+      const infoDispositivo = this.obterInfoDispositivo();
 
       const logData = {
         usuario_id: usuarioId,
         ip: ip,
-        user_agent: navigator?.userAgent || null,
+        user_agent: infoDispositivo.userAgent,
         acao: acao,
         entidade: entidade || null,
-        detalhes: detalhes ? JSON.stringify(detalhes) : null,
+        detalhes: detalhes ? JSON.stringify({
+          ...detalhes,
+          dispositivo: infoDispositivo.tipo,
+          navegador: infoDispositivo.navegador
+        }) : JSON.stringify({
+          dispositivo: infoDispositivo.tipo,
+          navegador: infoDispositivo.navegador
+        }),
         data_hora: new Date().toISOString(),
       };
 
@@ -284,12 +321,14 @@ class AuthManager {
       // ===== REGISTRAR LOG DE LOGIN =====
       await this.logLogin(usuario.id);
 
-      // ===== CORREÇÃO: Atualizar último login com try/catch =====
+      // ===== ATUALIZAR ÚLTIMO LOGIN COM TRY/CATCH =====
       try {
         await client
           .from("usuarios")
           .update({
             ultimo_login: new Date().toISOString(),
+            ultimo_ip: await this.obterIP(),
+            ultimo_user_agent: navigator?.userAgent || null,
           })
           .eq("id", usuario.id);
       } catch (updateError) {
@@ -395,6 +434,10 @@ class AuthManager {
 
   getMatricula() {
     return this.user?.matricula || null;
+  }
+
+  getCPF() {
+    return this.user?.cpf || null;
   }
 
   isSupervisor() {
@@ -522,6 +565,14 @@ class AuthManager {
    * Regra: Apenas supervisores
    */
   podeGerenciarUsuarios() {
+    return this.isSupervisor();
+  }
+
+  /**
+   * Verifica se o usuário pode ver logs
+   * Regra: Apenas supervisores
+   */
+  podeVerLogs() {
     return this.isSupervisor();
   }
 

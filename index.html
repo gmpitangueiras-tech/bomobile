@@ -131,6 +131,16 @@
             <i class="fas fa-chart-bar"></i>
             <span>Relatórios</span>
           </button>
+          <!-- ===== NOVO BOTÃO DE LOGS ===== -->
+          <button
+            class="menu-item"
+            data-page="logs"
+            id="menuLogs"
+            style="display: none"
+          >
+            <i class="fas fa-history"></i>
+            <span>Logs do Sistema</span>
+          </button>
           <button
             class="menu-item"
             data-page="usuarios"
@@ -333,6 +343,13 @@
         <!-- Relatórios -->
         <div id="page-relatorios" class="page" style="display: none">
           <div class="container" id="relatoriosContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- ===== NOVA PÁGINA DE LOGS ===== -->
+        <div id="page-logs" class="page" style="display: none">
+          <div class="container" id="logsContent">
             <!-- Carregado via JavaScript -->
           </div>
         </div>

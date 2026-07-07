@@ -16,11 +16,13 @@
  * - Suporte a geolocalização (latitude/longitude)
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
  * - Logs: todas as ações importantes são registradas na tabela logs_acesso
+ * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada)
  */
 
 class OcorrenciaManager {
   constructor() {
     this.initialized = false;
+    this.cacheUsuarios = {};
   }
 
   /**
@@ -88,6 +90,103 @@ class OcorrenciaManager {
     if (this.initialized) return;
     this.initialized = true;
     console.log("✅ Ocorrência Manager inicializado");
+  }
+
+  // ============================================
+  // FUNÇÃO AUXILIAR - BUSCAR DADOS DOS USUÁRIOS (CACHE)
+  // ============================================
+
+  async buscarDadosUsuario(usuarioId) {
+    if (!usuarioId) return { nome_completo: null, cpf: null };
+
+    // Verifica cache
+    if (this.cacheUsuarios[usuarioId]) {
+      return this.cacheUsuarios[usuarioId];
+    }
+
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { nome_completo: null, cpf: null };
+
+      const { data, error } = await client
+        .from("usuarios")
+        .select("nome_completo, cpf")
+        .eq("id", usuarioId)
+        .single();
+
+      if (error) {
+        console.warn("Erro ao buscar dados do usuário:", error);
+        return { nome_completo: null, cpf: null };
+      }
+
+      // Armazena em cache
+      if (data) {
+        this.cacheUsuarios[usuarioId] = data;
+      }
+
+      return data || { nome_completo: null, cpf: null };
+    } catch (error) {
+      console.warn("Erro ao buscar dados do usuário:", error);
+      return { nome_completo: null, cpf: null };
+    }
+  }
+
+  async buscarDadosUsuariosEmLote(usuarioIds) {
+    // Remove duplicatas e nulls
+    const ids = [...new Set(usuarioIds.filter((id) => id))];
+    if (ids.length === 0) return {};
+
+    // Verifica quais IDs já estão em cache
+    const idsParaBuscar = ids.filter((id) => !this.cacheUsuarios[id]);
+    if (idsParaBuscar.length === 0) {
+      // Todos estão em cache
+      const resultado = {};
+      ids.forEach((id) => {
+        resultado[id] = this.cacheUsuarios[id] || {
+          nome_completo: null,
+          cpf: null,
+        };
+      });
+      return resultado;
+    }
+
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return {};
+
+      const { data, error } = await client
+        .from("usuarios")
+        .select("id, nome_completo, cpf")
+        .in("id", idsParaBuscar);
+
+      if (error) {
+        console.warn("Erro ao buscar usuários em lote:", error);
+        return {};
+      }
+
+      // Armazena em cache
+      const resultado = {};
+      data.forEach((usuario) => {
+        this.cacheUsuarios[usuario.id] = {
+          nome_completo: usuario.nome_completo,
+          cpf: usuario.cpf,
+        };
+        resultado[usuario.id] = this.cacheUsuarios[usuario.id];
+      });
+
+      // Para IDs que não foram encontrados, adiciona como null
+      idsParaBuscar.forEach((id) => {
+        if (!resultado[id]) {
+          resultado[id] = { nome_completo: null, cpf: null };
+          this.cacheUsuarios[id] = { nome_completo: null, cpf: null };
+        }
+      });
+
+      return resultado;
+    } catch (error) {
+      console.warn("Erro ao buscar usuários em lote:", error);
+      return {};
+    }
   }
 
   // ============================================
@@ -170,7 +269,7 @@ class OcorrenciaManager {
       console.log("✅ Ocorrência criada:", data.id);
 
       // ===== REGISTRAR LOG DE CRIAÇÃO DE OCORRÊNCIA =====
-      await authManager.logCriarOcorrencia(user.id, data.id, dados);
+      await authManager.logCriarOcorrencia(user.id, data.id);
 
       return { success: true, data };
     } catch (error) {
@@ -191,12 +290,8 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      let query = client.from("ocorrencias").select("*");
-
-      // Buscar apenas ocorrências ATIVAS
-      // Isso garante que quando uma retificação é aprovada,
-      // a versão retificada (com dados atualizados) apareça na listagem
-      query = query.eq("esta_ativa", true);
+      // ===== CORREÇÃO: Buscar apenas ocorrências ativas =====
+      let query = client.from("ocorrencias").select("*").eq("esta_ativa", true);
 
       // Filtros
       if (filtros.status) {
@@ -229,7 +324,25 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      return { success: true, data: data || [] };
+      // ===== BUSCAR DADOS DOS CRIADORES EM LOTE (OTIMIZADO) =====
+      const ocorrencias = data || [];
+      if (ocorrencias.length > 0) {
+        const idsCriadores = ocorrencias
+          .map((o) => o.criado_por)
+          .filter((id) => id);
+        const dadosUsuarios =
+          await this.buscarDadosUsuariosEmLote(idsCriadores);
+
+        // Adiciona os dados do criador em cada ocorrência
+        ocorrencias.forEach((ocorrencia) => {
+          ocorrencia.criador = dadosUsuarios[ocorrencia.criado_por] || {
+            nome_completo: null,
+            cpf: null,
+          };
+        });
+      }
+
+      return { success: true, data: ocorrencias };
     } catch (error) {
       console.error("❌ Erro ao listar ocorrências:", error);
       return { success: false, error: error.message };
@@ -248,11 +361,19 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      let query = client.from("ocorrencias").select("*").eq("id", id);
-
-      const { data, error } = await query.single();
+      const { data, error } = await client
+        .from("ocorrencias")
+        .select("*")
+        .eq("id", id)
+        .single();
 
       if (error) throw error;
+
+      // ===== BUSCAR DADOS DO CRIADOR =====
+      if (data && data.criado_por) {
+        const dadosCriador = await this.buscarDadosUsuario(data.criado_por);
+        data.criador = dadosCriador;
+      }
 
       return { success: true, data };
     } catch (error) {
@@ -639,7 +760,7 @@ class OcorrenciaManager {
       console.log("✅ Retificação criada:", novaOcorrencia.id);
 
       // ===== REGISTRAR LOG DE SOLICITAÇÃO DE RETIFICAÇÃO =====
-      await authManager.logSolicitarRetificacao(user.id, id, camposAlterados);
+      await authManager.logSolicitarRetificacao(user.id, id);
 
       return {
         success: true,
@@ -850,7 +971,7 @@ class OcorrenciaManager {
       console.log("❌ Retificação rejeitada:", retificacaoId);
 
       // ===== REGISTRAR LOG DE REJEIÇÃO DE RETIFICAÇÃO =====
-      await authManager.logRejeitarRetificacao(user.id, retificacaoId, motivo);
+      await authManager.logRejeitarRetificacao(user.id, retificacaoId);
 
       return { success: true, data };
     } catch (error) {
@@ -1515,6 +1636,15 @@ class OcorrenciaManager {
         return v.toString(16);
       },
     );
+  }
+
+  // ============================================
+  // LIMPAR CACHE (útil para testes)
+  // ============================================
+
+  limparCacheUsuarios() {
+    this.cacheUsuarios = {};
+    console.log("🧹 Cache de usuários limpo");
   }
 }
 

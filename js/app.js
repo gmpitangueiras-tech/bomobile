@@ -13,7 +13,7 @@ class App {
     this.relatorioAtivo = null;
     this.relatorioFiltros = {
       dataInicio: null,
-      dataFim: null,
+      dataFim: null
     };
     this.pages = {
       login: { element: "page-login", showHeader: false, showFab: false },
@@ -43,6 +43,11 @@ class App {
         showHeader: true,
         showFab: false,
       },
+      logs: {
+        element: "page-logs",
+        showHeader: true,
+        showFab: false,
+      },
       usuarios: { element: "page-usuarios", showHeader: true, showFab: false },
       perfil: { element: "page-perfil", showHeader: true, showFab: false },
     };
@@ -54,6 +59,7 @@ class App {
       dataInicio: "",
       dataFim: "",
     };
+    this.filtrosLogs = {};
   }
 
   // ============================================
@@ -96,6 +102,58 @@ class App {
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
     return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
+  // ============================================
+  // UTILITÁRIOS - MASCARAR CPF (LGPD)
+  // ============================================
+
+  formatarCPFSeguro(cpf) {
+    if (!cpf) return '***.***.***-**';
+    
+    const cpfLimpo = cpf.replace(/\D/g, '');
+    
+    if (authManager.isSupervisor()) {
+      return cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    }
+    
+    if (cpfLimpo.length === 11) {
+      const parte2 = cpfLimpo.substring(3, 6);
+      const parte4 = cpfLimpo.substring(9, 11);
+      return `***.${parte2}.***-${parte4}`;
+    }
+    
+    return cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '***.$2.***-$4');
+  }
+
+  // ============================================
+  // CAPTURAR GEOLOCALIZAÇÃO
+  // ============================================
+
+  obterLocalizacao() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve({ latitude: null, longitude: null });
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        },
+        () => {
+          resolve({ latitude: null, longitude: null });
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000
+        }
+      );
+    });
   }
 
   // ============================================
@@ -147,11 +205,7 @@ class App {
   // MODAL DE INPUT PERSONALIZADO (para motivo da rejeição)
   // ============================================
 
-  inputModal(
-    mensagem,
-    titulo = "Informe o motivo",
-    placeholder = "Digite o motivo...",
-  ) {
+  inputModal(mensagem, titulo = "Informe o motivo", placeholder = "Digite o motivo...") {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.className = "modal-overlay";
@@ -191,7 +245,7 @@ class App {
       `;
       document.body.appendChild(overlay);
       window._inputResolve = resolve;
-
+      
       setTimeout(() => {
         const textarea = document.getElementById("inputMotivo");
         if (textarea) textarea.focus();
@@ -216,13 +270,13 @@ class App {
   confirmarInputModal() {
     const textarea = document.getElementById("inputMotivo");
     if (!textarea) return;
-
+    
     const valor = textarea.value.trim();
     if (valor.length < 5) {
       this.showToast("O motivo deve ter pelo menos 5 caracteres", "warning");
       return;
     }
-
+    
     const overlay = textarea.closest(".modal-overlay");
     if (overlay) {
       window._inputResolve(valor);
@@ -630,6 +684,7 @@ class App {
     const menuRelatorios = document.getElementById("menuRelatorios");
     const menuUsuarios = document.getElementById("menuUsuarios");
     const menuRetificacoes = document.getElementById("menuRetificacoes");
+    const menuLogs = document.getElementById("menuLogs");
 
     if (menuRelatorios) {
       menuRelatorios.style.display = authManager.isSupervisor()
@@ -643,6 +698,9 @@ class App {
       menuRetificacoes.style.display = authManager.isSupervisor()
         ? "flex"
         : "none";
+    }
+    if (menuLogs) {
+      menuLogs.style.display = authManager.isSupervisor() ? "flex" : "none";
     }
   }
 
@@ -713,7 +771,8 @@ class App {
     if (
       page === "relatorios" ||
       page === "usuarios" ||
-      page === "retificacoes"
+      page === "retificacoes" ||
+      page === "logs"
     ) {
       if (!authManager.isSupervisor()) {
         this.showToast("Acesso restrito a supervisores", "warning");
@@ -795,6 +854,9 @@ class App {
           break;
         case "relatorios":
           await this.renderRelatorios(container);
+          break;
+        case "logs":
+          await this.renderLogs(container);
           break;
         case "usuarios":
           await this.renderUsuarios(container);
@@ -1024,6 +1086,10 @@ class App {
           ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>`
           : "";
 
+      const guardaNome = occ.criador?.nome_completo || 'Desconhecido';
+      const guardaCPF = occ.criador?.cpf || '';
+      const cpfExibido = this.formatarCPFSeguro(guardaCPF);
+
       html += `
                 <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
                     <div class="header">
@@ -1036,6 +1102,10 @@ class App {
                     <div class="local">
                         <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);"></i>
                         ${occ.local_ocorrencia || "Local não informado"}
+                    </div>
+                    <div class="guarda" style="font-size:11px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
+                        <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
+                        <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
                     </div>
                 </div>
             `;
@@ -1214,6 +1284,10 @@ class App {
           ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>`
           : "";
 
+      const guardaNome = occ.criador?.nome_completo || 'Desconhecido';
+      const guardaCPF = occ.criador?.cpf || '';
+      const cpfExibido = this.formatarCPFSeguro(guardaCPF);
+
       html += `
         <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
           <div class="header">
@@ -1226,6 +1300,10 @@ class App {
           <div class="local">
             <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);"></i>
             ${occ.local_ocorrencia || "Local não informado"}
+          </div>
+          <div class="guarda" style="font-size:11px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
+            <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
+            <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
           </div>
         </div>
       `;
@@ -1363,21 +1441,54 @@ class App {
         : "";
     const isPending = occ.status === "pending_rectification";
 
+    // Buscar dados do criador
+    let criadorNome = 'Desconhecido';
+    let criadorCPF = '';
+    if (occ.criado_por) {
+      try {
+        const client = supabaseClient.getClient();
+        if (client) {
+          const { data: criador } = await client
+            .from('usuarios')
+            .select('nome_completo, cpf')
+            .eq('id', occ.criado_por)
+            .single();
+          if (criador) {
+            criadorNome = criador.nome_completo;
+            criadorCPF = criador.cpf;
+          }
+        }
+      } catch (error) {
+        console.warn('Erro ao buscar dados do criador:', error);
+      }
+    }
+
+    const cpfExibido = this.formatarCPFSeguro(criadorCPF);
+
     let html = `
             <div class="container" style="padding-bottom:120px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                    <h2 style="color:var(--azul-bandeira);margin:0;">
-                        <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-                        #${numero}
-                    </h2>
-                    <span class="badge badge-${statusClass}" style="font-size:13px;padding:4px 16px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+                            <i class="fas fa-file-alt" style="margin-right:8px;"></i>
+                            #${numero}
+                        </h2>
+                        <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;display:flex;flex-wrap:wrap;gap:12px;">
+                            <span><i class="fas fa-user" style="margin-right:4px;"></i>
+                                <strong>${criadorNome}</strong>
+                            </span>
+                            <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
+                            ${occ.latitude && occ.longitude ? `<span><i class="fas fa-map-pin" style="margin-right:4px;"></i>📍 ${occ.latitude.toFixed(6)}, ${occ.longitude.toFixed(6)}</span>` : ''}
+                        </div>
+                        <div style="font-size:11px;color:var(--cinza-medio);margin-top:2px;">
+                            <i class="fas fa-calendar" style="margin-right:4px;"></i>
+                            Criado em ${dataCriacao}
+                        </div>
+                    </div>
+                    <span class="badge badge-${statusClass}" style="font-size:13px;padding:4px 16px;white-space:nowrap;">
                         ${statusLabel}
                     </span>
                 </div>
-                <p style="color:var(--cinza-medio);font-size:13px;margin-bottom:16px;">
-                    <i class="fas fa-calendar" style="margin-right:4px;"></i>
-                    Criado em ${dataCriacao}
-                </p>
     `;
 
     if (isRetificacao && occ.justificativa_retificacao) {
@@ -1394,10 +1505,7 @@ class App {
       `;
     }
 
-    if (
-      occ.status === "pending_rectification" &&
-      occ.solicitacao_retificacao_justificativa
-    ) {
+    if (occ.status === "pending_rectification" && occ.solicitacao_retificacao_justificativa) {
       html += `
         <div style="background:#fef3c7;padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:16px;">
           <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:#92400e;">
@@ -1465,64 +1573,27 @@ class App {
     }
 
     const camposGerais = [
-      {
-        chave: "local_ocorrencia",
-        label: "Local",
-        valor: occ.local_ocorrencia,
-      },
+      { chave: "local_ocorrencia", label: "Local", valor: occ.local_ocorrencia },
       { chave: "rodovia", label: "Rodovia", valor: occ.rodovia },
-      {
-        chave: "bairro_ocorrencia",
-        label: "Bairro da Ocorrência",
-        valor: occ.bairro_ocorrencia,
-      },
+      { chave: "bairro_ocorrencia", label: "Bairro da Ocorrência", valor: occ.bairro_ocorrencia },
       { chave: "referencia", label: "Referência", valor: occ.referencia },
-      {
-        chave: "codigo_operacional",
-        label: "Código Operacional",
-        valor: occ.codigo_operacional,
-      },
-      {
-        chave: "tipo_ocorrencia",
-        label: "Tipo de Ocorrência",
-        valor: occ.tipo_ocorrencia
-          ? this.getTipoLabel(occ.tipo_ocorrencia)
-          : null,
-      },
-      {
-        chave: "codigo_municipal",
-        label: "Código Municipal",
-        valor: occ.codigo_municipal,
-      },
+      { chave: "codigo_operacional", label: "Código Operacional", valor: occ.codigo_operacional },
+      { chave: "tipo_ocorrencia", label: "Tipo de Ocorrência", valor: occ.tipo_ocorrencia ? this.getTipoLabel(occ.tipo_ocorrencia) : null },
+      { chave: "codigo_municipal", label: "Código Municipal", valor: occ.codigo_municipal },
       { chave: "complemento", label: "Complemento", valor: occ.complemento },
-      {
-        chave: "identificacao_adicional",
-        label: "Identificação Adicional",
-        valor: occ.identificacao_adicional,
-      },
+      { chave: "identificacao_adicional", label: "Identificação Adicional", valor: occ.identificacao_adicional },
       { chave: "numero_versao", label: "Versão", valor: occ.numero_versao },
     ];
 
-    const camposGeraisPreenchidos = camposGerais.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
+    const camposGeraisPreenchidos = camposGerais.filter(c => c.valor && c.valor.toString().trim() !== "");
 
-    if (
-      camposGeraisPreenchidos.length > 0 ||
-      dataInicio ||
-      dataEncerramento ||
-      versaoInfo
-    ) {
+    if (camposGeraisPreenchidos.length > 0 || dataInicio || dataEncerramento || versaoInfo) {
       html += `
         <div class="card-revisao">
           <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
-          ${camposGeraisPreenchidos
-            .map(
-              (c) => `
+          ${camposGeraisPreenchidos.map(c => `
             <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-          `,
-            )
-            .join("")}
+          `).join("")}
           <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${dataInicio}</span></div>
           ${dataEncerramento ? `<div class="campo"><span class="rotulo">Data/Hora Encerramento:</span><span class="valor">${dataEncerramento}</span></div>` : ""}
           ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ""}
@@ -1531,48 +1602,22 @@ class App {
     }
 
     const camposSolicitante = [
-      {
-        chave: "forma_solicitacao",
-        label: "Forma",
-        valor: occ.forma_solicitacao,
-      },
-      {
-        chave: "nome_solicitante",
-        label: "Solicitante",
-        valor: occ.nome_solicitante,
-      },
-      {
-        chave: "telefone_solicitante",
-        label: "Telefone",
-        valor: occ.telefone_solicitante,
-      },
-      {
-        chave: "endereco_solicitante",
-        label: "Endereço",
-        valor: occ.endereco_solicitante,
-      },
-      {
-        chave: "bairro_solicitante",
-        label: "Bairro",
-        valor: occ.bairro_solicitante,
-      },
+      { chave: "forma_solicitacao", label: "Forma", valor: occ.forma_solicitacao },
+      { chave: "nome_solicitante", label: "Solicitante", valor: occ.nome_solicitante },
+      { chave: "telefone_solicitante", label: "Telefone", valor: occ.telefone_solicitante },
+      { chave: "endereco_solicitante", label: "Endereço", valor: occ.endereco_solicitante },
+      { chave: "bairro_solicitante", label: "Bairro", valor: occ.bairro_solicitante },
     ];
 
-    const camposSolicitantePreenchidos = camposSolicitante.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
+    const camposSolicitantePreenchidos = camposSolicitante.filter(c => c.valor && c.valor.toString().trim() !== "");
 
     if (camposSolicitantePreenchidos.length > 0) {
       html += `
         <div class="card-revisao">
           <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
-          ${camposSolicitantePreenchidos
-            .map(
-              (c) => `
+          ${camposSolicitantePreenchidos.map(c => `
             <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-          `,
-            )
-            .join("")}
+          `).join("")}
         </div>
       `;
     }
@@ -2037,11 +2082,9 @@ class App {
       this.showToast("Retificação criada com sucesso!", "success");
     }
 
-    // ===== REGISTRAR LOG DE SOLICITAÇÃO DE RETIFICAÇÃO =====
     await authManager.logSolicitarRetificacao(
       authManager.getUserId(),
-      id,
-      result.campos_alterados || [],
+      id
     );
 
     setTimeout(
@@ -2063,27 +2106,27 @@ class App {
     const result = await ocorrenciaManager.aprovarRetificacao(id);
     if (result.success) {
       this.showToast("Retificação aprovada com sucesso!", "success");
-
-      // ===== REGISTRAR LOG DE APROVAÇÃO DE RETIFICAÇÃO =====
+      
       await authManager.logAprovarRetificacao(authManager.getUserId(), id);
-
+      
       const paginaAtual = this.currentPage;
-
+      
       if (paginaAtual === "detalhe-ocorrencia") {
         this.loadPageContent("detalhe-ocorrencia");
       }
-
+      
       if (paginaAtual === "retificacoes") {
         this.loadPageContent("retificacoes");
       }
-
+      
       if (paginaAtual === "dashboard") {
         this.loadPageContent("dashboard");
       }
-
+      
       if (paginaAtual === "ocorrencias") {
         this.loadPageContent("ocorrencias");
       }
+      
     } else {
       this.showToast("Erro ao aprovar retificação: " + result.error, "error");
     }
@@ -2097,9 +2140,9 @@ class App {
     const motivo = await this.inputModal(
       "Informe o motivo da rejeição da retificação:",
       "Rejeitar Retificação",
-      "Digite o motivo da rejeição...",
+      "Digite o motivo da rejeição..."
     );
-
+    
     if (!motivo) {
       this.showToast("Operação cancelada", "info");
       return;
@@ -2113,31 +2156,27 @@ class App {
     const result = await ocorrenciaManager.rejeitarRetificacao(id, motivo);
     if (result.success) {
       this.showToast("Retificação rejeitada", "info");
-
-      // ===== REGISTRAR LOG DE REJEIÇÃO DE RETIFICAÇÃO =====
-      await authManager.logRejeitarRetificacao(
-        authManager.getUserId(),
-        id,
-        motivo,
-      );
-
+      
+      await authManager.logRejeitarRetificacao(authManager.getUserId(), id);
+      
       const paginaAtual = this.currentPage;
-
+      
       if (paginaAtual === "detalhe-ocorrencia") {
         this.loadPageContent("detalhe-ocorrencia");
       }
-
+      
       if (paginaAtual === "retificacoes") {
         this.loadPageContent("retificacoes");
       }
-
+      
       if (paginaAtual === "dashboard") {
         this.loadPageContent("dashboard");
       }
-
+      
       if (paginaAtual === "ocorrencias") {
         this.loadPageContent("ocorrencias");
       }
+      
     } else {
       this.showToast("Erro ao rejeitar retificação: " + result.error, "error");
     }
@@ -2311,10 +2350,9 @@ class App {
     const result = await ocorrenciaManager.finalizar(id);
     if (result.success) {
       this.showToast("Ocorrência finalizada com sucesso!", "success");
-
-      // ===== REGISTRAR LOG DE FINALIZAÇÃO DE OCORRÊNCIA =====
+      
       await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
-
+      
       if (this.filtroStatusAtual) {
         this.loadPageContent("dashboard");
       }
@@ -2328,9 +2366,9 @@ class App {
     const motivo = await this.inputModal(
       "Informe o motivo do cancelamento:",
       "Cancelar Ocorrência",
-      "Digite o motivo do cancelamento...",
+      "Digite o motivo do cancelamento..."
     );
-
+    
     if (!motivo) {
       this.showToast("Operação cancelada", "info");
       return;
@@ -2344,14 +2382,9 @@ class App {
     const result = await ocorrenciaManager.cancelar(id, motivo);
     if (result.success) {
       this.showToast("Ocorrência cancelada com sucesso!", "success");
-
-      // ===== REGISTRAR LOG DE CANCELAMENTO DE OCORRÊNCIA =====
-      await authManager.logCancelarOcorrencia(
-        authManager.getUserId(),
-        id,
-        motivo,
-      );
-
+      
+      await authManager.logCancelarOcorrencia(authManager.getUserId(), id, motivo);
+      
       if (this.filtroStatusAtual) {
         this.loadPageContent("dashboard");
       }
@@ -2594,80 +2627,19 @@ class App {
     }
 
     const relatorios = [
-      {
-        id: "executivo",
-        nome: "Relatório Executivo",
-        descricao: "Visão geral das ocorrências",
-        icon: "fa-chart-pie",
-        cor: "azul",
-      },
-      {
-        id: "por-tipo",
-        nome: "Ocorrências por Tipo",
-        descricao: "Análise detalhada por natureza da ocorrência",
-        icon: "fa-tag",
-        cor: "verde",
-      },
-      {
-        id: "por-local",
-        nome: "Ocorrências por Localidade",
-        descricao: "Distribuição geográfica das ocorrências",
-        icon: "fa-map-marker-alt",
-        cor: "vermelho",
-      },
-      {
-        id: "atendimento",
-        nome: "Tempo Médio de Atendimento",
-        descricao: "Análise de eficiência operacional",
-        icon: "fa-clock",
-        cor: "amarelo",
-      },
-      {
-        id: "desempenho",
-        nome: "Desempenho por Guarda",
-        descricao: "Avaliação individual dos agentes",
-        icon: "fa-user-tie",
-        cor: "roxo",
-      },
-      {
-        id: "retificacoes",
-        nome: "Relatório de Retificações",
-        descricao: "Acompanhamento de correções de ocorrências",
-        icon: "fa-sync-alt",
-        cor: "azul",
-      },
-      {
-        id: "cancelamentos",
-        nome: "Relatório de Cancelamentos",
-        descricao: "Análise de ocorrências canceladas",
-        icon: "fa-times-circle",
-        cor: "vermelho",
-      },
-      {
-        id: "tendencias",
-        nome: "Tendências e Sazonalidade",
-        descricao: "Padrões temporais das ocorrências",
-        icon: "fa-chart-line",
-        cor: "verde",
-      },
-      {
-        id: "produtividade",
-        nome: "Produtividade do Setor",
-        descricao: "Eficiência e capacidade de atendimento",
-        icon: "fa-rocket",
-        cor: "azul",
-      },
-      {
-        id: "detalhado",
-        nome: "Ocorrências Detalhado",
-        descricao: "Listagem completa com todos os campos",
-        icon: "fa-list-ul",
-        cor: "cinza",
-      },
+      { id: 'executivo', nome: 'Relatório Executivo', descricao: 'Visão geral das ocorrências', icon: 'fa-chart-pie', cor: 'azul' },
+      { id: 'por-tipo', nome: 'Ocorrências por Tipo', descricao: 'Análise detalhada por natureza da ocorrência', icon: 'fa-tag', cor: 'verde' },
+      { id: 'por-local', nome: 'Ocorrências por Localidade', descricao: 'Distribuição geográfica das ocorrências', icon: 'fa-map-marker-alt', cor: 'vermelho' },
+      { id: 'atendimento', nome: 'Tempo Médio de Atendimento', descricao: 'Análise de eficiência operacional', icon: 'fa-clock', cor: 'amarelo' },
+      { id: 'desempenho', nome: 'Desempenho por Guarda', descricao: 'Avaliação individual dos agentes', icon: 'fa-user-tie', cor: 'roxo' },
+      { id: 'retificacoes', nome: 'Relatório de Retificações', descricao: 'Acompanhamento de correções de ocorrências', icon: 'fa-sync-alt', cor: 'azul' },
+      { id: 'cancelamentos', nome: 'Relatório de Cancelamentos', descricao: 'Análise de ocorrências canceladas', icon: 'fa-times-circle', cor: 'vermelho' },
+      { id: 'tendencias', nome: 'Tendências e Sazonalidade', descricao: 'Padrões temporais das ocorrências', icon: 'fa-chart-line', cor: 'verde' },
+      { id: 'produtividade', nome: 'Produtividade do Setor', descricao: 'Eficiência e capacidade de atendimento', icon: 'fa-rocket', cor: 'azul' },
+      { id: 'detalhado', nome: 'Ocorrências Detalhado', descricao: 'Listagem completa com todos os campos', icon: 'fa-list-ul', cor: 'cinza' },
     ];
 
-    const dataInicio =
-      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
+    const dataInicio = this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
     const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
 
     let html = `
@@ -2706,23 +2678,23 @@ class App {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
     `;
 
-    relatorios.forEach((rel) => {
+    relatorios.forEach(rel => {
       const corMap = {
-        azul: "var(--azul-bandeira)",
-        verde: "var(--verde-bandeira)",
-        vermelho: "var(--erro)",
-        amarelo: "var(--aviso)",
-        roxo: "#8b5cf6",
-        cinza: "var(--cinza-medio)",
+        azul: 'var(--azul-bandeira)',
+        verde: 'var(--verde-bandeira)',
+        vermelho: 'var(--erro)',
+        amarelo: 'var(--aviso)',
+        roxo: '#8b5cf6',
+        cinza: 'var(--cinza-medio)'
       };
 
       const bgMap = {
-        azul: "var(--azul-muito-claro)",
-        verde: "var(--verde-muito-claro)",
-        vermelho: "var(--erro-claro)",
-        amarelo: "#fef3c7",
-        roxo: "#ede9fe",
-        cinza: "var(--cinza-claro)",
+        azul: 'var(--azul-muito-claro)',
+        verde: 'var(--verde-muito-claro)',
+        vermelho: 'var(--erro-claro)',
+        amarelo: '#fef3c7',
+        roxo: '#ede9fe',
+        cinza: 'var(--cinza-claro)'
       };
 
       html += `
@@ -2768,25 +2740,21 @@ class App {
 
   async abrirRelatorio(tipo) {
     this.relatorioAtivo = tipo;
-
-    const dataInicio =
-      document.getElementById("relatorioDataInicio")?.value ||
-      this.obterPrimeiroDiaMes();
-    const dataFim =
-      document.getElementById("relatorioDataFim")?.value ||
-      this.obterDataAtual();
-
+    
+    const dataInicio = document.getElementById("relatorioDataInicio")?.value || this.obterPrimeiroDiaMes();
+    const dataFim = document.getElementById("relatorioDataFim")?.value || this.obterDataAtual();
+    
     this.relatorioFiltros = {
       dataInicio: dataInicio,
-      dataFim: dataFim,
+      dataFim: dataFim
     };
 
-    this.loadPageContent("relatorios");
+    this.loadPageContent('relatorios');
   }
 
   voltarRelatorios() {
     this.relatorioAtivo = null;
-    this.loadPageContent("relatorios");
+    this.loadPageContent('relatorios');
   }
 
   aplicarFiltrosRelatorios() {
@@ -2794,20 +2762,17 @@ class App {
     const dataFim = document.getElementById("relatorioDataFim")?.value;
 
     if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
+      this.showToast("Data final deve ser maior ou igual à data inicial", "warning");
       return;
     }
 
     this.relatorioFiltros = {
       dataInicio: dataInicio || this.obterPrimeiroDiaMes(),
-      dataFim: dataFim || this.obterDataAtual(),
+      dataFim: dataFim || this.obterDataAtual()
     };
 
     if (this.relatorioAtivo) {
-      this.loadPageContent("relatorios");
+      this.loadPageContent('relatorios');
     }
   }
 
@@ -2822,8 +2787,7 @@ class App {
   }
 
   async renderRelatorioDetalhado(container, tipo) {
-    const dataInicio =
-      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
+    const dataInicio = this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
     const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
 
     container.innerHTML = `
@@ -2833,91 +2797,38 @@ class App {
       </div>
     `;
 
-    const ocorrencias = await this.buscarOcorrenciasPeriodo(
-      dataInicio,
-      dataFim,
-    );
+    const ocorrencias = await this.buscarOcorrenciasPeriodo(dataInicio, dataFim);
 
-    switch (tipo) {
-      case "executivo":
-        await this.renderRelatorioExecutivo(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+    switch(tipo) {
+      case 'executivo':
+        await this.renderRelatorioExecutivo(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "por-tipo":
-        await this.renderRelatorioPorTipo(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'por-tipo':
+        await this.renderRelatorioPorTipo(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "por-local":
-        await this.renderRelatorioPorLocal(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'por-local':
+        await this.renderRelatorioPorLocal(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "atendimento":
-        await this.renderRelatorioAtendimento(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'atendimento':
+        await this.renderRelatorioAtendimento(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "desempenho":
-        await this.renderRelatorioDesempenho(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'desempenho':
+        await this.renderRelatorioDesempenho(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "retificacoes":
-        await this.renderRelatorioRetificacoes(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'retificacoes':
+        await this.renderRelatorioRetificacoes(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "cancelamentos":
-        await this.renderRelatorioCancelamentos(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'cancelamentos':
+        await this.renderRelatorioCancelamentos(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "tendencias":
-        await this.renderRelatorioTendencias(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'tendencias':
+        await this.renderRelatorioTendencias(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "produtividade":
-        await this.renderRelatorioProdutividade(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'produtividade':
+        await this.renderRelatorioProdutividade(container, ocorrencias, dataInicio, dataFim);
         break;
-      case "detalhado":
-        await this.renderRelatorioDetalhadoLista(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+      case 'detalhado':
+        await this.renderRelatorioDetalhadoLista(container, ocorrencias, dataInicio, dataFim);
         break;
       default:
         container.innerHTML = `<p>Relatório não encontrado</p>`;
@@ -2930,17 +2841,17 @@ class App {
 
     try {
       const { data, error } = await client
-        .from("ocorrencias")
-        .select("*")
-        .gte("criado_em", dataInicio)
-        .lte("criado_em", dataFim + "T23:59:59");
+        .from('ocorrencias')
+        .select('*')
+        .gte('criado_em', dataInicio)
+        .lte('criado_em', dataFim + 'T23:59:59');
 
       if (error) throw error;
 
       console.log(`📊 Buscou ${data?.length || 0} ocorrências no período`);
       return data || [];
     } catch (error) {
-      console.error("❌ Erro ao buscar ocorrências:", error);
+      console.error('❌ Erro ao buscar ocorrências:', error);
       return [];
     }
   }
@@ -2953,27 +2864,12 @@ class App {
     const stats = this.calcularEstatisticas(ocorrencias);
     const porTipo = this.agruparPorTipo(ocorrencias);
     const porMes = this.agruparPorMes(ocorrencias);
-
+    
     const total = stats.total || 1;
     const taxaResolutividade = ((stats.finalizadas / total) * 100).toFixed(1);
-    const mediaDiaria = this.calcularMediaDiaria(
-      ocorrencias,
-      dataInicio,
-      dataFim,
-    );
+    const mediaDiaria = this.calcularMediaDiaria(ocorrencias, dataInicio, dataFim);
 
-    const coresPizza = [
-      "#003F87",
-      "#00843D",
-      "#DC2626",
-      "#F59E0B",
-      "#8B5CF6",
-      "#EC4899",
-      "#06B6D4",
-      "#F97316",
-      "#14B8A6",
-      "#6366F1",
-    ];
+    const coresPizza = ['#003F87', '#00843D', '#DC2626', '#F59E0B', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#14B8A6', '#6366F1'];
 
     const html = `
       <div class="container" style="padding-bottom:120px;">
@@ -2993,7 +2889,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -3057,29 +2953,20 @@ class App {
                 </tr>
               </thead>
               <tbody>
-                ${porTipo
-                  .slice(0, 8)
-                  .map(
-                    (t) => `
+                ${porTipo.slice(0, 8).map(t => `
                   <tr>
                     <td style="font-size:11px;">${t.tipo}</td>
                     <td style="text-align:center;font-weight:600;">${t.total}</td>
                     <td style="text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
                   </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  porTipo.length > 8
-                    ? `
+                `).join('')}
+                ${porTipo.length > 8 ? `
                   <tr>
                     <td colspan="3" style="text-align:center;color:var(--cinza-medio);font-size:11px;">
                       + ${porTipo.length - 8} outros tipos
                     </td>
                   </tr>
-                `
-                    : ""
-                }
+                ` : ''}
               </tbody>
             </table>
           </div>
@@ -3089,12 +2976,8 @@ class App {
 
     container.innerHTML = html;
 
-    await this.renderizarGraficoPizza(
-      "chartRelatorioPizza",
-      porTipo.slice(0, 8),
-      coresPizza,
-    );
-    await this.renderizarGraficoBarras("chartRelatorioMensal", porMes);
+    await this.renderizarGraficoPizza('chartRelatorioPizza', porTipo.slice(0, 8), coresPizza);
+    await this.renderizarGraficoBarras('chartRelatorioMensal', porMes);
   }
 
   // ============================================
@@ -3103,7 +2986,7 @@ class App {
 
   async renderRelatorioPorTipo(container, ocorrencias, dataInicio, dataFim) {
     const porTipo = this.agruparPorTipo(ocorrencias);
-
+    
     let html = `
       <div class="container" style="padding-bottom:120px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -3117,19 +3000,15 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-          ${porTipo
-            .map(
-              (t) => `
+          ${porTipo.map(t => `
             <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;padding:4px 12px;">
               ${t.tipo}: ${t.total}
             </span>
-          `,
-            )
-            .join("")}
+          `).join('')}
         </div>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
@@ -3145,9 +3024,7 @@ class App {
                 </tr>
               </thead>
               <tbody>
-                ${porTipo
-                  .map(
-                    (t) => `
+                ${porTipo.map(t => `
                   <tr>
                     <td>${t.tipo}</td>
                     <td style="text-align:center;font-weight:600;">${t.total}</td>
@@ -3155,9 +3032,7 @@ class App {
                     <td style="text-align:center;color:var(--verde-bandeira);">${t.finalizadas}</td>
                     <td style="text-align:center;color:var(--aviso);">${t.pendentes}</td>
                   </tr>
-                `,
-                  )
-                  .join("")}
+                `).join('')}
               </tbody>
             </table>
           </div>
@@ -3175,7 +3050,7 @@ class App {
   async renderRelatorioPorLocal(container, ocorrencias, dataInicio, dataFim) {
     const porBairro = this.agruparPorBairro(ocorrencias);
     const topBairros = porBairro.slice(0, 10);
-
+    
     let html = `
       <div class="container" style="padding-bottom:120px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -3189,7 +3064,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
@@ -3197,18 +3072,14 @@ class App {
             <i class="fas fa-trophy" style="margin-right:4px;"></i>
             Top 10 Bairros
           </h4>
-          ${topBairros
-            .map(
-              (b, index) => `
+          ${topBairros.map((b, index) => `
             <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
               <span style="font-weight:700;color:var(--cinza-medio);min-width:20px;font-size:12px;">${index + 1}º</span>
               <span style="flex:1;font-weight:500;">${b.bairro}</span>
               <span style="font-weight:700;color:var(--azul-bandeira);">${b.total}</span>
               <span style="font-size:11px;color:var(--cinza-medio);">(${b.percentual}%)</span>
             </div>
-          `,
-            )
-            .join("")}
+          `).join('')}
         </div>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
@@ -3225,67 +3096,44 @@ class App {
 
     container.innerHTML = html;
 
-    await this.renderizarGraficoBarras(
-      "chartRelatorioBairros",
-      topBairros.map((b) => ({
-        label: b.bairro.length > 15 ? b.bairro.slice(0, 12) + "..." : b.bairro,
-        value: b.total,
-      })),
-    );
+    await this.renderizarGraficoBarras('chartRelatorioBairros', topBairros.map(b => ({
+      label: b.bairro.length > 15 ? b.bairro.slice(0, 12) + '...' : b.bairro,
+      value: b.total
+    })));
   }
 
   // ============================================
   // RELATÓRIO TEMPO MÉDIO DE ATENDIMENTO
   // ============================================
 
-  async renderRelatorioAtendimento(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const comTempo = ocorrencias.filter(
-      (o) => o.data_hora_inicio && o.data_hora_encerramento,
-    );
-    const tempos = comTempo
-      .map((o) => {
-        const inicio = new Date(o.data_hora_inicio);
-        const fim = new Date(o.data_hora_encerramento);
-        const diff = (fim - inicio) / (1000 * 60);
-        return { ...o, tempoMinutos: diff };
-      })
-      .filter((t) => t.tempoMinutos > 0);
+  async renderRelatorioAtendimento(container, ocorrencias, dataInicio, dataFim) {
+    const comTempo = ocorrencias.filter(o => o.data_hora_inicio && o.data_hora_encerramento);
+    const tempos = comTempo.map(o => {
+      const inicio = new Date(o.data_hora_inicio);
+      const fim = new Date(o.data_hora_encerramento);
+      const diff = (fim - inicio) / (1000 * 60);
+      return { ...o, tempoMinutos: diff };
+    }).filter(t => t.tempoMinutos > 0);
 
-    const mediaGeral =
-      tempos.length > 0
-        ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length
-        : 0;
-    const maisRapida =
-      tempos.length > 0
-        ? tempos.reduce((a, b) => (a.tempoMinutos < b.tempoMinutos ? a : b))
-        : null;
-    const maisLenta =
-      tempos.length > 0
-        ? tempos.reduce((a, b) => (a.tempoMinutos > b.tempoMinutos ? a : b))
-        : null;
+    const mediaGeral = tempos.length > 0 ? (tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length) : 0;
+    const maisRapida = tempos.length > 0 ? tempos.reduce((a, b) => a.tempoMinutos < b.tempoMinutos ? a : b) : null;
+    const maisLenta = tempos.length > 0 ? tempos.reduce((a, b) => a.tempoMinutos > b.tempoMinutos ? a : b) : null;
 
     const porTipo = {};
-    tempos.forEach((t) => {
-      const tipo = t.tipo_ocorrencia || "Não informado";
+    tempos.forEach(t => {
+      const tipo = t.tipo_ocorrencia || 'Não informado';
       if (!porTipo[tipo]) porTipo[tipo] = [];
       porTipo[tipo].push(t.tempoMinutos);
     });
 
-    const mediaPorTipo = Object.keys(porTipo)
-      .map((key) => ({
-        tipo: this.getTipoLabel(key),
-        media: porTipo[key].reduce((s, v) => s + v, 0) / porTipo[key].length,
-        total: porTipo[key].length,
-      }))
-      .sort((a, b) => b.media - a.media);
+    const mediaPorTipo = Object.keys(porTipo).map(key => ({
+      tipo: this.getTipoLabel(key),
+      media: porTipo[key].reduce((s, v) => s + v, 0) / porTipo[key].length,
+      total: porTipo[key].length
+    })).sort((a, b) => b.media - a.media);
 
     const formatarTempo = (minutos) => {
-      if (minutos < 1) return "< 1 min";
+      if (minutos < 1) return '< 1 min';
       if (minutos < 60) return `${Math.round(minutos)} min`;
       const horas = Math.floor(minutos / 60);
       const mins = Math.round(minutos % 60);
@@ -3305,7 +3153,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -3314,11 +3162,11 @@ class App {
             <div style="font-size:9px;opacity:0.8;">Média Geral</div>
           </div>
           <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${maisRapida ? formatarTempo(maisRapida.tempoMinutos) : "-"}</div>
+            <div style="font-size:16px;font-weight:800;">${maisRapida ? formatarTempo(maisRapida.tempoMinutos) : '-'}</div>
             <div style="font-size:9px;opacity:0.8;">Mais Rápida</div>
           </div>
           <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${maisLenta ? formatarTempo(maisLenta.tempoMinutos) : "-"}</div>
+            <div style="font-size:16px;font-weight:800;">${maisLenta ? formatarTempo(maisLenta.tempoMinutos) : '-'}</div>
             <div style="font-size:9px;opacity:0.8;">Mais Lenta</div>
           </div>
         </div>
@@ -3338,28 +3186,20 @@ class App {
                 </tr>
               </thead>
               <tbody>
-                ${mediaPorTipo
-                  .map(
-                    (t) => `
+                ${mediaPorTipo.map(t => `
                   <tr>
                     <td>${t.tipo}</td>
                     <td style="text-align:center;font-weight:600;color:var(--azul-bandeira);">${formatarTempo(t.media)}</td>
                     <td style="text-align:center;color:var(--cinza-medio);">${t.total}</td>
                   </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  mediaPorTipo.length === 0
-                    ? `
+                `).join('')}
+                ${mediaPorTipo.length === 0 ? `
                   <tr>
                     <td colspan="3" style="text-align:center;color:var(--cinza-medio);padding:16px;">
                       Nenhuma ocorrência com tempo registrado
                     </td>
                   </tr>
-                `
-                    : ""
-                }
+                ` : ''}
               </tbody>
             </table>
           </div>
@@ -3377,39 +3217,29 @@ class App {
   async renderRelatorioDesempenho(container, ocorrencias, dataInicio, dataFim) {
     const client = supabaseClient.getClient();
     const { data: usuarios } = await client
-      .from("usuarios")
-      .select("id, nome_completo")
-      .eq("status", "ativo");
+      .from('usuarios')
+      .select('id, nome_completo')
+      .eq('status', 'ativo');
 
     const mapaUsuarios = {};
-    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
+    usuarios?.forEach(u => mapaUsuarios[u.id] = u.nome_completo);
 
     const porGuarda = {};
-    ocorrencias.forEach((o) => {
+    ocorrencias.forEach(o => {
       const guardaId = o.criado_por;
-      const nome = mapaUsuarios[guardaId] || "Desconhecido";
+      const nome = mapaUsuarios[guardaId] || 'Desconhecido';
       if (!porGuarda[guardaId]) {
-        porGuarda[guardaId] = {
-          nome,
-          total: 0,
-          finalizadas: 0,
-          pendentes: 0,
-          canceladas: 0,
-          retificadas: 0,
-        };
+        porGuarda[guardaId] = { nome, total: 0, finalizadas: 0, pendentes: 0, canceladas: 0, retificadas: 0 };
       }
       porGuarda[guardaId].total++;
-      if (o.status === "synced") porGuarda[guardaId].finalizadas++;
-      if (o.status === "pending_sync") porGuarda[guardaId].pendentes++;
-      if (o.status === "cancelled") porGuarda[guardaId].canceladas++;
-      if (o.status === "rectified") porGuarda[guardaId].retificadas++;
+      if (o.status === 'synced') porGuarda[guardaId].finalizadas++;
+      if (o.status === 'pending_sync') porGuarda[guardaId].pendentes++;
+      if (o.status === 'cancelled') porGuarda[guardaId].canceladas++;
+      if (o.status === 'rectified') porGuarda[guardaId].retificadas++;
     });
 
     const ranking = Object.values(porGuarda)
-      .map((g) => ({
-        ...g,
-        taxa: g.total > 0 ? ((g.finalizadas / g.total) * 100).toFixed(1) : 0,
-      }))
+      .map(g => ({ ...g, taxa: g.total > 0 ? ((g.finalizadas / g.total) * 100).toFixed(1) : 0 }))
       .sort((a, b) => b.total - a.total);
 
     let html = `
@@ -3425,7 +3255,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
@@ -3440,32 +3270,24 @@ class App {
                 </tr>
               </thead>
               <tbody>
-                ${ranking
-                  .map(
-                    (g, i) => `
+                ${ranking.map((g, i) => `
                   <tr>
                     <td>
                       <span style="font-weight:600;">${g.nome}</span>
-                      ${i === 0 ? ' <span style="font-size:10px;">🏆</span>' : ""}
+                      ${i === 0 ? ' <span style="font-size:10px;">🏆</span>' : ''}
                     </td>
                     <td style="text-align:center;font-weight:600;">${g.total}</td>
                     <td style="text-align:center;color:var(--verde-bandeira);">${g.finalizadas}</td>
-                    <td style="text-align:center;font-weight:600;color:${g.taxa >= 70 ? "var(--verde-bandeira)" : g.taxa >= 50 ? "var(--aviso)" : "var(--erro)"};">${g.taxa}%</td>
+                    <td style="text-align:center;font-weight:600;color:${g.taxa >= 70 ? 'var(--verde-bandeira)' : g.taxa >= 50 ? 'var(--aviso)' : 'var(--erro)'};">${g.taxa}%</td>
                   </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  ranking.length === 0
-                    ? `
+                `).join('')}
+                ${ranking.length === 0 ? `
                   <tr>
                     <td colspan="4" style="text-align:center;color:var(--cinza-medio);padding:16px;">
                       Nenhuma ocorrência no período
                     </td>
                   </tr>
-                `
-                    : ""
-                }
+                ` : ''}
               </tbody>
             </table>
           </div>
@@ -3480,34 +3302,25 @@ class App {
   // RELATÓRIO DE RETIFICAÇÕES
   // ============================================
 
-  async renderRelatorioRetificacoes(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const retificacoes = ocorrencias.filter((o) => o.status === "rectified");
-    const pendentes = ocorrencias.filter(
-      (o) => o.status === "pending_rectification",
-    );
-    const rejeitadas = ocorrencias.filter(
-      (o) => o.status === "rectification_rejected",
-    );
+  async renderRelatorioRetificacoes(container, ocorrencias, dataInicio, dataFim) {
+    const retificacoes = ocorrencias.filter(o => o.status === 'rectified');
+    const pendentes = ocorrencias.filter(o => o.status === 'pending_rectification');
+    const rejeitadas = ocorrencias.filter(o => o.status === 'rectification_rejected');
 
     const client = supabaseClient.getClient();
     const { data: usuarios } = await client
-      .from("usuarios")
-      .select("id, nome_completo");
+      .from('usuarios')
+      .select('id, nome_completo');
 
     const mapaUsuarios = {};
-    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
+    usuarios?.forEach(u => mapaUsuarios[u.id] = u.nome_completo);
 
     const camposMaisAlterados = {};
-    retificacoes.forEach((r) => {
+    retificacoes.forEach(r => {
       if (r.campos_alterados) {
         try {
           const campos = JSON.parse(r.campos_alterados);
-          campos.forEach((c) => {
+          campos.forEach(c => {
             const label = c.label || c.campo;
             if (!camposMaisAlterados[label]) camposMaisAlterados[label] = 0;
             camposMaisAlterados[label]++;
@@ -3517,7 +3330,7 @@ class App {
     });
 
     const topCampos = Object.keys(camposMaisAlterados)
-      .map((key) => ({ campo: key, total: camposMaisAlterados[key] }))
+      .map(key => ({ campo: key, total: camposMaisAlterados[key] }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
 
@@ -3534,7 +3347,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -3552,55 +3365,38 @@ class App {
           </div>
         </div>
 
-        ${
-          topCampos.length > 0
-            ? `
+        ${topCampos.length > 0 ? `
           <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
             <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
               <i class="fas fa-edit" style="margin-right:4px;"></i>
               Campos Mais Alterados
             </h4>
-            ${topCampos
-              .map(
-                (c) => `
+            ${topCampos.map(c => `
               <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
                 <span style="flex:1;">${c.campo}</span>
                 <span style="font-weight:700;color:var(--azul-bandeira);">${c.total}</span>
                 <span style="font-size:11px;color:var(--cinza-medio);">vezes</span>
               </div>
-            `,
-              )
-              .join("")}
+            `).join('')}
           </div>
-        `
-            : ""
-        }
+        ` : ''}
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
           <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
             <i class="fas fa-list" style="margin-right:4px;"></i>
             Últimas Retificações
           </h4>
-          ${retificacoes
-            .slice(0, 10)
-            .map(
-              (r) => `
+          ${retificacoes.slice(0, 10).map(r => `
             <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-              <span>#${r.numero_ocorrencia || r.numero_temporario || "N/A"}</span>
-              <span style="color:var(--cinza-medio);">${new Date(r.criado_em).toLocaleDateString("pt-BR")}</span>
+              <span>#${r.numero_ocorrencia || r.numero_temporario || 'N/A'}</span>
+              <span style="color:var(--cinza-medio);">${new Date(r.criado_em).toLocaleDateString('pt-BR')}</span>
             </div>
-          `,
-            )
-            .join("")}
-          ${
-            retificacoes.length === 0
-              ? `
+          `).join('')}
+          ${retificacoes.length === 0 ? `
             <p style="text-align:center;color:var(--cinza-medio);padding:12px;font-size:13px;">
               Nenhuma retificação no período
             </p>
-          `
-              : ""
-          }
+          ` : ''}
         </div>
       </div>
     `;
@@ -3612,23 +3408,18 @@ class App {
   // RELATÓRIO DE CANCELAMENTOS
   // ============================================
 
-  async renderRelatorioCancelamentos(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const canceladas = ocorrencias.filter((o) => o.status === "cancelled");
+  async renderRelatorioCancelamentos(container, ocorrencias, dataInicio, dataFim) {
+    const canceladas = ocorrencias.filter(o => o.status === 'cancelled');
 
     const motivos = {};
-    canceladas.forEach((o) => {
-      const motivo = o.motivo_cancelamento || "Não informado";
+    canceladas.forEach(o => {
+      const motivo = o.motivo_cancelamento || 'Não informado';
       if (!motivos[motivo]) motivos[motivo] = 0;
       motivos[motivo]++;
     });
 
     const topMotivos = Object.keys(motivos)
-      .map((key) => ({ motivo: key, total: motivos[key] }))
+      .map(key => ({ motivo: key, total: motivos[key] }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
 
@@ -3645,7 +3436,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -3659,28 +3450,20 @@ class App {
           </div>
         </div>
 
-        ${
-          topMotivos.length > 0
-            ? `
+        ${topMotivos.length > 0 ? `
           <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
             <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
               <i class="fas fa-list" style="margin-right:4px;"></i>
               Principais Motivos
             </h4>
-            ${topMotivos
-              .map(
-                (m) => `
+            ${topMotivos.map(m => `
               <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
                 <span style="flex:1;">${m.motivo}</span>
                 <span style="font-weight:700;color:var(--erro);">${m.total}</span>
               </div>
-            `,
-              )
-              .join("")}
+            `).join('')}
           </div>
-        `
-            : ""
-        }
+        ` : ''}
       </div>
     `;
 
@@ -3696,29 +3479,26 @@ class App {
     const porHora = {};
     const porMes = this.agruparPorMes(ocorrencias);
 
-    const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-    ocorrencias.forEach((o) => {
+    const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    
+    ocorrencias.forEach(o => {
       const data = new Date(o.criado_em);
       const diaSemana = data.getDay();
       const hora = data.getHours();
-
+      
       if (!porDiaSemana[diaSemana]) porDiaSemana[diaSemana] = 0;
       porDiaSemana[diaSemana]++;
-
+      
       if (!porHora[hora]) porHora[hora] = 0;
       porHora[hora]++;
     });
 
     const dadosDiaSemana = Object.keys(porDiaSemana)
-      .map((key) => ({
-        dia: diasSemana[parseInt(key)],
-        total: porDiaSemana[key],
-      }))
+      .map(key => ({ dia: diasSemana[parseInt(key)], total: porDiaSemana[key] }))
       .sort((a, b) => diasSemana.indexOf(a.dia) - diasSemana.indexOf(b.dia));
 
     const dadosHora = Object.keys(porHora)
-      .map((key) => ({ hora: parseInt(key), total: porHora[key] }))
+      .map(key => ({ hora: parseInt(key), total: porHora[key] }))
       .sort((a, b) => a.hora - b.hora);
 
     let html = `
@@ -3734,7 +3514,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
@@ -3771,50 +3551,28 @@ class App {
 
     container.innerHTML = html;
 
-    await this.renderizarGraficoBarras("chartTendenciasMensal", porMes);
-    await this.renderizarGraficoBarras(
-      "chartTendenciasDiaSemana",
-      dadosDiaSemana.map((d) => ({ label: d.dia, value: d.total })),
-    );
-    await this.renderizarGraficoBarras(
-      "chartTendenciasHora",
-      dadosHora.map((d) => ({
-        label: String(d.hora).padStart(2, "0") + "h",
-        value: d.total,
-      })),
-    );
+    await this.renderizarGraficoBarras('chartTendenciasMensal', porMes);
+    await this.renderizarGraficoBarras('chartTendenciasDiaSemana', dadosDiaSemana.map(d => ({ label: d.dia, value: d.total })));
+    await this.renderizarGraficoBarras('chartTendenciasHora', dadosHora.map(d => ({ label: String(d.hora).padStart(2, '0') + 'h', value: d.total })));
   }
 
   // ============================================
   // RELATÓRIO DE PRODUTIVIDADE
   // ============================================
 
-  async renderRelatorioProdutividade(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
+  async renderRelatorioProdutividade(container, ocorrencias, dataInicio, dataFim) {
     const total = ocorrencias.length;
-    const finalizadas = ocorrencias.filter((o) => o.status === "synced").length;
-    const pendentes = ocorrencias.filter(
-      (o) => o.status === "pending_sync",
-    ).length;
+    const finalizadas = ocorrencias.filter(o => o.status === 'synced').length;
+    const pendentes = ocorrencias.filter(o => o.status === 'pending_sync').length;
     const totalDias = this.calcularDiasPeriodo(dataInicio, dataFim);
     const mediaDiaria = totalDias > 0 ? (total / totalDias).toFixed(1) : 0;
     const projecao = mediaDiaria * 30;
 
     const dataAnteriorInicio = this.calcularDataAnterior(dataInicio, dataFim);
     const dataAnteriorFim = dataInicio;
-    const ocorrenciasAnterior = await this.buscarOcorrenciasPeriodo(
-      dataAnteriorInicio,
-      dataAnteriorFim,
-    );
+    const ocorrenciasAnterior = await this.buscarOcorrenciasPeriodo(dataAnteriorInicio, dataAnteriorFim);
     const totalAnterior = ocorrenciasAnterior.length;
-    const variacao =
-      totalAnterior > 0
-        ? (((total - totalAnterior) / totalAnterior) * 100).toFixed(1)
-        : 0;
+    const variacao = totalAnterior > 0 ? (((total - totalAnterior) / totalAnterior) * 100).toFixed(1) : 0;
 
     let html = `
       <div class="container" style="padding-bottom:120px;">
@@ -3829,7 +3587,7 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -3849,7 +3607,7 @@ class App {
             <div style="font-size:9px;color:var(--cinza-medio);">Projeção Mensal</div>
           </div>
           <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:${variacao >= 0 ? "var(--verde-bandeira)" : "var(--erro)"};">${variacao >= 0 ? "+" : ""}${variacao}%</div>
+            <div style="font-size:16px;font-weight:800;color:${variacao >= 0 ? 'var(--verde-bandeira)' : 'var(--erro)'};">${variacao >= 0 ? '+' : ''}${variacao}%</div>
             <div style="font-size:9px;color:var(--cinza-medio);">Variação vs Período Anterior</div>
           </div>
         </div>
@@ -3876,12 +3634,7 @@ class App {
   // RELATÓRIO DETALHADO (LISTA COMPLETA)
   // ============================================
 
-  async renderRelatorioDetalhadoLista(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
+  async renderRelatorioDetalhadoLista(container, ocorrencias, dataInicio, dataFim) {
     const porTipo = this.agruparPorTipo(ocorrencias);
 
     let html = `
@@ -3897,21 +3650,16 @@ class App {
         </div>
         <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
           <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+          ${new Date(dataInicio).toLocaleDateString('pt-BR')} até ${new Date(dataFim).toLocaleDateString('pt-BR')}
           <span style="margin-left:8px;font-weight:600;">${ocorrencias.length} ocorrências</span>
         </p>
 
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">
-          ${porTipo
-            .slice(0, 5)
-            .map(
-              (t) => `
+          ${porTipo.slice(0, 5).map(t => `
             <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:10px;padding:2px 10px;">
               ${t.tipo}: ${t.total}
             </span>
-          `,
-            )
-            .join("")}
+          `).join('')}
         </div>
 
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
@@ -3927,42 +3675,29 @@ class App {
                 </tr>
               </thead>
               <tbody>
-                ${ocorrencias
-                  .slice(0, 50)
-                  .map(
-                    (o) => `
+                ${ocorrencias.slice(0, 50).map(o => `
                   <tr onclick="app.verDetalhes('${o.id}')" style="cursor:pointer;">
-                    <td style="font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || "Rascunho"}</td>
-                    <td style="font-size:10px;color:var(--cinza-medio);">${new Date(o.criado_em).toLocaleDateString("pt-BR")}</td>
+                    <td style="font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || 'Rascunho'}</td>
+                    <td style="font-size:10px;color:var(--cinza-medio);">${new Date(o.criado_em).toLocaleDateString('pt-BR')}</td>
                     <td>${this.getTipoLabel(o.tipo_ocorrencia)}</td>
-                    <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || "-"}</td>
+                    <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || '-'}</td>
                     <td><span class="badge badge-${this.getStatusClass(o.status)}" style="font-size:9px;">${this.getStatusLabel(o.status)}</span></td>
                   </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  ocorrencias.length > 50
-                    ? `
+                `).join('')}
+                ${ocorrencias.length > 50 ? `
                   <tr>
                     <td colspan="5" style="text-align:center;color:var(--cinza-medio);font-size:12px;padding:12px;">
                       + ${ocorrencias.length - 50} outras ocorrências
                     </td>
                   </tr>
-                `
-                    : ""
-                }
-                ${
-                  ocorrencias.length === 0
-                    ? `
+                ` : ''}
+                ${ocorrencias.length === 0 ? `
                   <tr>
                     <td colspan="5" style="text-align:center;color:var(--cinza-medio);padding:20px;font-size:13px;">
                       Nenhuma ocorrência no período
                     </td>
                   </tr>
-                `
-                    : ""
-                }
+                ` : ''}
               </tbody>
             </table>
           </div>
@@ -3980,10 +3715,10 @@ class App {
   calcularEstatisticas(ocorrencias) {
     return {
       total: ocorrencias.length,
-      finalizadas: ocorrencias.filter((o) => o.status === "synced").length,
-      pendentes: ocorrencias.filter((o) => o.status === "pending_sync").length,
-      canceladas: ocorrencias.filter((o) => o.status === "cancelled").length,
-      retificadas: ocorrencias.filter((o) => o.status === "rectified").length,
+      finalizadas: ocorrencias.filter(o => o.status === 'synced').length,
+      pendentes: ocorrencias.filter(o => o.status === 'pending_sync').length,
+      canceladas: ocorrencias.filter(o => o.status === 'cancelled').length,
+      retificadas: ocorrencias.filter(o => o.status === 'rectified').length,
     };
   }
 
@@ -3991,45 +3726,43 @@ class App {
     const tipos = {};
     const total = ocorrencias.length || 1;
 
-    ocorrencias.forEach((o) => {
-      const tipo = o.tipo_ocorrencia || "Não informado";
+    ocorrencias.forEach(o => {
+      const tipo = o.tipo_ocorrencia || 'Não informado';
       if (!tipos[tipo]) {
         tipos[tipo] = { total: 0, finalizadas: 0, pendentes: 0 };
       }
       tipos[tipo].total++;
-      if (o.status === "synced") tipos[tipo].finalizadas++;
-      if (o.status === "pending_sync") tipos[tipo].pendentes++;
+      if (o.status === 'synced') tipos[tipo].finalizadas++;
+      if (o.status === 'pending_sync') tipos[tipo].pendentes++;
     });
 
-    return Object.keys(tipos)
-      .map((key) => ({
-        tipo: this.getTipoLabel(key),
-        total: tipos[key].total,
-        finalizadas: tipos[key].finalizadas,
-        pendentes: tipos[key].pendentes,
-        percentual: ((tipos[key].total / total) * 100).toFixed(1),
-      }))
-      .sort((a, b) => b.total - a.total);
+    return Object.keys(tipos).map(key => ({
+      tipo: this.getTipoLabel(key),
+      total: tipos[key].total,
+      finalizadas: tipos[key].finalizadas,
+      pendentes: tipos[key].pendentes,
+      percentual: ((tipos[key].total / total) * 100).toFixed(1)
+    })).sort((a, b) => b.total - a.total);
   }
 
   agruparPorMes(ocorrencias) {
     const meses = {};
-    ocorrencias.forEach((o) => {
+    ocorrencias.forEach(o => {
       const data = new Date(o.criado_em);
-      const mes = `${String(data.getMonth() + 1).padStart(2, "0")}/${data.getFullYear()}`;
+      const mes = `${String(data.getMonth() + 1).padStart(2, '0')}/${data.getFullYear()}`;
       if (!meses[mes]) meses[mes] = 0;
       meses[mes]++;
     });
 
     return Object.keys(meses)
       .sort((a, b) => {
-        const [mesA, anoA] = a.split("/");
-        const [mesB, anoB] = b.split("/");
+        const [mesA, anoA] = a.split('/');
+        const [mesB, anoB] = b.split('/');
         return `${anoA}${mesA}`.localeCompare(`${anoB}${mesB}`);
       })
-      .map((mes) => ({
+      .map(mes => ({
         label: mes,
-        value: meses[mes],
+        value: meses[mes]
       }));
   }
 
@@ -4037,19 +3770,17 @@ class App {
     const bairros = {};
     const total = ocorrencias.length || 1;
 
-    ocorrencias.forEach((o) => {
-      const bairro = o.bairro_ocorrencia || "Não informado";
+    ocorrencias.forEach(o => {
+      const bairro = o.bairro_ocorrencia || 'Não informado';
       if (!bairros[bairro]) bairros[bairro] = 0;
       bairros[bairro]++;
     });
 
-    return Object.keys(bairros)
-      .map((key) => ({
-        bairro: key,
-        total: bairros[key],
-        percentual: ((bairros[key] / total) * 100).toFixed(1),
-      }))
-      .sort((a, b) => b.total - a.total);
+    return Object.keys(bairros).map(key => ({
+      bairro: key,
+      total: bairros[key],
+      percentual: ((bairros[key] / total) * 100).toFixed(1)
+    })).sort((a, b) => b.total - a.total);
   }
 
   calcularMediaDiaria(ocorrencias, dataInicio, dataFim) {
@@ -4080,50 +3811,37 @@ class App {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    if (typeof Chart === "undefined") {
+    if (typeof Chart === 'undefined') {
       await this.carregarChartJS();
     }
 
-    const defaultCores = [
-      "#003F87",
-      "#00843D",
-      "#DC2626",
-      "#F59E0B",
-      "#8B5CF6",
-      "#EC4899",
-      "#06B6D4",
-      "#F97316",
-      "#14B8A6",
-      "#6366F1",
-    ];
+    const defaultCores = ['#003F87', '#00843D', '#DC2626', '#F59E0B', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#14B8A6', '#6366F1'];
 
     new Chart(canvas, {
-      type: "doughnut",
+      type: 'doughnut',
       data: {
-        labels: dados.map((d) => d.tipo),
-        datasets: [
-          {
-            data: dados.map((d) => d.total),
-            backgroundColor: (cores || defaultCores).slice(0, dados.length),
-            borderWidth: 2,
-            borderColor: "#fff",
-          },
-        ],
+        labels: dados.map(d => d.tipo),
+        datasets: [{
+          data: dados.map(d => d.total),
+          backgroundColor: (cores || defaultCores).slice(0, dados.length),
+          borderWidth: 2,
+          borderColor: '#fff'
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            position: "bottom",
+            position: 'bottom',
             labels: {
               font: { size: 10 },
               boxWidth: 10,
-              padding: 6,
-            },
-          },
-        },
-      },
+              padding: 6
+            }
+          }
+        }
+      }
     });
   }
 
@@ -4131,43 +3849,41 @@ class App {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    if (typeof Chart === "undefined") {
+    if (typeof Chart === 'undefined') {
       await this.carregarChartJS();
     }
 
     new Chart(canvas, {
-      type: "bar",
+      type: 'bar',
       data: {
-        labels: dados.map((d) => d.label),
-        datasets: [
-          {
-            label: "Ocorrências",
-            data: dados.map((d) => d.value),
-            backgroundColor: "rgba(0, 63, 135, 0.7)",
-            borderColor: "#003F87",
-            borderWidth: 1,
-            borderRadius: 3,
-          },
-        ],
+        labels: dados.map(d => d.label),
+        datasets: [{
+          label: 'Ocorrências',
+          data: dados.map(d => d.value),
+          backgroundColor: 'rgba(0, 63, 135, 0.7)',
+          borderColor: '#003F87',
+          borderWidth: 1,
+          borderRadius: 3
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            display: false,
-          },
+            display: false
+          }
         },
         scales: {
           y: {
             beginAtZero: true,
-            ticks: { stepSize: 1, font: { size: 9 } },
+            ticks: { stepSize: 1, font: { size: 9 } }
           },
           x: {
-            ticks: { font: { size: 9 } },
-          },
-        },
-      },
+            ticks: { font: { size: 9 } }
+          }
+        }
+      }
     });
   }
 
@@ -4177,19 +3893,311 @@ class App {
         resolve();
         return;
       }
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/chart.js";
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
       script.onload = resolve;
       document.head.appendChild(script);
     });
   }
 
   async exportarRelatorioPDF() {
-    this.showToast("Exportação para PDF em desenvolvimento", "info");
+    this.showToast('Exportação para PDF em desenvolvimento', 'info');
   }
 
   async exportarRelatorioCSV() {
-    this.showToast("Exportação para CSV em desenvolvimento", "info");
+    this.showToast('Exportação para CSV em desenvolvimento', 'info');
+  }
+
+  // ============================================
+  // PÁGINA DE LOGS DO SISTEMA
+  // ============================================
+
+  async renderLogs(container) {
+    if (!authManager.isSupervisor()) {
+      container.innerHTML = `
+        <div class="container">
+          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
+            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+              <i class="fas fa-lock"></i>
+            </div>
+            <p style="font-weight:500;">Acesso restrito a supervisores</p>
+            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+              Voltar
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // Carregar dados
+    const result = await authManager.listarLogsAcesso({ limit: 200 });
+    if (!result.success) {
+      container.innerHTML = `
+        <div class="container">
+          <p style="color:var(--erro);">Erro ao carregar logs: ${result.error}</p>
+          <button onclick="app.loadPageContent('logs')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+            Tentar novamente
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    const logs = result.data || [];
+    const stats = await authManager.getLogStats();
+
+    // Obter lista de usuários para o filtro
+    const usuariosResult = await authManager.listarUsuarios();
+    const usuarios = usuariosResult.success ? usuariosResult.data : [];
+
+    // Opções de ações para o filtro
+    const acoes = [
+      { value: "", label: "Todas" },
+      { value: "login", label: "Login" },
+      { value: "logout", label: "Logout" },
+      { value: "primeiro_acesso", label: "Primeiro Acesso" },
+      { value: "criar_ocorrencia", label: "Criar Ocorrência" },
+      { value: "finalizar_ocorrencia", label: "Finalizar Ocorrência" },
+      { value: "cancelar_ocorrencia", label: "Cancelar Ocorrência" },
+      { value: "solicitar_retificacao", label: "Solicitar Retificação" },
+      { value: "aprovar_retificacao", label: "Aprovar Retificação" },
+      { value: "rejeitar_retificacao", label: "Rejeitar Retificação" },
+      { value: "criar_usuario", label: "Criar Usuário" },
+      { value: "editar_usuario", label: "Editar Usuário" },
+      { value: "resetar_senha", label: "Resetar Senha" },
+      { value: "ativar_desativar_usuario", label: "Ativar/Desativar Usuário" },
+    ];
+
+    const html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;">
+            <i class="fas fa-history" style="margin-right:8px;"></i>
+            Logs do Sistema
+          </h2>
+          <button onclick="app.navigateTo('dashboard')" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i> Voltar
+          </button>
+        </div>
+        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:13px;">
+          ${logs.length} registros encontrados
+        </p>
+
+        <!-- Estatísticas rápidas -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">
+          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${logs.length}</div>
+            <div style="font-size:9px;opacity:0.8;">Total</div>
+          </div>
+          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${logs.filter(l => l.acao === 'login').length}</div>
+            <div style="font-size:9px;opacity:0.8;">Logins</div>
+          </div>
+          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
+            <div style="font-size:18px;font-weight:800;">${logs.filter(l => l.acao === 'criar_ocorrencia').length}</div>
+            <div style="font-size:9px;opacity:0.8;">Ocorrências</div>
+          </div>
+        </div>
+
+        <!-- Filtros -->
+        <div class="filtros-container" style="margin-bottom:12px;">
+          <div class="filtros-row">
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-user"></i> Usuário</label>
+              <select id="filtroLogUsuario">
+                <option value="">Todos</option>
+                ${usuarios.map(u => `
+                  <option value="${u.id}">${u.nome_completo}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-tag"></i> Ação</label>
+              <select id="filtroLogAcao">
+                ${acoes.map(a => `
+                  <option value="${a.value}">${a.label}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="filtros-actions">
+              <button onclick="app.aplicarFiltrosLogs()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
+                <i class="fas fa-search"></i>
+              </button>
+              <button onclick="app.limparFiltrosLogs()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
+                <i class="fas fa-undo"></i>
+              </button>
+            </div>
+          </div>
+          <div class="filtros-row" style="margin-top:6px;">
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
+              <input type="date" id="filtroLogDataInicio">
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
+              <input type="date" id="filtroLogDataFim">
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabela de Logs -->
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
+          <div class="table-wrapper">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Data/Hora</th>
+                  <th>Usuário</th>
+                  <th>Ação</th>
+                  <th>IP</th>
+                  <th>Detalhes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs.length === 0 ? `
+                  <tr>
+                    <td colspan="5" style="text-align:center;padding:20px;color:var(--cinza-medio);">
+                      Nenhum log encontrado
+                    </td>
+                  </tr>
+                ` : `
+                  ${logs.map(log => {
+                    let detalhesDisplay = log.entidade || '-';
+                    if (log.detalhes) {
+                      try {
+                        const parsed = JSON.parse(log.detalhes);
+                        if (parsed.dispositivo || parsed.navegador) {
+                          const deviceInfo = [];
+                          if (parsed.dispositivo) deviceInfo.push(parsed.dispositivo);
+                          if (parsed.navegador) deviceInfo.push(parsed.navegador);
+                          if (deviceInfo.length > 0) {
+                            detalhesDisplay = deviceInfo.join(' • ');
+                          }
+                        }
+                      } catch (e) {}
+                    }
+                    return `
+                      <tr>
+                        <td style="font-size:11px;color:var(--cinza-medio);">
+                          ${new Date(log.data_hora).toLocaleString('pt-BR')}
+                        </td>
+                        <td>${log.usuarios?.nome_completo || 'Desconhecido'}</td>
+                        <td>
+                          <span class="badge ${this.getLogBadgeClass(log.acao)}" style="font-size:10px;">
+                            ${this.getLogLabel(log.acao)}
+                          </span>
+                        </td>
+                        <td style="font-size:11px;color:var(--cinza-medio);">${log.ip || '-'}</td>
+                        <td style="font-size:11px;color:var(--cinza-medio);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                          ${detalhesDisplay}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // FUNÇÕES AUXILIARES PARA LOGS
+  // ============================================
+
+  getLogBadgeClass(acao) {
+    const map = {
+      login: 'badge-synced',
+      logout: 'badge-draft',
+      primeiro_acesso: 'badge-pending',
+      criar_ocorrencia: 'badge-azul',
+      finalizar_ocorrencia: 'badge-verde',
+      cancelar_ocorrencia: 'badge-cancelled',
+      solicitar_retificacao: 'badge-pending',
+      aprovar_retificacao: 'badge-synced',
+      rejeitar_retificacao: 'badge-cancelled',
+      criar_usuario: 'badge-azul',
+      editar_usuario: 'badge-azul',
+      resetar_senha: 'badge-pending',
+      ativar_desativar_usuario: 'badge-azul',
+    };
+    return map[acao] || 'badge-draft';
+  }
+
+  getLogLabel(acao) {
+    const map = {
+      login: 'Login',
+      logout: 'Logout',
+      primeiro_acesso: 'Primeiro Acesso',
+      criar_ocorrencia: 'Criar Ocorrência',
+      finalizar_ocorrencia: 'Finalizar Ocorrência',
+      cancelar_ocorrencia: 'Cancelar Ocorrência',
+      solicitar_retificacao: 'Solicitar Retificação',
+      aprovar_retificacao: 'Aprovar Retificação',
+      rejeitar_retificacao: 'Rejeitar Retificação',
+      criar_usuario: 'Criar Usuário',
+      editar_usuario: 'Editar Usuário',
+      resetar_senha: 'Resetar Senha',
+      ativar_desativar_usuario: 'Ativar/Desativar Usuário',
+    };
+    return map[acao] || acao;
+  }
+
+  // ============================================
+  // FILTROS PARA LOGS
+  // ============================================
+
+  async aplicarFiltrosLogs() {
+    const usuarioId = document.getElementById("filtroLogUsuario")?.value || "";
+    const acao = document.getElementById("filtroLogAcao")?.value || "";
+    const dataInicio = document.getElementById("filtroLogDataInicio")?.value || "";
+    const dataFim = document.getElementById("filtroLogDataFim")?.value || "";
+
+    if (dataInicio && dataFim && dataFim < dataInicio) {
+      this.showToast("Data final deve ser maior ou igual à data inicial", "warning");
+      return;
+    }
+
+    const filtros = {
+      limit: 200
+    };
+    if (usuarioId) filtros.usuario_id = usuarioId;
+    if (acao) filtros.acao = acao;
+    if (dataInicio) filtros.data_inicio = dataInicio;
+    if (dataFim) filtros.data_fim = dataFim + 'T23:59:59';
+
+    const result = await authManager.listarLogsAcesso(filtros);
+    if (!result.success) {
+      this.showToast("Erro ao filtrar logs: " + result.error, "error");
+      return;
+    }
+
+    // Atualizar a tabela com os logs filtrados
+    const container = document.getElementById("logsContent");
+    if (container) {
+      this.filtrosLogs = filtros;
+      await this.renderLogs(container);
+    }
+  }
+
+  async limparFiltrosLogs() {
+    const usuarioSelect = document.getElementById("filtroLogUsuario");
+    const acaoSelect = document.getElementById("filtroLogAcao");
+    const dataInicioInput = document.getElementById("filtroLogDataInicio");
+    const dataFimInput = document.getElementById("filtroLogDataFim");
+
+    if (usuarioSelect) usuarioSelect.value = "";
+    if (acaoSelect) acaoSelect.value = "";
+    if (dataInicioInput) dataInicioInput.value = "";
+    if (dataFimInput) dataFimInput.value = "";
+
+    this.filtrosLogs = {};
+    this.loadPageContent('logs');
   }
 
   // ============================================
@@ -4775,19 +4783,11 @@ class App {
       { label: "Código Municipal", valor: dados.codigo_municipal },
       { label: "Complemento", valor: dados.complemento },
       { label: "Bairro", valor: dados.bairro_solicitante },
-      {
-        label: "Identificação Adicional",
-        valor: dados.identificacao_adicional,
-      },
+      { label: "Identificação Adicional", valor: dados.identificacao_adicional },
     ];
 
     const camposOcorrencia = [
-      {
-        label: "Tipo",
-        valor: dados.tipo_ocorrencia
-          ? this.getTipoLabel(dados.tipo_ocorrencia)
-          : null,
-      },
+      { label: "Tipo", valor: dados.tipo_ocorrencia ? this.getTipoLabel(dados.tipo_ocorrencia) : null },
       { label: "Local", valor: dados.local_ocorrencia },
       { label: "Rodovia", valor: dados.rodovia },
       { label: "Bairro", valor: dados.bairro_ocorrencia },
@@ -4795,12 +4795,8 @@ class App {
       { label: "Código Operacional", valor: dados.codigo_operacional },
     ];
 
-    const camposSolicitantePreenchidos = camposSolicitante.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
-    const camposOcorrenciaPreenchidos = camposOcorrencia.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
+    const camposSolicitantePreenchidos = camposSolicitante.filter(c => c.valor && c.valor.toString().trim() !== "");
+    const camposOcorrenciaPreenchidos = camposOcorrencia.filter(c => c.valor && c.valor.toString().trim() !== "");
 
     return `
             <div style="margin-bottom:16px;">
@@ -4819,14 +4815,12 @@ class App {
                     Origem da Solicitação
                 </h4>
                 ${camposSolicitantePreenchidos
-                  .map(
-                    (c) => `
+                  .map(c => `
                     <div class="campo">
                         <span class="rotulo">${c.label}:</span>
                         <span class="valor">${c.valor}</span>
                     </div>
-                  `,
-                  )
+                  `)
                   .join("")}
             </div>
             `
@@ -4842,14 +4836,12 @@ class App {
                     Dados da Ocorrência
                 </h4>
                 ${camposOcorrenciaPreenchidos
-                  .map(
-                    (c) => `
+                  .map(c => `
                     <div class="campo">
                         <span class="rotulo">${c.label}:</span>
                         <span class="valor">${c.valor}</span>
                     </div>
-                  `,
-                  )
+                  `)
                   .join("")}
                 <div class="campo">
                     <span class="rotulo">Início:</span>
@@ -5414,9 +5406,14 @@ class App {
       dadosParaSalvar.data_hora_encerramento = null;
     }
 
+    // ===== CAPTURAR GEOLOCALIZAÇÃO =====
+    const localizacao = await this.obterLocalizacao();
+
     const result = await ocorrenciaManager.criar({
       ...dadosParaSalvar,
       status: navigator.onLine ? "synced" : "pending_sync",
+      latitude: localizacao.latitude,
+      longitude: localizacao.longitude,
     });
 
     if (!result.success) {
@@ -5456,11 +5453,9 @@ class App {
       this.showToast("Ocorrência finalizada com sucesso!", "success");
     }
 
-    // ===== REGISTRAR LOG DE CRIAÇÃO DE OCORRÊNCIA =====
     await authManager.logCriarOcorrencia(
       authManager.getUserId(),
-      ocorrenciaId,
-      dadosParaSalvar,
+      ocorrenciaId
     );
 
     if (this.rascunhoId) {
@@ -5622,11 +5617,15 @@ class App {
               ? "Guarda"
               : user.perfil;
         const ehAtual = user.id === authManager.getUserId();
+        const cpfExibido = this.formatarCPFSeguro(user.cpf);
 
         html += `
                             <tr>
-                                <td>${user.nome_completo}</td>
-                                <td>${user.matricula || "-"}</td>
+                                <td>
+                                    <div style="font-weight:500;">${user.nome_completo}</div>
+                                    <div style="font-size:10px;color:var(--cinza-medio);">${cpfExibido}</div>
+                                </td>
+                                <td>${user.matricula || '-'}</td>
                                 <td><span class="badge ${user.perfil === "supervisor" ? "badge-azul" : "badge-verde"}">${perfilLabel}</span></td>
                                 <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
                                 <td>

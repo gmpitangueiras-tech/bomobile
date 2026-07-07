@@ -86,11 +86,11 @@ class AuthManager {
 
   async obterIP() {
     try {
-      const response = await fetch('https://api.ipify.org?format=json');
+      const response = await fetch("https://api.ipify.org?format=json");
       const data = await response.json();
       return data.ip;
     } catch (error) {
-      console.warn('⚠️ Erro ao obter IP:', error);
+      console.warn("⚠️ Erro ao obter IP:", error);
       return null;
     }
   }
@@ -101,22 +101,24 @@ class AuthManager {
 
   obterInfoDispositivo() {
     const userAgent = navigator?.userAgent || null;
-    
-    let tipo = 'Desktop';
-    if (/mobile/i.test(userAgent)) tipo = 'Mobile';
-    if (/tablet/i.test(userAgent)) tipo = 'Tablet';
-    
-    let navegador = 'Desconhecido';
-    if (userAgent?.includes('Chrome') && !userAgent?.includes('Edg')) navegador = 'Chrome';
-    else if (userAgent?.includes('Firefox')) navegador = 'Firefox';
-    else if (userAgent?.includes('Safari') && !userAgent?.includes('Chrome')) navegador = 'Safari';
-    else if (userAgent?.includes('Edg')) navegador = 'Edge';
-    else if (userAgent?.includes('Opera')) navegador = 'Opera';
-    
+
+    let tipo = "Desktop";
+    if (/mobile/i.test(userAgent)) tipo = "Mobile";
+    if (/tablet/i.test(userAgent)) tipo = "Tablet";
+
+    let navegador = "Desconhecido";
+    if (userAgent?.includes("Chrome") && !userAgent?.includes("Edg"))
+      navegador = "Chrome";
+    else if (userAgent?.includes("Firefox")) navegador = "Firefox";
+    else if (userAgent?.includes("Safari") && !userAgent?.includes("Chrome"))
+      navegador = "Safari";
+    else if (userAgent?.includes("Edg")) navegador = "Edge";
+    else if (userAgent?.includes("Opera")) navegador = "Opera";
+
     return {
       userAgent: userAgent,
       tipo: tipo,
-      navegador: navegador
+      navegador: navegador,
     };
   }
 
@@ -124,14 +126,19 @@ class AuthManager {
   // REGISTRO DE LOGS DE ACESSO
   // ============================================
 
-  async registrarLogAcesso(usuarioId, acao = "login", entidade = null, detalhes = null) {
+  async registrarLogAcesso(
+    usuarioId,
+    acao = "login",
+    entidade = null,
+    detalhes = null,
+  ) {
     try {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
       // Obter IP automaticamente
       const ip = await this.obterIP();
-      
+
       // Obter informações do dispositivo
       const infoDispositivo = this.obterInfoDispositivo();
 
@@ -141,14 +148,16 @@ class AuthManager {
         user_agent: infoDispositivo.userAgent,
         acao: acao,
         entidade: entidade || null,
-        detalhes: detalhes ? JSON.stringify({
-          ...detalhes,
-          dispositivo: infoDispositivo.tipo,
-          navegador: infoDispositivo.navegador
-        }) : JSON.stringify({
-          dispositivo: infoDispositivo.tipo,
-          navegador: infoDispositivo.navegador
-        }),
+        detalhes: detalhes
+          ? JSON.stringify({
+              ...detalhes,
+              dispositivo: infoDispositivo.tipo,
+              navegador: infoDispositivo.navegador,
+            })
+          : JSON.stringify({
+              dispositivo: infoDispositivo.tipo,
+              navegador: infoDispositivo.navegador,
+            }),
         data_hora: new Date().toISOString(),
       };
 
@@ -159,11 +168,16 @@ class AuthManager {
         .single();
 
       if (error) {
-        console.warn("⚠️ Erro ao registrar log de acesso (não crítico):", error);
+        console.warn(
+          "⚠️ Erro ao registrar log de acesso (não crítico):",
+          error,
+        );
         return { success: false, error: error.message, nonCritical: true };
       }
 
-      console.log(`✅ Log de acesso registrado: ${acao} - Usuário ${usuarioId}`);
+      console.log(
+        `✅ Log de acesso registrado: ${acao} - Usuário ${usuarioId}`,
+      );
       return { success: true, data };
     } catch (error) {
       console.warn("⚠️ Erro não crítico ao registrar log de acesso:", error);
@@ -188,7 +202,7 @@ class AuthManager {
       usuarioId,
       "criar_ocorrencia",
       "ocorrencia",
-      { ocorrencia_id: ocorrenciaId }
+      { ocorrencia_id: ocorrenciaId },
     );
   }
 
@@ -197,7 +211,7 @@ class AuthManager {
       usuarioId,
       "finalizar_ocorrencia",
       "ocorrencia",
-      { ocorrencia_id: ocorrenciaId }
+      { ocorrencia_id: ocorrenciaId },
     );
   }
 
@@ -206,7 +220,7 @@ class AuthManager {
       usuarioId,
       "cancelar_ocorrencia",
       "ocorrencia",
-      { ocorrencia_id: ocorrenciaId, motivo: motivo }
+      { ocorrencia_id: ocorrenciaId, motivo: motivo },
     );
   }
 
@@ -215,7 +229,7 @@ class AuthManager {
       usuarioId,
       "solicitar_retificacao",
       "ocorrencia",
-      { ocorrencia_id: ocorrenciaId }
+      { ocorrencia_id: ocorrenciaId },
     );
   }
 
@@ -224,7 +238,7 @@ class AuthManager {
       usuarioId,
       "aprovar_retificacao",
       "ocorrencia",
-      { retificacao_id: retificacaoId }
+      { retificacao_id: retificacaoId },
     );
   }
 
@@ -233,35 +247,26 @@ class AuthManager {
       usuarioId,
       "rejeitar_retificacao",
       "ocorrencia",
-      { retificacao_id: retificacaoId }
+      { retificacao_id: retificacaoId },
     );
   }
 
   async logCriarUsuario(usuarioId, novoUsuarioId) {
-    return this.registrarLogAcesso(
-      usuarioId,
-      "criar_usuario",
-      "usuario",
-      { usuario_id: novoUsuarioId }
-    );
+    return this.registrarLogAcesso(usuarioId, "criar_usuario", "usuario", {
+      usuario_id: novoUsuarioId,
+    });
   }
 
   async logEditarUsuario(usuarioId, usuarioAlteradoId) {
-    return this.registrarLogAcesso(
-      usuarioId,
-      "editar_usuario",
-      "usuario",
-      { usuario_id: usuarioAlteradoId }
-    );
+    return this.registrarLogAcesso(usuarioId, "editar_usuario", "usuario", {
+      usuario_id: usuarioAlteradoId,
+    });
   }
 
   async logResetarSenha(usuarioId, usuarioAlteradoId) {
-    return this.registrarLogAcesso(
-      usuarioId,
-      "resetar_senha",
-      "usuario",
-      { usuario_id: usuarioAlteradoId }
-    );
+    return this.registrarLogAcesso(usuarioId, "resetar_senha", "usuario", {
+      usuario_id: usuarioAlteradoId,
+    });
   }
 
   async logAtivarDesativarUsuario(usuarioId, usuarioAlteradoId) {
@@ -269,7 +274,7 @@ class AuthManager {
       usuarioId,
       "ativar_desativar_usuario",
       "usuario",
-      { usuario_id: usuarioAlteradoId }
+      { usuario_id: usuarioAlteradoId },
     );
   }
 
@@ -380,10 +385,7 @@ class AuthManager {
       if (email) this.user.email = email;
 
       // ===== REGISTRAR LOG DE PRIMEIRO ACESSO =====
-      await this.registrarLogAcesso(
-        this.user.id,
-        "primeiro_acesso"
-      );
+      await this.registrarLogAcesso(this.user.id, "primeiro_acesso");
 
       this.notifyListeners("primeiro_acesso", this.user);
       return { success: true, usuario: this.user };
@@ -952,7 +954,8 @@ class AuthManager {
     if (!this.isSupervisor()) {
       return {
         success: false,
-        error: "Permissão negada. Apenas supervisores podem visualizar estatísticas de logs.",
+        error:
+          "Permissão negada. Apenas supervisores podem visualizar estatísticas de logs.",
       };
     }
 
@@ -977,7 +980,7 @@ class AuthManager {
       const porUsuario = {};
       const porDia = {};
 
-      data.forEach(log => {
+      data.forEach((log) => {
         // Por ação
         if (!porAcao[log.acao]) porAcao[log.acao] = 0;
         porAcao[log.acao]++;
@@ -999,8 +1002,8 @@ class AuthManager {
           por_acao: porAcao,
           por_usuario: porUsuario,
           por_dia: porDia,
-          logs: data.slice(0, 100)
-        }
+          logs: data.slice(0, 100),
+        },
       };
     } catch (error) {
       console.error("❌ Erro ao obter estatísticas de logs:", error);
@@ -1042,13 +1045,31 @@ class AuthManager {
   }
 }
 
-// ========== CRIA A INSTÂNCIA GLOBAL ==========
-// Se já existir, substitui
-if (window.authManager) {
-  console.warn("⚠️ authManager já existia, substituindo...");
-}
-window.authManager = new AuthManager();
+// ========== CRIA A INSTÂNCIA GLOBAL (APENAS UMA VEZ) ==========
+// Verifica se já existe uma instância, se não, cria uma nova
+// Usa a abordagem mais segura para evitar sobrescrita
+(function () {
+  if (typeof window.authManager === "undefined") {
+    console.log("🔐 Criando instância global do AuthManager");
+    window.authManager = new AuthManager();
+  } else {
+    console.log("🔐 AuthManager já existe, reutilizando instância");
+  }
+
+  // Adiciona a variável 'authManager' ao escopo global (window)
+  if (typeof window.authManager !== "undefined") {
+    window.authManager = window.authManager;
+  }
+})();
+
+// Torna acessível via 'authManager' no escopo global
 const authManager = window.authManager;
 
-console.log("🔐 AuthManager carregado e instanciado");
+console.log("🔐 AuthManager carregado");
 console.log("📋 Tipo de isLoggedIn:", typeof authManager.isLoggedIn);
+console.log(
+  "📋 authManager.isLoggedIn():",
+  typeof authManager.isLoggedIn === "function"
+    ? authManager.isLoggedIn()
+    : "Método não disponível",
+);

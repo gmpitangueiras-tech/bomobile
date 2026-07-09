@@ -325,6 +325,9 @@ class AuthManager {
 
       // ===== REGISTRAR LOG DE LOGIN =====
       await this.logLogin(usuario.id);
+      if (window.app && typeof window.app.registrarLogPericial === 'function') {
+        await window.app.registrarLogPericial('LOGIN', 'usuarios', usuario.id);
+      }
 
       // ===== ATUALIZAR ÚLTIMO LOGIN COM TRY/CATCH =====
       try {

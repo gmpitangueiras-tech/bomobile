@@ -16,40 +16,38 @@ class App {
       dataFim: null,
     };
     this.pages = {
-      login: { element: "page-login", showHeader: false, showFab: false },
-      dashboard: { element: "page-dashboard", showHeader: true, showFab: true },
+      login: { element: "page-login", showHeader: false, showNav: false },
+      dashboard: { element: "page-dashboard", showHeader: true, showNav: true },
       ocorrencias: {
         element: "page-ocorrencias",
         showHeader: true,
-        showFab: false,
+        showNav: true,
       },
       "nova-ocorrencia": {
         element: "page-nova-ocorrencia",
         showHeader: true,
-        showFab: false,
+        showNav: true,
       },
       "detalhe-ocorrencia": {
         element: "page-detalhe-ocorrencia",
         showHeader: true,
-        showFab: false,
+        showNav: true,
       },
       retificacoes: {
         element: "page-retificacoes",
         showHeader: true,
-        showFab: false,
+        showNav: true,
       },
       relatorios: {
         element: "page-relatorios",
         showHeader: true,
-        showFab: false,
+        showNav: true,
       },
-      logs: {
-        element: "page-logs",
-        showHeader: true,
-        showFab: false,
-      },
-      usuarios: { element: "page-usuarios", showHeader: true, showFab: false },
-      perfil: { element: "page-perfil", showHeader: true, showFab: false },
+      logs: { element: "page-logs", showHeader: true, showNav: true },
+      usuarios: { element: "page-usuarios", showHeader: true, showNav: true },
+      perfil: { element: "page-perfil", showHeader: true, showNav: true },
+      consulta: { element: "page-consulta", showHeader: true, showNav: true },
+      mural: { element: "page-mural", showHeader: true, showNav: true },
     };
     this.rascunhoId = null;
     this.dadosRascunho = null;
@@ -60,6 +58,15 @@ class App {
       dataFim: "",
     };
     this.filtrosLogs = {};
+    this.mapaInstance = null;
+    this.abaConsultaAtiva = "veiculos";
+    this.filtrosMural = {
+      tipo: "todos",
+      dataInicio: "",
+      dataFim: "",
+      busca: "",
+    };
+    this.muralAvisoAtivo = null;
   }
 
   // ============================================
@@ -92,16 +99,47 @@ class App {
     const brasiliaOffset = -3 * 60;
     const localOffset = now.getTimezoneOffset();
     const diff = brasiliaOffset - localOffset;
-    return new Date(now.getTime() + diff * 60 * 1000);
+    const brasiliaDate = new Date(now.getTime() + diff * 60 * 1000);
+    return brasiliaDate;
   }
 
   formatarDataHoraLocal(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
+    if (!date) return "";
+
+    if (typeof date === "string") {
+      date = new Date(date);
+    }
+
+    if (isNaN(date.getTime())) return "Data inválida";
+
+    const brasiliaOffset = -3 * 60;
+    const localOffset = date.getTimezoneOffset();
+    const diff = brasiliaOffset - localOffset;
+    const brasiliaDate = new Date(date.getTime() + diff * 60 * 1000);
+
+    return brasiliaDate.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  formatarDataHoraInput(date) {
+    if (!date) return "";
+
+    if (typeof date === "string") {
+      date = new Date(date);
+    }
+
+    if (isNaN(date.getTime())) return "";
+
+    const brasiliaDate = new Date(
+      date.getTime() - date.getTimezoneOffset() * 60000,
+    );
+    return brasiliaDate.toISOString().slice(0, 16);
   }
 
   // ============================================
@@ -202,7 +240,7 @@ class App {
   }
 
   // ============================================
-  // MODAL DE INPUT PERSONALIZADO (para motivo da rejeição)
+  // MODAL DE INPUT PERSONALIZADO
   // ============================================
 
   inputModal(
@@ -316,11 +354,15 @@ class App {
       await ocorrenciaManager.init();
       console.log("✅ Ocorrência Manager inicializado");
 
+      sessionManager.init(30);
+
       this.setupListeners();
 
       if (authManager.isLoggedIn()) {
         this.atualizarHeader();
         await this.carregarRascunho();
+        sessionManager.resetSession();
+        this.atualizarBadgeMural();
       }
 
       await this.route();
@@ -361,6 +403,8 @@ class App {
         this.dadosRascunho = {
           forma_solicitacao: data.forma_solicitacao || "",
           nome_solicitante: data.nome_solicitante || "",
+          cpf_solicitante: data.cpf_solicitante || "",
+          rg_solicitante: data.rg_solicitante || "",
           telefone_solicitante: data.telefone_solicitante || "",
           endereco_solicitante: data.endereco_solicitante || "",
           codigo_municipal: data.codigo_municipal || "",
@@ -463,7 +507,9 @@ class App {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
           if (!isNaN(dateObj.getTime())) {
-            dadosParaSalvar.data_hora_inicio = dateObj.toISOString();
+            const offset = dateObj.getTimezoneOffset();
+            const adjustedDate = new Date(dateObj.getTime() - offset * 60000);
+            dadosParaSalvar.data_hora_inicio = adjustedDate.toISOString();
           } else {
             dadosParaSalvar.data_hora_inicio = null;
           }
@@ -476,7 +522,9 @@ class App {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
           if (!isNaN(dateObj.getTime())) {
-            dadosParaSalvar.data_hora_encerramento = dateObj.toISOString();
+            const offset = dateObj.getTimezoneOffset();
+            const adjustedDate = new Date(dateObj.getTime() - offset * 60000);
+            dadosParaSalvar.data_hora_encerramento = adjustedDate.toISOString();
           } else {
             dadosParaSalvar.data_hora_encerramento = null;
           }
@@ -655,57 +703,6 @@ class App {
       const inicial = user.nome_completo?.charAt(0) || "G";
       userAvatarEl.innerHTML = `<span style="font-weight:700;font-size:16px;">${inicial.toUpperCase()}</span>`;
     }
-
-    const menuNomeEl = document.getElementById("menuNome");
-    if (menuNomeEl) {
-      menuNomeEl.textContent = user.nome_completo || "Carregando...";
-    }
-
-    const menuMatriculaEl = document.getElementById("menuMatricula");
-    if (menuMatriculaEl) {
-      menuMatriculaEl.textContent = user.matricula
-        ? `Mat. ${user.matricula}`
-        : "";
-    }
-
-    const menuAvatarEl = document.getElementById("menuAvatar");
-    if (menuAvatarEl) {
-      const inicial = user.nome_completo?.charAt(0) || "G";
-      menuAvatarEl.innerHTML = `<span style="font-weight:700;font-size:28px;">${inicial.toUpperCase()}</span>`;
-    }
-
-    const menuPerfilEl = document.getElementById("menuPerfil");
-    if (menuPerfilEl) {
-      const perfilMap = {
-        supervisor: "Supervisor",
-        guarda: "Guarda",
-        admin: "Administrador",
-      };
-      menuPerfilEl.textContent =
-        perfilMap[user.perfil] || user.perfil || "Guarda";
-    }
-
-    const menuRelatorios = document.getElementById("menuRelatorios");
-    const menuUsuarios = document.getElementById("menuUsuarios");
-    const menuRetificacoes = document.getElementById("menuRetificacoes");
-    const menuLogs = document.getElementById("menuLogs");
-
-    if (menuRelatorios) {
-      menuRelatorios.style.display = authManager.isSupervisor()
-        ? "flex"
-        : "none";
-    }
-    if (menuUsuarios) {
-      menuUsuarios.style.display = authManager.isSupervisor() ? "flex" : "none";
-    }
-    if (menuRetificacoes) {
-      menuRetificacoes.style.display = authManager.isSupervisor()
-        ? "flex"
-        : "none";
-    }
-    if (menuLogs) {
-      menuLogs.style.display = authManager.isSupervisor() ? "flex" : "none";
-    }
   }
 
   // ============================================
@@ -787,8 +784,7 @@ class App {
     this.currentPage = page;
     window.location.hash = page;
     this.showPage(page);
-    this.updateMenu(page);
-    this.updateFab(page);
+    this.updateBottomNav(page);
     this.loadPageContent(page);
   }
 
@@ -807,24 +803,23 @@ class App {
     }
 
     const header = document.getElementById("app-header");
-    const fab = document.getElementById("fab");
+    const bottomNav = document.getElementById("bottom-nav");
     const config = this.pages[page];
 
     if (config) {
       header.style.display = config.showHeader ? "flex" : "none";
-      fab.style.display = config.showFab ? "flex" : "none";
+      header.classList.toggle("active", config.showHeader);
+      bottomNav.style.display = config.showNav ? "flex" : "none";
+      bottomNav.classList.toggle("active", config.showNav);
     }
+
+    this.closeBottomSheet();
   }
 
-  updateMenu(page) {
-    document.querySelectorAll(".menu-item[data-page]").forEach((item) => {
+  updateBottomNav(page) {
+    document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
       item.classList.toggle("active", item.dataset.page === page);
     });
-  }
-
-  updateFab(page) {
-    const fab = document.getElementById("fab");
-    fab.style.display = page === "dashboard" ? "flex" : "none";
   }
 
   async loadPageContent(page) {
@@ -868,8 +863,14 @@ class App {
         case "perfil":
           await this.renderPerfil(container);
           break;
+        case "consulta":
+          this.renderConsultaOperacional(container);
+          break;
+        case "mural":
+          await this.renderMural(container);
+          break;
         default:
-          container.innerHTML = "<p>Página em construção</p>";
+          container.innerHTML = `<h2>Página ${page} em desenvolvimento</h2>`;
       }
     } catch (error) {
       container.innerHTML = `
@@ -882,6 +883,176 @@ class App {
                     </button>
                 </div>
             `;
+    }
+  }
+
+  // ============================================
+  // BOTTOM SHEET - MENU "MAIS"
+  // ============================================
+
+  toggleBottomSheet() {
+    console.log("🔄 toggleBottomSheet chamado");
+    const overlay = document.getElementById("bottomSheetOverlay");
+    const sheet = document.getElementById("bottomSheet");
+
+    if (!overlay || !sheet) {
+      console.error("❌ Bottom sheet elements not found:", { overlay, sheet });
+      return;
+    }
+
+    const isOpen =
+      overlay.style.display === "block" || overlay.classList.contains("active");
+
+    console.log(
+      "📌 Estado atual do bottom sheet:",
+      isOpen ? "aberto" : "fechado",
+    );
+
+    if (isOpen) {
+      this.closeBottomSheet();
+    } else {
+      this.openBottomSheet();
+    }
+  }
+
+  openBottomSheet() {
+    console.log("🚀 openBottomSheet chamado");
+    const overlay = document.getElementById("bottomSheetOverlay");
+    const sheet = document.getElementById("bottomSheet");
+
+    if (!overlay || !sheet) {
+      console.error("❌ Bottom sheet elements not found:", { overlay, sheet });
+      return;
+    }
+
+    this.renderBottomSheetItems();
+
+    overlay.style.display = "block";
+    overlay.classList.add("active");
+    sheet.classList.add("open");
+    document.body.style.overflow = "hidden";
+
+    console.log("✅ Bottom sheet aberto");
+  }
+
+  closeBottomSheet() {
+    console.log("🔚 closeBottomSheet chamado");
+    const overlay = document.getElementById("bottomSheetOverlay");
+    const sheet = document.getElementById("bottomSheet");
+
+    if (!overlay || !sheet) return;
+
+    overlay.style.display = "none";
+    overlay.classList.remove("active");
+    sheet.classList.remove("open");
+    document.body.style.overflow = "";
+
+    console.log("✅ Bottom sheet fechado");
+  }
+
+  renderBottomSheetItems() {
+    console.log("📋 renderBottomSheetItems chamado");
+    const container = document.querySelector(".bottom-sheet-items");
+    if (!container) {
+      console.error("❌ .bottom-sheet-items não encontrado");
+      return;
+    }
+
+    const isSupervisor = authManager.isSupervisor();
+    console.log("👤 isSupervisor:", isSupervisor);
+
+    let html = `
+      <button class="bottom-sheet-item" data-page="consulta">
+        <i class="fas fa-search"></i>
+        <span class="item-label">Consulta Operacional</span>
+      </button>
+    `;
+
+    if (isSupervisor) {
+      html += `
+        <button class="bottom-sheet-item" data-page="retificacoes">
+          <i class="fas fa-sync-alt"></i>
+          <span class="item-label">Retificações Pendentes</span>
+          <span class="item-badge" id="sheetBadgeRetificacoes">0</span>
+        </button>
+        <button class="bottom-sheet-item" data-page="relatorios">
+          <i class="fas fa-chart-bar"></i>
+          <span class="item-label">Relatórios</span>
+        </button>
+        <button class="bottom-sheet-item" data-page="logs">
+          <i class="fas fa-history"></i>
+          <span class="item-label">Logs do Sistema</span>
+        </button>
+        <button class="bottom-sheet-item" data-page="usuarios">
+          <i class="fas fa-users"></i>
+          <span class="item-label">Gerenciar Usuários</span>
+        </button>
+      `;
+    }
+
+    html += `
+      <button class="bottom-sheet-item danger" id="btnLogoutSheet">
+        <i class="fas fa-sign-out-alt"></i>
+        <span class="item-label">Sair</span>
+      </button>
+    `;
+
+    container.innerHTML = html;
+    console.log("✅ Bottom sheet items renderizados");
+
+    container
+      .querySelectorAll(".bottom-sheet-item[data-page]")
+      .forEach((item) => {
+        item.addEventListener("click", () => {
+          const page = item.dataset.page;
+          console.log("📌 Navegando para:", page);
+          this.closeBottomSheet();
+          this.navigateTo(page);
+        });
+      });
+
+    const logoutBtn = document.getElementById("btnLogoutSheet");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", async () => {
+        console.log("🚪 Logout clicado no bottom sheet");
+        this.closeBottomSheet();
+        if (
+          this.currentPage === "nova-ocorrencia" &&
+          this.alteracoesNaoSalvas
+        ) {
+          this.paginaDestino = "login";
+          this.paramsDestino = null;
+          this.perguntarSalvarRascunho("login", async () => {
+            await authManager.logout();
+            this.route();
+            this.showToast("Logout realizado", "info");
+          });
+        } else {
+          await authManager.logout();
+          this.route();
+          this.showToast("Logout realizado", "info");
+        }
+      });
+    }
+
+    this.atualizarBadgeRetificacoes();
+  }
+
+  async atualizarBadgeRetificacoes() {
+    if (!authManager.isSupervisor()) return;
+
+    try {
+      const result = await ocorrenciaManager.buscarRetificacoesPendentes();
+      if (result.success) {
+        const count = result.data?.length || 0;
+        const badge = document.getElementById("sheetBadgeRetificacoes");
+        if (badge) {
+          badge.textContent = count > 0 ? count : "0";
+          badge.style.display = count > 0 ? "inline" : "none";
+        }
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar badge de retificações:", error);
     }
   }
 
@@ -926,8 +1097,67 @@ class App {
       ? this.getStatusLabel(filtroAtivo)
       : "Todas";
 
+    const dozeHorasAtras = new Date(
+      new Date().getTime() - 12 * 60 * 60 * 1000,
+    ).toISOString();
+    const client = supabaseClient.getClient();
+
+    const { data: novasOcorrencias } = await client
+      .from("ocorrencias")
+      .select("id, tipo_ocorrencia, criado_em")
+      .gte("criado_em", dozeHorasAtras)
+      .eq("esta_ativa", true)
+      .limit(3);
+
+    const { data: novosAvisos } = await client
+      .from("mural_avisos")
+      .select("id, titulo, tipo")
+      .gte("criado_em", dozeHorasAtras)
+      .limit(3);
+
+    const temNovidades =
+      novasOcorrencias?.length > 0 || novosAvisos?.length > 0;
+
     container.innerHTML = `
             <div class="container">
+                ${
+                  temNovidades
+                    ? `
+                <div id="briefing-container" style="background:var(--gradiente-principal); border-radius:var(--border-radius); padding:16px; margin-bottom:20px; color:white; box-shadow:var(--sombra-media); animation: slideIn 0.5s ease-out;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:16px;"><i class="fas fa-bolt" style="margin-right:8px;"></i>Briefing do Turno</h3>
+                        <button onclick="this.parentElement.parentElement.remove()" style="background:none; border:none; color:white; opacity:0.7;"><i class="fas fa-times"></i></button>
+                    </div>
+                    <p style="font-size:12px; opacity:0.9; margin-bottom:12px;">Veja o que aconteceu nas últimas 12 horas enquanto você estava fora:</p>
+                    
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        ${(novasOcorrencias || [])
+                          .map(
+                            (o) => `
+                            <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px;">
+                                <i class="fas fa-file-alt" style="font-size:14px;"></i>
+                                <span style="font-size:13px;">Nova Ocorrência: <b>${o.tipo_ocorrencia}</b></span>
+                            </div>
+                        `,
+                          )
+                          .join("")}
+                        ${(novosAvisos || [])
+                          .map(
+                            (a) => `
+                            <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px;">
+                                <i class="fas fa-bullhorn" style="font-size:14px;"></i>
+                                <span style="font-size:13px;">Mural: <b>${a.titulo}</b></span>
+                            </div>
+                        `,
+                          )
+                          .join("")}
+                    </div>
+                    <button onclick="app.navigateTo('mural')" style="width:100%; margin-top:12px; background:white; color:var(--azul-bandeira); border:none; padding:8px; border-radius:8px; font-weight:700; font-size:12px;">VER TUDO</button>
+                </div>
+                `
+                    : ""
+                }
+
                 <h2 style="margin-bottom:4px;color:var(--azul-bandeira);">
                     Olá, ${user?.nome_completo || "Guarda"}!
                 </h2>
@@ -1074,7 +1304,7 @@ class App {
         occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
       const statusClass = this.getStatusClass(occ.status);
       const statusLabel = this.getStatusLabel(occ.status);
-      const data = new Date(occ.criado_em).toLocaleDateString("pt-BR");
+      const data = this.formatarDataHoraLocal(occ.criado_em);
       const hora = new Date(occ.criado_em).toLocaleTimeString("pt-BR", {
         hour: "2-digit",
         minute: "2-digit",
@@ -1099,7 +1329,7 @@ class App {
                     <div class="header">
                         <div>
                             <div class="numero">#${numero} ${tipoBadge} ${versaoBadge}</div>
-                            <div class="data">${data} ${hora}</div>
+                            <div class="data">${data}</div>
                         </div>
                         <span class="badge badge-${statusClass}">${statusLabel}</span>
                     </div>
@@ -1272,7 +1502,7 @@ class App {
         occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
       const statusClass = this.getStatusClass(occ.status);
       const statusLabel = this.getStatusLabel(occ.status);
-      const data = new Date(occ.criado_em).toLocaleDateString("pt-BR");
+      const data = this.formatarDataHoraLocal(occ.criado_em);
       const hora = new Date(occ.criado_em).toLocaleTimeString("pt-BR", {
         hour: "2-digit",
         minute: "2-digit",
@@ -1297,7 +1527,7 @@ class App {
           <div class="header">
             <div>
               <div class="numero">#${numero} ${tipoBadge} ${versaoBadge}</div>
-              <div class="data">${data} ${hora}</div>
+              <div class="data">${data}</div>
             </div>
             <span class="badge badge-${statusClass}">${statusLabel}</span>
           </div>
@@ -1417,12 +1647,12 @@ class App {
     const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
     const statusClass = this.getStatusClass(occ.status);
     const statusLabel = this.getStatusLabel(occ.status);
-    const dataCriacao = new Date(occ.criado_em).toLocaleString("pt-BR");
+    const dataCriacao = this.formatarDataHoraLocal(occ.criado_em);
     const dataInicio = occ.data_hora_inicio
-      ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR")
+      ? this.formatarDataHoraLocal(occ.data_hora_inicio)
       : "Não informado";
     const dataEncerramento = occ.data_hora_encerramento
-      ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR")
+      ? this.formatarDataHoraLocal(occ.data_hora_encerramento)
       : "Não informado";
 
     const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
@@ -1445,7 +1675,6 @@ class App {
         : "";
     const isPending = occ.status === "pending_rectification";
 
-    // Buscar dados do criador
     let criadorNome = "Desconhecido";
     let criadorCPF = "";
     if (occ.criado_por) {
@@ -1570,7 +1799,7 @@ class App {
         <div class="card-revisao" style="margin-bottom:12px;opacity:0.8;">
           <h4><i class="fas fa-history"></i> Versão Original (para referência)</h4>
           <div class="campo"><span class="rotulo">Local:</span><span class="valor">${original.local_ocorrencia || "Não informado"}</span></div>
-          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${original.data_hora_inicio ? new Date(original.data_hora_inicio).toLocaleString("pt-BR") : "Não informado"}</span></div>
+          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${this.formatarDataHoraLocal(original.data_hora_inicio)}</span></div>
           <div class="campo"><span class="rotulo">Observações:</span><span class="valor" style="white-space:pre-wrap;">${original.observacoes || "Nenhuma"}</span></div>
           <button class="btn-secondary" style="margin-top:6px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;" onclick="app.navigateTo('detalhe-ocorrencia', {id: '${original.id}'})">
             <i class="fas fa-eye"></i> Ver versão original completa
@@ -1579,138 +1808,221 @@ class App {
       `;
     }
 
-    const camposGerais = [
+    const camposSolicitacao = [
+      { label: "Forma de Solicitação", valor: occ.forma_solicitacao },
       {
-        chave: "local_ocorrencia",
-        label: "Local",
-        valor: occ.local_ocorrencia,
-      },
-      { chave: "rodovia", label: "Rodovia", valor: occ.rodovia },
-      {
-        chave: "bairro_ocorrencia",
-        label: "Bairro da Ocorrência",
-        valor: occ.bairro_ocorrencia,
-      },
-      { chave: "referencia", label: "Referência", valor: occ.referencia },
-      {
-        chave: "codigo_operacional",
-        label: "Código Operacional",
-        valor: occ.codigo_operacional,
+        label: "Nome do Solicitante",
+        valor: occ.nome_solicitante || "Anônimo",
       },
       {
-        chave: "tipo_ocorrencia",
+        label: "CPF do Solicitante",
+        valor: occ.cpf_solicitante || "Não informado",
+      },
+      {
+        label: "RG do Solicitante",
+        valor: occ.rg_solicitante || "Não informado",
+      },
+      {
+        label: "Telefone do Solicitante",
+        valor: occ.telefone_solicitante || "Não informado",
+      },
+      {
+        label: "Endereço do Solicitante",
+        valor: occ.endereco_solicitante || "Não informado",
+      },
+      {
+        label: "Bairro do Solicitante",
+        valor: occ.bairro_solicitante || "Não informado",
+      },
+      { label: "Complemento", valor: occ.complemento || "Não informado" },
+      {
+        label: "Código Municipal",
+        valor: occ.codigo_municipal || "Não informado",
+      },
+      {
+        label: "Identificação Adicional",
+        valor: occ.identificacao_adicional || "Não informado",
+      },
+    ];
+
+    const camposSolicitacaoPreenchidos = camposSolicitacao.filter(
+      (c) => c.valor && c.valor !== "Não informado" && c.valor !== "Anônimo",
+    );
+
+    if (camposSolicitacaoPreenchidos.length > 0) {
+      html += `
+        <div class="card-revisao" style="margin-top:12px;">
+          <h4><i class="fas fa-phone-alt"></i> Dados da Solicitação</h4>
+          ${camposSolicitacaoPreenchidos
+            .map(
+              (c) => `
+            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
+          `,
+            )
+            .join("")}
+        </div>
+      `;
+    }
+
+    const camposOcorrencia = [
+      {
         label: "Tipo de Ocorrência",
         valor: occ.tipo_ocorrencia
           ? this.getTipoLabel(occ.tipo_ocorrencia)
-          : null,
+          : "Não informado",
       },
       {
-        chave: "codigo_municipal",
-        label: "Código Municipal",
-        valor: occ.codigo_municipal,
+        label: "Local da Ocorrência",
+        valor: occ.local_ocorrencia || "Não informado",
       },
-      { chave: "complemento", label: "Complemento", valor: occ.complemento },
+      { label: "Rodovia", valor: occ.rodovia || "Não informado" },
       {
-        chave: "identificacao_adicional",
-        label: "Identificação Adicional",
-        valor: occ.identificacao_adicional,
+        label: "Bairro da Ocorrência",
+        valor: occ.bairro_ocorrencia || "Não informado",
       },
-      { chave: "numero_versao", label: "Versão", valor: occ.numero_versao },
+      { label: "Referência", valor: occ.referencia || "Não informado" },
+      {
+        label: "Código Operacional",
+        valor: occ.codigo_operacional || "Não informado",
+      },
+      { label: "Data/Hora Início", valor: dataInicio },
+      { label: "Data/Hora Encerramento", valor: dataEncerramento },
+      { label: "Versão", valor: occ.numero_versao || 1 },
+      { label: "Status da Versão", valor: versaoInfo || "Versão atual" },
     ];
 
-    const camposGeraisPreenchidos = camposGerais.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
-
-    if (
-      camposGeraisPreenchidos.length > 0 ||
-      dataInicio ||
-      dataEncerramento ||
-      versaoInfo
-    ) {
-      html += `
-        <div class="card-revisao">
-          <h4><i class="fas fa-info-circle"></i> Informações Gerais</h4>
-          ${camposGeraisPreenchidos
-            .map(
-              (c) => `
-            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-          `,
-            )
-            .join("")}
-          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${dataInicio}</span></div>
-          ${dataEncerramento ? `<div class="campo"><span class="rotulo">Data/Hora Encerramento:</span><span class="valor">${dataEncerramento}</span></div>` : ""}
-          ${versaoInfo ? `<div class="campo"><span class="rotulo">Status da Versão:</span><span class="valor">${versaoInfo}</span></div>` : ""}
-        </div>
-      `;
-    }
-
-    const camposSolicitante = [
-      {
-        chave: "forma_solicitacao",
-        label: "Forma",
-        valor: occ.forma_solicitacao,
-      },
-      {
-        chave: "nome_solicitante",
-        label: "Solicitante",
-        valor: occ.nome_solicitante,
-      },
-      {
-        chave: "telefone_solicitante",
-        label: "Telefone",
-        valor: occ.telefone_solicitante,
-      },
-      {
-        chave: "endereco_solicitante",
-        label: "Endereço",
-        valor: occ.endereco_solicitante,
-      },
-      {
-        chave: "bairro_solicitante",
-        label: "Bairro",
-        valor: occ.bairro_solicitante,
-      },
-    ];
-
-    const camposSolicitantePreenchidos = camposSolicitante.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
-
-    if (camposSolicitantePreenchidos.length > 0) {
-      html += `
-        <div class="card-revisao">
-          <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
-          ${camposSolicitantePreenchidos
-            .map(
-              (c) => `
-            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-          `,
-            )
-            .join("")}
-        </div>
-      `;
-    }
+    html += `
+      <div class="card-revisao">
+        <h4><i class="fas fa-map-marker-alt"></i> Dados da Ocorrência</h4>
+        ${camposOcorrencia
+          .map(
+            (c) => `
+          <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
+        `,
+          )
+          .join("")}
+      </div>
+    `;
 
     html += `
       <div class="card-revisao">
         <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-        ${
-          envolvidos.length === 0
-            ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>'
-            : envolvidos
-                .map(
-                  (env) => `
-            <div class="envolvido-item">
-              <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
-              <strong>${env.nome_completo}</strong>
-              ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - CPF: ${env.cpf}</span>` : ""}
-              ${env.telefone ? `<span style="color:var(--cinza-medio);font-size:12px;"> - Tel: ${env.telefone}</span>` : ""}
+    `;
+
+    if (envolvidos.length === 0) {
+      html += `
+        <div style="text-align:center;padding:20px;color:var(--cinza-medio);font-size:14px;">
+          <i class="fas fa-users" style="font-size:24px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
+          Nenhum envolvido cadastrado
+        </div>
+      `;
+    } else {
+      envolvidos.forEach((env) => {
+        html += `
+          <div class="envolvido-item-modern">
+            <div class="header">
+              <span class="badge badge-azul">
+                <i class="fas fa-user" style="margin-right:4px;"></i>
+                ${this.getTipoEnvolvidoLabel(env.tipo)}
+              </span>
+              <span class="nome">${env.nome_completo || "Nome não informado"}</span>
             </div>
-          `,
-                )
-                .join("")
-        }
+            <div class="detalhes-grid">
+              ${
+                env.cpf
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-id-card"></i>
+                  <span class="label">CPF:</span>
+                  <span class="valor">${env.cpf}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.rg
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-address-card"></i>
+                  <span class="label">RG:</span>
+                  <span class="valor">${env.rg}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.telefone
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-phone"></i>
+                  <span class="label">Tel:</span>
+                  <span class="valor">${env.telefone}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.data_nascimento
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-calendar-alt"></i>
+                  <span class="label">Nasc:</span>
+                  <span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.endereco
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-map-marker-alt"></i>
+                  <span class="label">End:</span>
+                  <span class="valor">${env.endereco}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.bairro
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-location-dot"></i>
+                  <span class="label">Bairro:</span>
+                  <span class="valor">${env.bairro}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.cidade
+                  ? `
+                <div class="campo">
+                  <i class="fas fa-city"></i>
+                  <span class="label">Cidade:</span>
+                  <span class="valor">${env.cidade}</span>
+                </div>
+              `
+                  : ""
+              }
+              ${
+                env.observacoes
+                  ? `
+                <div class="campo" style="grid-column: 1 / -1;">
+                  <i class="fas fa-pencil-alt"></i>
+                  <span class="label">Obs:</span>
+                  <span class="valor">${env.observacoes}</span>
+                </div>
+              `
+                  : ""
+              }
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    html += `
       </div>
     `;
 
@@ -1805,10 +2117,10 @@ class App {
     const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
 
     const dataInicio = occ.data_hora_inicio
-      ? new Date(occ.data_hora_inicio).toLocaleString("pt-BR")
+      ? this.formatarDataHoraLocal(occ.data_hora_inicio)
       : "Não informado";
     const dataEncerramento = occ.data_hora_encerramento
-      ? new Date(occ.data_hora_encerramento).toLocaleString("pt-BR")
+      ? this.formatarDataHoraLocal(occ.data_hora_encerramento)
       : "Não informado";
 
     const overlay = document.createElement("div");
@@ -1849,7 +2161,7 @@ class App {
               <div><strong>Data/Hora Início:</strong> ${dataInicio}</div>
               <div><strong>Data/Hora Encerramento:</strong> ${dataEncerramento}</div>
               <div><strong>Criado por:</strong> ${occ.criado_por || "Não informado"}</div>
-              <div><strong>Criado em:</strong> ${new Date(occ.criado_em).toLocaleString("pt-BR")}</div>
+              <div><strong>Criado em:</strong> ${this.formatarDataHoraLocal(occ.criado_em)}</div>
             </div>
           </div>
 
@@ -1883,6 +2195,14 @@ class App {
                 <div class="form-group">
                   <label for="ret_nome_solicitante">Nome do Solicitante</label>
                   <input type="text" id="ret_nome_solicitante" class="form-control" value="${occ.nome_solicitante || ""}" placeholder="Nome completo">
+                </div>
+                <div class="form-group">
+                  <label for="ret_cpf_solicitante">CPF do Solicitante</label>
+                  <input type="text" id="ret_cpf_solicitante" class="form-control" value="${occ.cpf_solicitante || ""}" placeholder="123.456.789-00">
+                </div>
+                <div class="form-group">
+                  <label for="ret_rg_solicitante">RG do Solicitante</label>
+                  <input type="text" id="ret_rg_solicitante" class="form-control" value="${occ.rg_solicitante || ""}" placeholder="RG do solicitante">
                 </div>
                 <div class="form-group">
                   <label for="ret_telefone_solicitante">Telefone do Solicitante</label>
@@ -2034,6 +2354,18 @@ class App {
     )?.value;
     if (nome_solicitante && nome_solicitante.trim() !== "") {
       dadosCorrigidos.nome_solicitante = nome_solicitante.trim();
+    }
+
+    const cpf_solicitante = document.getElementById(
+      "ret_cpf_solicitante",
+    )?.value;
+    if (cpf_solicitante && cpf_solicitante.trim() !== "") {
+      dadosCorrigidos.cpf_solicitante = cpf_solicitante.trim();
+    }
+
+    const rg_solicitante = document.getElementById("ret_rg_solicitante")?.value;
+    if (rg_solicitante && rg_solicitante.trim() !== "") {
+      dadosCorrigidos.rg_solicitante = rg_solicitante.trim();
     }
 
     const telefone_solicitante = document.getElementById(
@@ -2278,7 +2610,7 @@ class App {
       const isAtiva = item.esta_ativa !== false;
       const statusClass = this.getStatusClass(item.status);
       const statusLabel = this.getStatusLabel(item.status);
-      const data = new Date(item.criado_em).toLocaleString("pt-BR");
+      const data = this.formatarDataHoraLocal(item.criado_em);
       const numero =
         item.numero_ocorrencia || item.numero_temporario || "Rascunho";
 
@@ -2412,12 +2744,19 @@ class App {
     );
     if (!confirmado) return;
 
-    const result = await ocorrenciaManager.finalizar(id);
+    const agora = new Date();
+    const timezoneOffset = agora.getTimezoneOffset();
+    const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
+    const dataEncerramento = adjustedDate.toISOString();
+
+    const result = await ocorrenciaManager.atualizar(id, {
+      status: "synced",
+      data_hora_encerramento: dataEncerramento,
+    });
+
     if (result.success) {
       this.showToast("Ocorrência finalizada com sucesso!", "success");
-
       await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
-
       if (this.filtroStatusAtual) {
         this.loadPageContent("dashboard");
       }
@@ -2617,9 +2956,9 @@ class App {
 
       sorted.forEach((ret) => {
         const dataSolicitacao = ret.solicitada_em
-          ? new Date(ret.solicitada_em).toLocaleString("pt-BR")
+          ? this.formatarDataHoraLocal(ret.solicitada_em)
           : ret.criado_em
-            ? new Date(ret.criado_em).toLocaleString("pt-BR")
+            ? this.formatarDataHoraLocal(ret.criado_em)
             : "Data desconhecida";
 
         const numeroOriginal =
@@ -2765,6 +3104,20 @@ class App {
         descricao: "Listagem completa com todos os campos",
         icon: "fa-list-ul",
         cor: "cinza",
+      },
+      {
+        id: "mapa",
+        nome: "Mapa de Ocorrências",
+        descricao: "Visualização geográfica das ocorrências",
+        icon: "fa-map-marked-alt",
+        cor: "azul",
+      },
+      {
+        id: "por-guarda",
+        nome: "Ocorrências por Guarda",
+        descricao: "Produtividade individual por agente",
+        icon: "fa-user-shield",
+        cor: "roxo",
       },
     ];
 
@@ -3021,6 +3374,17 @@ class App {
           dataFim,
         );
         break;
+      case "mapa":
+        await this.renderRelatorioMapa(container, dataInicio, dataFim);
+        break;
+      case "por-guarda":
+        await this.renderRelatorioPorGuarda(
+          container,
+          ocorrencias,
+          dataInicio,
+          dataFim,
+        );
+        break;
       default:
         container.innerHTML = `<p>Relatório não encontrado</p>`;
     }
@@ -3044,6 +3408,2582 @@ class App {
     } catch (error) {
       console.error("❌ Erro ao buscar ocorrências:", error);
       return [];
+    }
+  }
+
+  // ============================================
+  // RELATÓRIO MAPA DE OCORRÊNCIAS
+  // ============================================
+
+  async renderRelatorioMapa(container, dataInicio, dataFim) {
+    const filtros = {
+      data_inicio: dataInicio,
+      data_fim: dataFim,
+      limit: 500,
+    };
+
+    const tipoSelect = document.getElementById("filtroMapaTipo");
+    const statusSelect = document.getElementById("filtroMapaStatus");
+
+    if (tipoSelect && tipoSelect.value) {
+      filtros.tipo_ocorrencia = tipoSelect.value;
+    }
+    if (statusSelect && statusSelect.value) {
+      filtros.status = statusSelect.value;
+    }
+
+    const result =
+      await ocorrenciaManager.buscarOcorrenciasComLocalizacao(filtros);
+
+    const html = `
+      <div class="container" style="padding-bottom:120px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
+          <div>
+            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+              <i class="fas fa-map-marked-alt" style="margin-right:8px;"></i>
+              Mapa de Ocorrências
+            </h2>
+            <p style="color:var(--cinza-medio);margin-top:2px;font-size:12px;">
+              <i class="fas fa-calendar" style="margin-right:4px;"></i>
+              ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
+              <span style="margin-left:8px;font-weight:600;">${result.success ? result.total : 0} ocorrências com localização</span>
+            </p>
+          </div>
+          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
+            <i class="fas fa-arrow-left"></i> Voltar
+          </button>
+        </div>
+
+        <div class="filtros-container" style="margin-bottom:12px;">
+          <div class="filtros-row">
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-tag"></i> Tipo</label>
+              <select id="filtroMapaTipo" onchange="app.renderRelatorioMapa(this.closest('.container'), '${dataInicio}', '${dataFim}')">
+                <option value="">Todos</option>
+                ${this.TIPOS_OCORRENCIA.map(
+                  (t) => `
+                  <option value="${t.value}">${t.label}</option>
+                `,
+                ).join("")}
+              </select>
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-circle"></i> Status</label>
+              <select id="filtroMapaStatus" onchange="app.renderRelatorioMapa(this.closest('.container'), '${dataInicio}', '${dataFim}')">
+                <option value="">Todos</option>
+                <option value="synced">Finalizada</option>
+                <option value="pending_sync">Pendente</option>
+                <option value="rectified">Retificada</option>
+                <option value="cancelled">Cancelada</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="mapaContainer" class="mapa-container">
+          ${
+            !result.success
+              ? `
+            <div class="mapa-sem-dados">
+              <i class="fas fa-exclamation-triangle"></i>
+              <p>Erro ao carregar dados: ${result.error}</p>
+            </div>
+          `
+              : result.total === 0
+                ? `
+            <div class="mapa-sem-dados">
+              <i class="fas fa-map"></i>
+              <p>Nenhuma ocorrência com localização encontrada no período</p>
+              <p style="font-size:12px;margin-top:4px;">Verifique se as ocorrências têm coordenadas de GPS</p>
+            </div>
+          `
+                : `
+            <div class="mapa-loading" id="mapaLoading">
+              <div class="spinner"></div>
+              <span>Carregando mapa...</span>
+            </div>
+          `
+          }
+        </div>
+
+        ${
+          result.success && result.total > 0
+            ? `
+          <div class="mapa-heatmap-legend">
+            <span><i class="fas fa-circle" style="color:#00ff00;"></i> Baixa</span>
+            <span><i class="fas fa-circle" style="color:#ffff00;"></i> Média</span>
+            <span><i class="fas fa-circle" style="color:#ff0000;"></i> Alta</span>
+            <span class="gradiente"></span>
+            <span style="margin-left:auto;font-size:10px;color:var(--cinza-medio);">
+              ${result.total} ocorrências
+            </span>
+          </div>
+        `
+            : ""
+        }
+
+        ${
+          result.success && result.total > 0
+            ? `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px 12px;box-shadow:var(--sombra-suave);flex:1;text-align:center;min-width:80px;">
+              <div style="font-size:18px;font-weight:800;color:var(--azul-bandeira);">${result.total}</div>
+              <div style="font-size:10px;color:var(--cinza-medio);">Com localização</div>
+            </div>
+            ${
+              result.data
+                ? `
+              <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px 12px;box-shadow:var(--sombra-suave);flex:1;text-align:center;min-width:80px;">
+                <div style="font-size:18px;font-weight:800;color:var(--verde-bandeira);">
+                  ${new Set(result.data.map((o) => o.tipo)).size}
+                </div>
+                <div style="font-size:10px;color:var(--cinza-medio);">Tipos diferentes</div>
+              </div>
+            `
+                : ""
+            }
+          </div>
+        `
+            : ""
+        }
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    if (result.success && result.total > 0) {
+      setTimeout(() => {
+        this.inicializarMapaOcorrencias(result.data);
+      }, 100);
+    }
+  }
+
+  inicializarMapaOcorrencias(dados) {
+    const container = document.getElementById("mapaContainer");
+    if (!container) {
+      console.error("❌ Container do mapa não encontrado!");
+      return;
+    }
+
+    const loading = document.getElementById("mapaLoading");
+    if (loading) {
+      loading.style.display = "none";
+    }
+
+    if (this.mapaInstance) {
+      try {
+        this.mapaInstance.remove();
+      } catch (e) {
+        console.warn("⚠️ Erro ao remover mapa anterior:", e);
+      }
+      this.mapaInstance = null;
+    }
+
+    const rect = container.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      console.warn("⚠️ Container do mapa não está visível, aguardando...");
+      setTimeout(() => {
+        if (document.getElementById("mapaContainer")) {
+          this.inicializarMapaOcorrencias(dados);
+        }
+      }, 500);
+      return;
+    }
+
+    const dadosValidos = dados.filter(
+      (p) =>
+        p.latitude &&
+        p.longitude &&
+        !isNaN(parseFloat(p.latitude)) &&
+        !isNaN(parseFloat(p.longitude)),
+    );
+
+    if (dadosValidos.length === 0) {
+      console.warn("⚠️ Nenhum dado válido para o mapa");
+      container.innerHTML = `
+            <div class="mapa-sem-dados" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);text-align:center;padding:20px;">
+                <i class="fas fa-map" style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;"></i>
+                <p>Nenhuma coordenada válida encontrada</p>
+            </div>
+        `;
+      return;
+    }
+
+    try {
+      const centro = this.calcularCentroMapa(dadosValidos);
+      console.log("🗺️ Centro do mapa:", centro);
+
+      const map = L.map(container, {
+        zoomControl: true,
+        attributionControl: true,
+        fadeAnimation: true,
+        zoomAnimation: true,
+        center: centro,
+        zoom: 13,
+      });
+
+      try {
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 19,
+          minZoom: 10,
+          errorTileUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        }).addTo(map);
+      } catch (e) {
+        console.warn("⚠️ Erro ao carregar tiles do mapa:", e);
+      }
+
+      const bounds = this.calcularBoundsMapa(dadosValidos);
+      if (bounds) {
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+      }
+
+      this.adicionarMarcadoresMapa(map, dadosValidos);
+      this.adicionarHeatmapMapa(map, dadosValidos);
+
+      this.mapaInstance = map;
+
+      setTimeout(() => {
+        try {
+          map.invalidateSize();
+          console.log("🗺️ Mapa redimensionado com sucesso");
+        } catch (e) {
+          console.warn("⚠️ Erro ao redimensionar mapa:", e);
+        }
+      }, 500);
+
+      setTimeout(() => {
+        try {
+          map.invalidateSize();
+        } catch (e) {}
+      }, 1500);
+
+      console.log(
+        "🗺️ Mapa inicializado com sucesso!",
+        dadosValidos.length,
+        "pontos",
+      );
+    } catch (error) {
+      console.error("❌ Erro ao inicializar mapa:", error);
+      container.innerHTML = `
+            <div class="mapa-sem-dados" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);text-align:center;padding:20px;">
+                <i class="fas fa-exclamation-triangle" style="font-size:48px;color:var(--erro);margin-bottom:12px;"></i>
+                <p>Erro ao carregar mapa: ${error.message}</p>
+                <button onclick="app.voltarRelatorios()" class="btn-secondary" style="margin-top:12px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
+                    <i class="fas fa-arrow-left"></i> Voltar
+                </button>
+            </div>
+        `;
+    }
+  }
+
+  calcularCentroMapa(dados) {
+    if (!dados || dados.length === 0) {
+      return [-23.456, -47.123];
+    }
+
+    let lat = 0,
+      lng = 0;
+    let count = 0;
+    dados.forEach((p) => {
+      if (p.latitude && p.longitude) {
+        lat += parseFloat(p.latitude);
+        lng += parseFloat(p.longitude);
+        count++;
+      }
+    });
+
+    if (count === 0) return [-23.456, -47.123];
+    return [lat / count, lng / count];
+  }
+
+  calcularBoundsMapa(dados) {
+    if (!dados || dados.length === 0) return null;
+
+    let minLat = Infinity,
+      maxLat = -Infinity;
+    let minLng = Infinity,
+      maxLng = -Infinity;
+    let hasValid = false;
+
+    dados.forEach((p) => {
+      if (p.latitude && p.longitude) {
+        const lat = parseFloat(p.latitude);
+        const lng = parseFloat(p.longitude);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+          if (lng < minLng) minLng = lng;
+          if (lng > maxLng) maxLng = lng;
+          hasValid = true;
+        }
+      }
+    });
+
+    if (!hasValid) return null;
+
+    const latMargin = (maxLat - minLat) * 0.1 || 0.01;
+    const lngMargin = (maxLng - minLng) * 0.1 || 0.01;
+
+    return [
+      [minLat - latMargin, minLng - lngMargin],
+      [maxLat + latMargin, maxLng + lngMargin],
+    ];
+  }
+
+  adicionarMarcadoresMapa(map, dados) {
+    if (!dados || dados.length === 0) return;
+
+    const cores = {
+      furto: "#f97316",
+      roubo: "#dc2626",
+      vandalismo: "#f97316",
+      dano_ao_patrimonio: "#f97316",
+      ameaca: "#dc2626",
+      lesao_corporal: "#dc2626",
+      perturbacao: "#f97316",
+      acidente: "#eab308",
+      incendio: "#dc2626",
+      desaparecimento: "#8b5cf6",
+      atendimento_social: "#06b6d4",
+      outro: "#6b7280",
+    };
+
+    const marcadorCores = {
+      furto: "vermelho",
+      roubo: "vermelho",
+      vandalismo: "amarelo",
+      dano_ao_patrimonio: "amarelo",
+      ameaca: "vermelho",
+      lesao_corporal: "vermelho",
+      perturbacao: "amarelo",
+      acidente: "amarelo",
+      incendio: "vermelho",
+      desaparecimento: "roxo",
+      atendimento_social: "azul",
+      outro: "cinza",
+    };
+
+    const icones = {
+      furto: "fa-bolt",
+      roubo: "fa-hand-lizard",
+      vandalismo: "fa-brush",
+      dano_ao_patrimonio: "fa-building",
+      ameaca: "fa-exclamation-triangle",
+      lesao_corporal: "fa-heartbeat",
+      perturbacao: "fa-volume-up",
+      acidente: "fa-car-crash",
+      incendio: "fa-fire",
+      desaparecimento: "fa-user-slash",
+      atendimento_social: "fa-hands-helping",
+      outro: "fa-circle",
+    };
+
+    const coordenadasUsadas = {};
+
+    dados.forEach((p) => {
+      if (!p.latitude || !p.longitude) return;
+
+      let lat = parseFloat(p.latitude);
+      let lng = parseFloat(p.longitude);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      const chaveCoord = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+      if (coordenadasUsadas[chaveCoord]) {
+        const jitter = 0.00015 * coordenadasUsadas[chaveCoord];
+        lat += (Math.random() - 0.5) * jitter;
+        lng += (Math.random() - 0.5) * jitter;
+        coordenadasUsadas[chaveCoord]++;
+      } else {
+        coordenadasUsadas[chaveCoord] = 1;
+      }
+
+      const tipo = p.tipo || "outro";
+      const cor = cores[tipo] || "#6b7280";
+      const marcadorCor = marcadorCores[tipo] || "cinza";
+      const icone = icones[tipo] || "fa-circle";
+
+      const icon = L.divIcon({
+        className: `marcador-ocorrencia ${marcadorCor}`,
+        html: `<i class="fas ${icone}"></i>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 28],
+        popupAnchor: [0, -28],
+      });
+
+      const popupContent = `
+        <div class="popup-titulo">#${p.numero || "Sem número"}</div>
+        <span class="popup-tipo popup-tipo-${tipo}">${this.getTipoLabel(tipo)}</span>
+        <div class="popup-local"><i class="fas fa-map-pin"></i> ${p.local || "Local não informado"}</div>
+        <div class="popup-guarda"><i class="fas fa-user"></i> ${p.criador?.nome_completo || "Desconhecido"}</div>
+        <div style="font-size:11px;color:var(--cinza-medio);margin-top:4px;">
+          ${p.data ? new Date(p.data).toLocaleDateString("pt-BR") : ""}
+          ${p.status ? ` • <span class="badge badge-${this.getStatusClass(p.status)}" style="font-size:9px;">${this.getStatusLabel(p.status)}</span>` : ""}
+        </div>
+        <div style="margin-top:6px;">
+          <button onclick="app.verDetalhes('${p.id}')" class="btn-secondary" style="padding:2px 10px;font-size:11px;min-height:auto;width:auto;">
+            <i class="fas fa-eye"></i> Ver detalhes
+          </button>
+        </div>
+      `;
+
+      L.marker([lat, lng], { icon })
+        .addTo(map)
+        .bindPopup(popupContent, { maxWidth: 280, className: "mapa-popup" });
+    });
+  }
+
+  adicionarHeatmapMapa(map, dados) {
+    if (!dados || dados.length === 0) return;
+
+    dados.forEach((p) => {
+      if (!p.latitude || !p.longitude) return;
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      L.circle([lat, lng], {
+        color: "transparent",
+        fillColor: "#ff4400",
+        fillOpacity: 0.1,
+        radius: 200,
+        interactive: false,
+        pane: "shadowPane",
+      }).addTo(map);
+
+      L.circle([lat, lng], {
+        color: "transparent",
+        fillColor: "#ff0000",
+        fillOpacity: 0.2,
+        radius: 80,
+        interactive: false,
+        pane: "shadowPane",
+      }).addTo(map);
+    });
+
+    console.log("✅ Camada de densidade nativa aplicada");
+  }
+
+  // ============================================
+  // EXPORTAÇÃO PDF RELATÓRIO POR GUARDA
+  // ============================================
+
+  async exportarRelatorioGuardaPDF(guardaId = null) {
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const dataInicio =
+        this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
+      const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
+      const periodoStr = `${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}`;
+
+      const ocorrencias = await this.buscarOcorrenciasPeriodo(
+        dataInicio,
+        dataFim,
+      );
+
+      const criadoresIds = [...new Set(ocorrencias.map((o) => o.criado_por))];
+      const dadosUsuarios =
+        await ocorrenciaManager.buscarDadosUsuariosEmLote(criadoresIds);
+
+      const agrupado = {};
+      ocorrencias.forEach((o) => {
+        const id = o.criado_por;
+        if (guardaId && id !== guardaId) return;
+
+        const nome =
+          dadosUsuarios[id]?.nome_completo || "Usuário não identificado";
+        if (!agrupado[id]) {
+          agrupado[id] = { nome, total: 0, tipos: {} };
+        }
+        agrupado[id].total++;
+        const tipo = this.getTipoLabel(o.tipo_ocorrencia);
+        agrupado[id].tipos[tipo] = (agrupado[id].tipos[tipo] || 0) + 1;
+      });
+
+      const ranking = Object.values(agrupado).sort((a, b) => b.total - a.total);
+
+      doc.setFontSize(18);
+      doc.setTextColor(0, 63, 135);
+      doc.text("Guarda Municipal de Pitangueiras - PR", 105, 20, {
+        align: "center",
+      });
+
+      doc.setFontSize(14);
+      doc.setTextColor(100);
+      const titulo = guardaId
+        ? `Relatório Individual de Produtividade`
+        : `Relatório Geral de Produtividade por Agente`;
+      doc.text(titulo, 105, 30, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.text(`Período: ${periodoStr}`, 105, 38, { align: "center" });
+      doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 44, {
+        align: "center",
+      });
+
+      const tableRows = [];
+      ranking.forEach((item, index) => {
+        const tiposStr = Object.entries(item.tipos)
+          .map(([t, q]) => `${t}: ${q}`)
+          .join(", ");
+
+        tableRows.push([index + 1, item.nome, item.total, tiposStr]);
+      });
+
+      doc.autoTable({
+        startY: 55,
+        head: [["Pos.", "Agente", "Total", "Detalhamento por Tipo"]],
+        body: tableRows,
+        headStyles: { fillColor: [0, 63, 135], halign: "center" },
+        columnStyles: {
+          0: { cellWidth: 15, halign: "center" },
+          1: { cellWidth: 60 },
+          2: { cellWidth: 20, halign: "center" },
+          3: { cellWidth: "auto" },
+        },
+        styles: { fontSize: 9, cellPadding: 4 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
+      });
+
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        doc.text(
+          `Página ${i} de ${pageCount} - Sistema de Gestão G.M. Pitangueiras`,
+          105,
+          285,
+          { align: "center" },
+        );
+      }
+
+      const nomeArquivo = guardaId
+        ? `Produtividade_${ranking[0]?.nome.replace(/ /g, "_")}.pdf`
+        : `Produtividade_Geral_${dataInicio}.pdf`;
+      doc.save(nomeArquivo);
+      this.showToast("PDF gerado com sucesso!", "success");
+    } catch (error) {
+      console.error("Erro ao gerar PDF:", error);
+      this.showToast("Erro ao gerar arquivo PDF", "error");
+    }
+  }
+
+  // ============================================
+  // RELATÓRIO POR GUARDA
+  // ============================================
+
+  async renderRelatorioPorGuarda(container, ocorrencias, dataInicio, dataFim) {
+    const criadoresIds = [...new Set(ocorrencias.map((o) => o.criado_por))];
+    const dadosUsuarios =
+      await ocorrenciaManager.buscarDadosUsuariosEmLote(criadoresIds);
+
+    const agrupado = {};
+    ocorrencias.forEach((o) => {
+      const id = o.criado_por;
+      const nome =
+        dadosUsuarios[id]?.nome_completo || "Usuário não identificado";
+      if (!agrupado[id]) {
+        agrupado[id] = {
+          nome: nome,
+          total: 0,
+          tipos: {},
+        };
+      }
+      agrupado[id].total++;
+      const tipo = this.getTipoLabel(o.tipo_ocorrencia);
+      agrupado[id].tipos[tipo] = (agrupado[id].tipos[tipo] || 0) + 1;
+    });
+
+    const ranking = Object.values(agrupado).sort((a, b) => b.total - a.total);
+
+    let html = `
+      <div class="container" style="padding-bottom:100px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-user-shield" style="margin-right:8px;"></i>
+            Por Guarda
+          </h2>
+          <div style="display:flex;gap:8px;">
+            <button onclick="app.exportarRelatorioGuardaPDF()" class="btn-primary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;background:var(--erro);">
+              <i class="fas fa-file-pdf"></i> PDF Geral
+            </button>
+            <button onclick="app.voltarRelatorios()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
+              <i class="fas fa-arrow-left"></i> Voltar
+            </button>
+          </div>
+        </div>
+
+        <div class="stats-card" style="margin-bottom:16px;background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+          <div style="font-size:12px;color:var(--cinza-medio);margin-bottom:4px;">Período</div>
+          <div style="font-weight:600;color:var(--azul-bandeira);font-size:14px;">
+            ${dataInicio.split("-").reverse().join("/")} até ${dataFim.split("-").reverse().join("/")}
+          </div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cinza-claro);display:flex;justify-content:space-between;">
+            <div>
+              <div style="font-size:11px;color:var(--cinza-medio);">Total de Ocorrências</div>
+              <div style="font-size:20px;font-weight:700;color:var(--azul-bandeira);">${ocorrencias.length}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:11px;color:var(--cinza-medio);">Agentes Ativos</div>
+              <div style="font-size:20px;font-weight:700;color:var(--roxo);">${ranking.length}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ranking-lista" style="display:flex;flex-direction:column;gap:12px;">
+    `;
+
+    if (ranking.length === 0) {
+      html += `
+        <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
+          <i class="fas fa-info-circle" style="font-size:32px;margin-bottom:12px;opacity:0.3;"></i>
+          <p>Nenhuma ocorrência encontrada neste período.</p>
+        </div>
+      `;
+    }
+
+    ranking.forEach((item, index) => {
+      const medalha =
+        index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "";
+      html += `
+        <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);border-left:4px solid var(--roxo);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="width:32px;height:32px;border-radius:50%;background:var(--roxo);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">
+                ${index + 1}
+              </div>
+              <div>
+                <div style="font-weight:700;color:var(--azul-bandeira);font-size:14px;">${medalha} ${item.nome}</div>
+                <div style="font-size:11px;color:var(--cinza-medio);">Agente da Guarda Municipal</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="text-align:right;">
+                <div style="font-size:18px;font-weight:800;color:var(--roxo);">${item.total}</div>
+                <div style="font-size:10px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Ocorrências</div>
+              </div>
+              <button onclick="app.exportarRelatorioGuardaPDF('${Object.keys(agrupado).find((key) => agrupado[key] === item)}')" class="btn-secondary" style="padding:6px;min-height:auto;width:auto;border-radius:50%;" title="Exportar PDF Individual">
+                <i class="fas fa-file-pdf" style="color:var(--erro);"></i>
+              </button>
+            </div>
+          </div>
+          
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--cinza-claro);">
+            ${Object.entries(item.tipos)
+              .map(
+                ([tipo, qtd]) => `
+              <span style="background:var(--cinza-claro);color:var(--cinza-escuro);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;">
+                ${tipo}: ${qtd}
+              </span>
+            `,
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    });
+
+    html += `
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================
+  // CONSULTA OPERACIONAL
+  // ============================================
+
+  renderConsultaOperacional(container) {
+    let html = `
+      <div class="container" style="padding-bottom:100px;">
+        <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">
+          <i class="fas fa-search" style="margin-right:8px;"></i>
+          Consulta Operacional
+        </h2>
+
+        <div class="tabs-container" style="display:flex;gap:4px;margin-bottom:16px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
+          <button onclick="app.mudarAbaConsulta('veiculos')" id="tabVeiculos" class="tab-btn active" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;">
+            <i class="fas fa-motorcycle"></i> Veículos
+          </button>
+          <button onclick="app.mudarAbaConsulta('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;">
+            <i class="fas fa-user-friends"></i> Pessoas/Andarilhos
+          </button>
+        </div>
+
+        <div id="consultaBuscaArea">
+          <!-- Carregado dinamicamente -->
+        </div>
+
+        <div id="consultaResultadosArea" style="margin-top:20px;">
+          <!-- Resultados da busca -->
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+    this.abaConsultaAtiva = "veiculos";
+    this.renderAbaConsulta();
+  }
+
+  mudarAbaConsulta(aba) {
+    this.abaConsultaAtiva = aba;
+    document
+      .querySelectorAll(".tab-btn")
+      .forEach((b) => b.classList.remove("active"));
+    if (aba === "veiculos") {
+      document.getElementById("tabVeiculos").classList.add("active");
+      document.getElementById("tabVeiculos").style.background = "var(--branco)";
+      document.getElementById("tabPessoas").style.background = "none";
+    } else {
+      document.getElementById("tabPessoas").classList.add("active");
+      document.getElementById("tabPessoas").style.background = "var(--branco)";
+      document.getElementById("tabVeiculos").style.background = "none";
+    }
+    this.renderAbaConsulta();
+  }
+
+  renderAbaConsulta() {
+    const area = document.getElementById("consultaBuscaArea");
+    const placeholder =
+      this.abaConsultaAtiva === "veiculos"
+        ? "Digite a Placa (ex: ABC1D23)"
+        : "Nome, CPF, RG ou Apelido";
+    const icone =
+      this.abaConsultaAtiva === "veiculos" ? "fa-motorcycle" : "fa-user";
+
+    area.innerHTML = `
+      <div class="search-card" style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+        <div class="input-wrapper" style="margin-bottom:12px;display:flex;gap:8px;">
+          <div style="position:relative;flex:1;">
+            <i class="fas ${icone}" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);"></i>
+            <input type="text" id="inputBuscaConsulta" placeholder="${placeholder}" style="width:100%;padding:10px 10px 10px 35px;border:1px solid var(--cinza-claro);border-radius:var(--border-radius);text-transform:uppercase;">
+          </div>
+          <button onclick="app.executarBuscaConsulta()" class="btn-primary" style="width:auto;min-height:auto;padding:0 16px;">
+            <i class="fas fa-search"></i>
+          </button>
+        </div>
+        <button onclick="app.abrirFormularioAbordagem()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;">
+          <i class="fas fa-plus-circle"></i> Registrar Nova Abordagem
+        </button>
+      </div>
+    `;
+
+    document.getElementById("consultaResultadosArea").innerHTML = "";
+  }
+
+  async executarBuscaConsulta() {
+    const termo = document
+      .getElementById("inputBuscaConsulta")
+      .value.trim()
+      .toUpperCase();
+    if (!termo) return;
+
+    const areaResultados = document.getElementById("consultaResultadosArea");
+    areaResultados.innerHTML = `<div style="text-align:center;padding:20px;"><div class="spinner-azul" style="margin:0 auto;"></div><p>Buscando histórico...</p></div>`;
+
+    try {
+      const client = supabaseClient.getClient();
+      let data = [];
+
+      if (this.abaConsultaAtiva === "veiculos") {
+        const res = await client
+          .from("abordagens_veiculos")
+          .select("*")
+          .eq("placa", termo)
+          .order("criado_em", { ascending: false });
+        data = res.data || [];
+      } else {
+        const res = await client
+          .from("abordagens_pessoas")
+          .select("*")
+          .or(
+            `nome.ilike.%${termo}%,cpf.eq.${termo},rg.eq.${termo},alcunha.ilike.%${termo}%`,
+          )
+          .order("criado_em", { ascending: false });
+        data = res.data || [];
+      }
+
+      this.renderLinhaDoTempo(data, termo);
+    } catch (error) {
+      console.error("Erro na busca:", error);
+      areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao realizar busca.</p>`;
+    }
+  }
+
+  renderLinhaDoTempo(historico, termo) {
+    const area = document.getElementById("consultaResultadosArea");
+    if (historico.length === 0) {
+      area.innerHTML = `
+        <div style="text-align:center;padding:40px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+          <i class="fas fa-info-circle" style="font-size:32px;color:var(--cinza-medio);margin-bottom:12px;opacity:0.3;"></i>
+          <p>Nenhum histórico encontrado para "${termo}".</p>
+          <button onclick="app.abrirFormularioAbordagem('${termo}')" class="btn-primary" style="margin-top:16px;">
+            <i class="fas fa-plus"></i> Iniciar Primeiro Registro
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;">Histórico de Abordagens</h3>
+        <span class="badge" style="background:var(--azul-bandeira);color:white;padding:2px 8px;border-radius:10px;font-size:10px;">${historico.length} registros</span>
+      </div>
+      <div class="timeline" style="position:relative;padding-left:20px;border-left:2px solid var(--cinza-claro);margin-left:10px;">
+    `;
+
+    historico.forEach((h) => {
+      const data = new Date(h.criado_em).toLocaleString("pt-BR");
+      const detalhes =
+        this.abaConsultaAtiva === "veiculos"
+          ? `${h.marca_modelo} (${h.cor})`
+          : `${h.nome} ${h.alcunha ? `(${h.alcunha})` : ""}`;
+
+      html += `
+        <div class="timeline-item" style="margin-bottom:20px;position:relative;">
+          <div style="position:absolute;left:-26px;top:0;width:10px;height:10px;border-radius:50%;background:var(--azul-bandeira);border:2px solid var(--branco);"></div>
+          <div style="background:var(--branco);padding:12px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--cinza-medio);margin-bottom:4px;">
+              <span><i class="fas fa-calendar-alt"></i> ${data}</span>
+              <span><i class="fas fa-map-marker-alt"></i> ${h.local_abordagem || "Não informado"}</span>
+            </div>
+            <div style="font-weight:700;color:var(--azul-bandeira);font-size:13px;margin-bottom:4px;">${detalhes}</div>
+            <div style="font-size:12px;color:var(--cinza-escuro);line-height:1.4;background:var(--cinza-muito-claro);padding:8px;border-radius:4px;">
+              <strong>Motivo:</strong> ${h.motivo || "Não informado"}
+            </div>
+            <div style="margin-top:8px;display:flex;justify-content:flex-end;">
+              <button onclick="app.converterEmBO('${this.abaConsultaAtiva}', '${btoa(JSON.stringify(h))}')" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 8px;width:auto;">
+                <i class="fas fa-file-export"></i> Converter em BO
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    area.innerHTML = html;
+  }
+
+  abrirFormularioAbordagem(termoPreenchido = "") {
+    const area = document.getElementById("consultaResultadosArea");
+    const isVeiculo = this.abaConsultaAtiva === "veiculos";
+
+    let campos = isVeiculo
+      ? `
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Placa</label>
+        <input type="text" id="formPlaca" value="${termoPreenchido}" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;text-transform:uppercase;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Marca/Modelo</label>
+        <input type="text" id="formMarcaModelo" placeholder="Ex: Honda Civic" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Cor</label>
+        <input type="text" id="formCor" placeholder="Ex: Prata" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Nome do Condutor (Se houver)</label>
+        <input type="text" id="formCondutor" placeholder="Nome completo" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+    `
+      : `
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Nome Completo</label>
+        <input type="text" id="formNome" value="${termoPreenchido}" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Alcunha (Apelido)</label>
+        <input type="text" id="formAlcunha" placeholder="Ex: 'Neguinho', 'Magrão'" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+      <div class="form-group" style="display:flex;gap:8px;margin-bottom:12px;">
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">CPF</label>
+          <input type="text" id="formCpf" placeholder="000.000.000-00" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">RG</label>
+          <input type="text" id="formRg" placeholder="00.000.000-0" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;">Características Físicas/Vestimentas</label>
+        <textarea id="formCaracteristicas" rows="2" placeholder="Descreva roupas, tatuagens, cicatrizes..." style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;"></textarea>
+      </div>
+    `;
+
+    area.innerHTML = `
+      <div style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
+        <h3 style="font-size:14px;color:var(--azul-bandeira);margin-bottom:16px;">Novo Registro de Abordagem</h3>
+        ${campos}
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">Local da Abordagem</label>
+          <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;">
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">Motivo da Abordagem</label>
+          <textarea id="formMotivo" rows="3" placeholder="Descreva o que motivou a parada e o desfecho..." style="width:100%;padding:8px;border:1px solid var(--cinza-claro);border-radius:4px;"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:20px;">
+          <button onclick="app.salvarAbordagem()" class="btn-primary" style="flex:2;">
+            <i class="fas fa-save"></i> Salvar Registro
+          </button>
+          <button onclick="document.getElementById('consultaResultadosArea').innerHTML=''" class="btn-secondary" style="flex:1;">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  async salvarAbordagem() {
+    const isVeiculo = this.abaConsultaAtiva === "veiculos";
+    const user = authManager.getUser();
+
+    let dados = {
+      criado_por: user.id,
+      local_abordagem: document.getElementById("formLocal").value,
+      motivo: document.getElementById("formMotivo").value,
+      criado_em: new Date(
+        new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+      )
+        .toISOString()
+        .slice(0, 19),
+    };
+
+    if (isVeiculo) {
+      dados.placa = document.getElementById("formPlaca").value.toUpperCase();
+      dados.marca_modelo = document.getElementById("formMarcaModelo").value;
+      dados.cor = document.getElementById("formCor").value;
+      dados.condutor_nome = document.getElementById("formCondutor").value;
+      if (!dados.placa) return this.showToast("Placa é obrigatória", "warning");
+    } else {
+      dados.nome = document.getElementById("formNome").value;
+      dados.alcunha = document.getElementById("formAlcunha").value;
+      dados.cpf = document.getElementById("formCpf").value;
+      dados.rg = document.getElementById("formRg").value;
+      dados.caracteristicas_fisicas = document.getElementById(
+        "formCaracteristicas",
+      ).value;
+      if (!dados.nome) return this.showToast("Nome é obrigatório", "warning");
+    }
+
+    try {
+      const client = supabaseClient.getClient();
+      const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+      const { error } = await client.from(tabela).insert([dados]);
+
+      if (error) throw error;
+
+      this.showToast("Abordagem registrada com sucesso!", "success");
+      this.executarBuscaConsulta();
+    } catch (error) {
+      console.error("Erro ao salvar:", error);
+      this.showToast("Erro ao salvar registro", "error");
+    }
+  }
+
+  converterEmBO(tipo, dadosBase64) {
+    const dados = JSON.parse(atob(dadosBase64));
+    window._dadosPreenchimentoBO = {
+      tipo: tipo,
+      dados: dados,
+    };
+
+    this.navigateTo("nova-ocorrencia");
+    this.showToast("Iniciando BO com dados da abordagem", "info");
+  }
+
+  // ============================================
+  // MURAL DE AVISOS - COMPLETO COM MULTIPLOS ANEXOS
+  // ============================================
+
+  async renderMural(container) {
+    const isSupervisor = authManager.isSupervisor();
+
+    // Marcar como lido ao abrir o mural
+    await this.marcarMuralComoLido();
+
+    let html = `
+      <div class="container" style="padding-bottom:100px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-bullhorn" style="margin-right:8px;"></i>
+            Mural de Avisos
+          </h2>
+          ${
+            isSupervisor
+              ? `
+            <div style="display:flex;gap:8px;">
+              <button id="btnNovoAvisoMural" class="btn-primary" style="padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;font-weight:700;box-shadow:0 2px 12px rgba(0,63,135,0.25);">
+                <i class="fas fa-plus"></i> Novo Aviso
+              </button>
+            </div>
+          `
+              : ""
+          }
+        </div>
+
+        <!-- Busca Avançada -->
+        <div class="filtros-container" style="margin-bottom:12px;border-radius:16px;padding:12px;">
+          <div class="filtros-row">
+            <div class="filtro-group" style="flex:2;">
+              <label><i class="fas fa-search"></i> Buscar</label>
+              <input type="text" id="muralBusca" placeholder="Buscar por título ou conteúdo..." value="${this.filtrosMural.busca || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-tag"></i> Categoria</label>
+              <select id="muralFiltroTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
+                <option value="todos" ${this.filtrosMural.tipo === "todos" ? "selected" : ""}>Todos</option>
+                <option value="noticia" ${this.filtrosMural.tipo === "noticia" ? "selected" : ""}>Notícias</option>
+                <option value="procurado" ${this.filtrosMural.tipo === "procurado" ? "selected" : ""}>Procurados</option>
+                <option value="desaparecido" ${this.filtrosMural.tipo === "desaparecido" ? "selected" : ""}>Desaparecidos</option>
+                <option value="ordem_servico" ${this.filtrosMural.tipo === "ordem_servico" ? "selected" : ""}>O.S.</option>
+              </select>
+            </div>
+          </div>
+          <div class="filtros-row" style="margin-top:6px;">
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
+              <input type="date" id="muralDataInicio" value="${this.filtrosMural.dataInicio || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
+            </div>
+            <div class="filtro-group" style="flex:1;">
+              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
+              <input type="date" id="muralDataFim" value="${this.filtrosMural.dataFim || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
+            </div>
+            <div class="filtros-actions">
+              <button onclick="app.aplicarFiltrosMural()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
+                <i class="fas fa-search"></i>
+              </button>
+              <button onclick="app.limparFiltrosMural()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
+                <i class="fas fa-undo"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="muralListaArea">
+          <div style="text-align:center;padding:20px;"><div class="spinner-azul" style="margin:0 auto;"></div></div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    // Listeners
+    const btnNovo = document.getElementById("btnNovoAvisoMural");
+    if (btnNovo) {
+      btnNovo.addEventListener("click", () => this.abrirFormularioMural());
+    }
+
+    // Enter para buscar
+    document.getElementById("muralBusca")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") this.aplicarFiltrosMural();
+    });
+
+    // Injetar estilos do carrossel
+    this._injetarEstilosCarrossel();
+
+    await this.carregarAvisosMural();
+    this.atualizarBadgeMural();
+  }
+
+  async carregarAvisosMural() {
+    const area = document.getElementById("muralListaArea");
+    if (!area) return;
+
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) {
+        area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor</p>`;
+        return;
+      }
+
+      let query = client.from("mural_avisos").select("*");
+
+      // Filtro por tipo
+      if (this.filtrosMural.tipo !== "todos") {
+        query = query.eq("tipo", this.filtrosMural.tipo);
+      }
+
+      // Busca textual
+      if (this.filtrosMural.busca && this.filtrosMural.busca.trim() !== "") {
+        const termo = `%${this.filtrosMural.busca.trim()}%`;
+        query = query.or(`titulo.ilike.${termo},conteudo.ilike.${termo}`);
+      }
+
+      // Filtro por período
+      if (this.filtrosMural.dataInicio) {
+        query = query.gte("criado_em", this.filtrosMural.dataInicio);
+      }
+      if (this.filtrosMural.dataFim) {
+        query = query.lte("criado_em", this.filtrosMural.dataFim + "T23:59:59");
+      }
+
+      query = query
+        .order("prioridade", { ascending: false })
+        .order("criado_em", { ascending: false });
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      if (data.length === 0) {
+        area.innerHTML = `
+          <div style="text-align:center;padding:40px;color:var(--cinza-medio);">
+            <i class="fas fa-inbox" style="font-size:48px;display:block;margin-bottom:12px;color:var(--cinza-claro);"></i>
+            <p>Nenhum aviso encontrado</p>
+            ${
+              this.filtrosMural.busca ||
+              this.filtrosMural.tipo !== "todos" ||
+              this.filtrosMural.dataInicio ||
+              this.filtrosMural.dataFim
+                ? '<button onclick="app.limparFiltrosMural()" class="btn-secondary" style="margin-top:12px;padding:6px 16px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">Limpar Filtros</button>'
+                : ""
+            }
+          </div>
+        `;
+        return;
+      }
+
+      const isSupervisor = authManager.isSupervisor();
+      const user = authManager.getUser();
+
+      // Buscar comentários e reações para cada aviso
+      const avisosComDados = await Promise.all(
+        data.map(async (aviso) => {
+          // Comentários
+          const { data: comentarios } = await client
+            .from("mural_comentarios")
+            .select("*, usuarios(nome_completo)")
+            .eq("aviso_id", aviso.id)
+            .order("criado_em", { ascending: true });
+
+          // Reações
+          const { data: reacoes } = await client
+            .from("mural_reações")
+            .select("*")
+            .eq("aviso_id", aviso.id);
+
+          // Reação do usuário atual
+          const reacaoUsuario = reacoes?.find((r) => r.usuario_id === user?.id);
+
+          return {
+            ...aviso,
+            comentarios: comentarios || [],
+            reacoes: reacoes || [],
+            reacao_usuario: reacaoUsuario,
+            total_reacoes: reacoes?.length || 0,
+            anexos: aviso.anexos || [],
+          };
+        }),
+      );
+
+      const reacoesEmojis = {
+        like: "👍",
+        olhos: "👀",
+        alerta: "🚨",
+        ok: "✅",
+        duvida: "❓",
+      };
+
+      const labels = {
+        noticia: "Notícia",
+        procurado: "Procurado",
+        desaparecido: "Desaparecido",
+        ordem_servico: "Ordem de Serviço",
+      };
+
+      const iconMap = {
+        noticia: "📢",
+        procurado: "🔍",
+        desaparecido: "🆘",
+        ordem_servico: "📋",
+      };
+
+      area.innerHTML = avisosComDados
+        .map((aviso) => {
+          const temAnexos = aviso.anexos && aviso.anexos.length > 0;
+          const primeiraImagem = temAnexos ? aviso.anexos[0] : null;
+          const temMultiplas = temAnexos && aviso.anexos.length > 1;
+          const temVideo =
+            temAnexos && aviso.anexos.some((a) => a.tipo === "video");
+
+          return `
+          <div class="mural-card" id="mural-card-${aviso.id}">
+            ${aviso.prioridade ? `<div class="urgent-badge">🚨 Urgente</div>` : ""}
+            
+            <div class="card-header">
+              <span class="card-badge ${aviso.tipo}">
+                ${iconMap[aviso.tipo] || "📌"} ${labels[aviso.tipo] || aviso.tipo}
+              </span>
+              <span class="card-date">
+                <i class="fas fa-clock"></i>
+                ${new Date(aviso.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+
+            <div class="card-media">
+              ${
+                temAnexos
+                  ? `
+                <div class="media-wrapper" onclick="app.abrirCarrossel('${aviso.id}')">
+                  <img src="${primeiraImagem.url}" alt="${aviso.titulo}" loading="lazy">
+                  ${temMultiplas ? `<span class="media-count">+${aviso.anexos.length - 1}</span>` : ""}
+                  ${temVideo ? `<span class="media-play"><i class="fas fa-play"></i></span>` : ""}
+                </div>
+              `
+                  : ""
+              }
+              
+              <div class="media-content">
+                <h3 class="card-title">${aviso.titulo}</h3>
+                <p class="card-content" id="conteudo_${aviso.id}">${aviso.conteudo}</p>
+                ${
+                  aviso.conteudo.length > 150
+                    ? `
+                  <button class="btn-ver-mais" onclick="app.expandirConteudoMural('${aviso.id}')">
+                    <span id="expandBtn_${aviso.id}">Ver mais</span> <i class="fas fa-chevron-down" id="expandIcon_${aviso.id}"></i>
+                  </button>
+                `
+                    : ""
+                }
+              </div>
+            </div>
+            
+            <!-- Reações -->
+            <div class="reacoes">
+              ${Object.entries(reacoesEmojis)
+                .map(([key, emoji]) => {
+                  const count = aviso.reacoes.filter(
+                    (r) => r.tipo === key,
+                  ).length;
+                  const isUserReacted = aviso.reacao_usuario?.tipo === key;
+                  return `
+                  <button onclick="app.toggleReacao('${aviso.id}', '${key}')" 
+                    class="reacao-btn ${isUserReacted ? "ativo" : ""}">
+                    ${emoji}
+                    <span class="count">${count}</span>
+                  </button>
+                `;
+                })
+                .join("")}
+            </div>
+
+            <!-- Comentários -->
+            <div class="comentarios">
+              <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <input type="text" id="comentarioInput_${aviso.id}" 
+                       placeholder="Escreva um comentário..." 
+                       style="flex:1;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:12px;background:var(--branco-fumaca);">
+                <button onclick="app.adicionarComentario('${aviso.id}')" 
+                        class="btn-primary" 
+                        style="padding:4px 14px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">
+                  <i class="fas fa-paper-plane"></i>
+                </button>
+              </div>
+              
+              ${aviso.comentarios
+                .slice(0, 3)
+                .map(
+                  (c) => `
+                <div class="comentario-item">
+                  <div class="comentario-avatar">
+                    ${c.usuarios?.nome_completo?.charAt(0)?.toUpperCase() || "U"}
+                  </div>
+                  <div class="comentario-body">
+                    <div>
+                      <span class="comentario-nome">${c.usuarios?.nome_completo || "Usuário"}</span>
+                      <span class="comentario-data">${new Date(c.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <div class="comentario-texto">${c.comentario}</div>
+                  </div>
+                </div>
+              `,
+                )
+                .join("")}
+              
+              ${
+                aviso.comentarios.length > 3
+                  ? `
+                <div style="text-align:center;padding:4px 0;">
+                  <button onclick="app.verTodosComentarios('${aviso.id}')" 
+                          class="btn-secondary" 
+                          style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;">
+                    Ver todos (${aviso.comentarios.length})
+                  </button>
+                </div>
+              `
+                  : ""
+              }
+            </div>
+
+            <!-- Ações -->
+            <div style="padding:0 16px 12px 16px;display:flex;gap:8px;flex-wrap:wrap;">
+              ${
+                isSupervisor
+                  ? `
+                <button onclick="app.editarAvisoMural('${aviso.id}')" 
+                        class="btn-secondary" 
+                        style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
+                  <i class="fas fa-edit"></i> Editar
+                </button>
+                <button onclick="app.deletarAvisoMural('${aviso.id}')" 
+                        style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--erro-claro);color:var(--erro);border:none;cursor:pointer;">
+                  <i class="fas fa-trash"></i> Excluir
+                </button>
+              `
+                  : ""
+              }
+            </div>
+          </div>
+        `;
+        })
+        .join("");
+    } catch (error) {
+      console.error("Erro ao carregar mural:", error);
+      area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao carregar avisos: ${error.message}</p>`;
+    }
+  }
+
+  // ============================================
+  // MURAL - CARROSSEL DE IMAGENS
+  // ============================================
+
+  async abrirCarrossel(avisoId) {
+    try {
+      const client = supabaseClient.getClient();
+      const { data, error } = await client
+        .from("mural_avisos")
+        .select("anexos")
+        .eq("id", avisoId)
+        .single();
+
+      if (error) throw error;
+
+      const anexos = data?.anexos || [];
+      if (anexos.length === 0) {
+        this.showToast("Nenhuma imagem disponível", "info");
+        return;
+      }
+
+      let indexAtual = 0;
+      const imagens = anexos.filter((a) => a.tipo === "image");
+      const videos = anexos.filter((a) => a.tipo === "video");
+      const todos = [...imagens, ...videos];
+
+      if (todos.length === 0) {
+        this.showToast("Nenhum arquivo disponível", "info");
+        return;
+      }
+
+      const overlay = document.createElement("div");
+      overlay.className = "carrossel-modal-overlay";
+      overlay.innerHTML = `
+        <button class="carrossel-close" onclick="this.closest('.carrossel-modal-overlay').remove()">
+          <i class="fas fa-times"></i>
+        </button>
+        <div class="carrossel-container">
+          <div class="carrossel-slide" id="carrosselSlide">
+            ${todos
+              .map(
+                (item, i) => `
+              <div class="carrossel-item ${i === 0 ? "active" : ""}" data-index="${i}">
+                ${
+                  item.tipo === "video"
+                    ? `
+                  <video controls>
+                    <source src="${item.url}" type="video/mp4">
+                  </video>
+                `
+                    : `
+                  <img src="${item.url}" alt="Imagem ${i + 1}" loading="lazy">
+                `
+                }
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+          ${
+            todos.length > 1
+              ? `
+            <button class="carrossel-nav carrossel-prev" onclick="app._navegarCarrossel(-1)">
+              <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="carrossel-nav carrossel-next" onclick="app._navegarCarrossel(1)">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+            <div class="carrossel-dots">
+              ${todos
+                .map(
+                  (_, i) => `
+                <span class="carrossel-dot ${i === 0 ? "active" : ""}" onclick="app._irParaCarrossel(${i})"></span>
+              `,
+                )
+                .join("")}
+            </div>
+            <div class="carrossel-counter">1 / ${todos.length}</div>
+          `
+              : ""
+          }
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      // Armazenar dados para navegação
+      window._carrosselData = {
+        total: todos.length,
+        currentIndex: 0,
+        overlay: overlay,
+      };
+
+      // Fechar ao clicar fora
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+        }
+      });
+
+      // Teclas de navegação
+      document.addEventListener("keydown", function handler(e) {
+        if (e.key === "ArrowLeft") {
+          app._navegarCarrossel(-1);
+        } else if (e.key === "ArrowRight") {
+          app._navegarCarrossel(1);
+        } else if (e.key === "Escape") {
+          if (window._carrosselData?.overlay) {
+            window._carrosselData.overlay.remove();
+            document.removeEventListener("keydown", handler);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao abrir carrossel:", error);
+      this.showToast("Erro ao carregar imagens", "error");
+    }
+  }
+
+  _navegarCarrossel(direcao) {
+    const data = window._carrosselData;
+    if (!data) return;
+
+    const novoIndex = data.currentIndex + direcao;
+    if (novoIndex < 0 || novoIndex >= data.total) return;
+
+    data.currentIndex = novoIndex;
+    this._atualizarCarrosselUI();
+  }
+
+  _irParaCarrossel(index) {
+    const data = window._carrosselData;
+    if (!data || index < 0 || index >= data.total) return;
+
+    data.currentIndex = index;
+    this._atualizarCarrosselUI();
+  }
+
+  _atualizarCarrosselUI() {
+    const data = window._carrosselData;
+    if (!data) return;
+
+    // Atualizar slides
+    const slides = data.overlay.querySelectorAll(".carrossel-item");
+    slides.forEach((slide, i) => {
+      slide.classList.toggle("active", i === data.currentIndex);
+    });
+
+    // Atualizar dots
+    const dots = data.overlay.querySelectorAll(".carrossel-dot");
+    dots.forEach((dot, i) => {
+      dot.classList.toggle("active", i === data.currentIndex);
+    });
+
+    // Atualizar contador
+    const counter = data.overlay.querySelector(".carrossel-counter");
+    if (counter) {
+      counter.textContent = `${data.currentIndex + 1} / ${data.total}`;
+    }
+  }
+
+  _injetarEstilosCarrossel() {
+    if (document.getElementById("carrossel-styles")) return;
+
+    const styles = `
+      .carrossel-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.95);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .carrossel-close {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(255,255,255,0.2);
+        border: none;
+        color: white;
+        font-size: 28px;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s ease;
+        z-index: 10;
+      }
+
+      .carrossel-close:hover {
+        background: rgba(255,255,255,0.3);
+      }
+
+      .carrossel-container {
+        position: relative;
+        width: 90%;
+        max-width: 800px;
+        max-height: 90vh;
+      }
+
+      .carrossel-slide {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-height: 300px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .carrossel-item {
+        display: none;
+        width: 100%;
+        height: 100%;
+        max-height: 80vh;
+        text-align: center;
+      }
+
+      .carrossel-item.active {
+        display: block;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .carrossel-item img {
+        max-width: 100%;
+        max-height: 80vh;
+        object-fit: contain;
+        border-radius: 8px;
+      }
+
+      .carrossel-item video {
+        max-width: 100%;
+        max-height: 80vh;
+        border-radius: 8px;
+      }
+
+      .carrossel-nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        background: rgba(255,255,255,0.2);
+        border: none;
+        color: white;
+        font-size: 24px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s ease;
+        z-index: 5;
+      }
+
+      .carrossel-nav:hover {
+        background: rgba(255,255,255,0.3);
+      }
+
+      .carrossel-prev {
+        left: 10px;
+      }
+
+      .carrossel-next {
+        right: 10px;
+      }
+
+      .carrossel-dots {
+        position: absolute;
+        bottom: -40px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        z-index: 5;
+      }
+
+      .carrossel-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.3);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      .carrossel-dot.active {
+        background: white;
+      }
+
+      .carrossel-counter {
+        position: absolute;
+        bottom: -40px;
+        right: 0;
+        color: rgba(255,255,255,0.7);
+        font-size: 13px;
+        font-weight: 600;
+        z-index: 5;
+      }
+
+      .media-count {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 10px;
+        border-radius: 12px;
+      }
+
+      .media-play {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 48px;
+        height: 48px;
+        background: rgba(0,0,0,0.6);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 20px;
+      }
+
+      @media (max-width: 480px) {
+        .carrossel-nav {
+          width: 36px;
+          height: 36px;
+          font-size: 18px;
+        }
+        
+        .carrossel-prev {
+          left: 4px;
+        }
+        
+        .carrossel-next {
+          right: 4px;
+        }
+        
+        .carrossel-container {
+          width: 95%;
+        }
+        
+        .carrossel-dots {
+          bottom: -32px;
+        }
+        
+        .carrossel-counter {
+          bottom: -32px;
+        }
+      }
+    `;
+
+    const styleEl = document.createElement("style");
+    styleEl.id = "carrossel-styles";
+    styleEl.textContent = styles;
+    document.head.appendChild(styleEl);
+  }
+
+  // ============================================
+  // MURAL - EXPANDIR CONTEÚDO
+  // ============================================
+
+  expandirConteudoMural(id) {
+    const conteudo = document.getElementById(`conteudo_${id}`);
+    const btn = document.getElementById(`expandBtn_${id}`);
+    const icon = document.getElementById(`expandIcon_${id}`);
+
+    if (!conteudo) return;
+
+    if (conteudo.classList.contains("expanded")) {
+      conteudo.classList.remove("expanded");
+      btn.textContent = "Ver mais";
+      icon.className = "fas fa-chevron-down";
+    } else {
+      conteudo.classList.add("expanded");
+      btn.textContent = "Ver menos";
+      icon.className = "fas fa-chevron-up";
+    }
+  }
+
+  // ============================================
+  // MURAL - REAÇÕES
+  // ============================================
+
+  async toggleReacao(avisoId, tipo) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        this.showToast("Usuário não autenticado", "error");
+        return;
+      }
+
+      const client = supabaseClient.getClient();
+
+      // 1. Buscar TODAS as reações do usuário para este aviso
+      const { data: reacoesExistentes, error: checkError } = await client
+        .from("mural_reações")
+        .select("*")
+        .eq("aviso_id", avisoId)
+        .eq("usuario_id", user.id);
+
+      if (checkError) {
+        console.error("Erro ao verificar reações:", checkError);
+        this.showToast("Erro ao processar reação", "error");
+        return;
+      }
+
+      // 2. Verificar se o usuário já tem uma reação do mesmo tipo
+      const reacaoExistente = reacoesExistentes?.find((r) => r.tipo === tipo);
+
+      if (reacaoExistente) {
+        // REMOVER reação existente (toggle off)
+        const { error } = await client
+          .from("mural_reações")
+          .delete()
+          .eq("id", reacaoExistente.id);
+
+        if (error) throw error;
+
+        this.showToast("Reação removida", "info");
+      } else {
+        // 3. Se o usuário tem outras reações, remover todas (apenas uma reação por vez)
+        if (reacoesExistentes && reacoesExistentes.length > 0) {
+          // Remove todas as reações anteriores do usuário para este aviso
+          const idsParaRemover = reacoesExistentes.map((r) => r.id);
+          const { error: deleteError } = await client
+            .from("mural_reações")
+            .delete()
+            .in("id", idsParaRemover);
+
+          if (deleteError) throw deleteError;
+        }
+
+        // 4. Inserir nova reação
+        const { error: insertError } = await client
+          .from("mural_reações")
+          .insert({
+            aviso_id: avisoId,
+            usuario_id: user.id,
+            tipo: tipo,
+          });
+
+        if (insertError) throw insertError;
+
+        this.showToast("Reação adicionada!", "success");
+      }
+
+      // 5. Recarregar o mural para atualizar a interface
+      await this.carregarAvisosMural();
+    } catch (error) {
+      console.error("Erro ao alternar reação:", error);
+      this.showToast("Erro ao processar reação", "error");
+    }
+  }
+
+  // ============================================
+  // MURAL - COMENTÁRIOS
+  // ============================================
+
+  async adicionarComentario(avisoId) {
+    const input = document.getElementById(`comentarioInput_${avisoId}`);
+    if (!input) return;
+
+    const comentario = input.value.trim();
+    if (!comentario) {
+      this.showToast("Digite um comentário", "warning");
+      return;
+    }
+
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        this.showToast("Usuário não autenticado", "error");
+        return;
+      }
+
+      const client = supabaseClient.getClient();
+
+      const { data, error } = await client
+        .from("mural_comentarios")
+        .insert({
+          aviso_id: avisoId,
+          usuario_id: user.id,
+          comentario: comentario,
+          criado_em: new Date().toISOString(),
+        })
+        .select();
+
+      if (error) {
+        console.error("Erro detalhado ao inserir comentário:", error);
+        if (error.code === "42501") {
+          this.showToast(
+            "Erro de permissão. Contate o administrador para configurar as políticas RLS.",
+            "error",
+          );
+        } else {
+          this.showToast(
+            "Erro ao adicionar comentário: " + error.message,
+            "error",
+          );
+        }
+        return;
+      }
+
+      input.value = "";
+      this.showToast("Comentário adicionado!", "success");
+      this.carregarAvisosMural();
+    } catch (error) {
+      console.error("Erro ao adicionar comentário:", error);
+      this.showToast("Erro ao adicionar comentário", "error");
+    }
+  }
+
+  async verTodosComentarios(avisoId) {
+    try {
+      const client = supabaseClient.getClient();
+      const { data: comentarios, error } = await client
+        .from("mural_comentarios")
+        .select("*, usuarios(nome_completo)")
+        .eq("aviso_id", avisoId)
+        .order("criado_em", { ascending: true });
+
+      if (error) throw error;
+
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:500px;">
+          <div class="modal-header">
+            <div class="title">
+              <i class="fas fa-comments" style="margin-right:8px;color:var(--azul-bandeira);"></i>
+              Todos os Comentários
+            </div>
+            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
+            ${
+              comentarios.length === 0
+                ? `
+              <p style="text-align:center;color:var(--cinza-medio);padding:20px;">Nenhum comentário ainda</p>
+            `
+                : `
+              ${comentarios
+                .map(
+                  (c) => `
+                <div style="padding:8px 0;border-bottom:1px solid var(--cinza-claro);">
+                  <div style="display:flex;justify-content:space-between;">
+                    <strong style="color:var(--azul-bandeira);font-size:13px;">${c.usuarios?.nome_completo || "Usuário"}</strong>
+                    <span style="color:var(--cinza-medio);font-size:10px;">${new Date(c.criado_em).toLocaleString("pt-BR")}</span>
+                  </div>
+                  <div style="font-size:13px;margin-top:4px;">${c.comentario}</div>
+                </div>
+              `,
+                )
+                .join("")}
+            `
+            }
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+    } catch (error) {
+      console.error("Erro ao carregar comentários:", error);
+      this.showToast("Erro ao carregar comentários", "error");
+    }
+  }
+
+  // ============================================
+  // MURAL - CRIAÇÃO E EDIÇÃO DE AVISOS
+  // ============================================
+
+  abrirFormularioMural() {
+    const container =
+      document.getElementById("muralContent") ||
+      document.getElementById("page-mural");
+    container.innerHTML = `
+      <div class="container" style="padding-bottom:100px;">
+        <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">Novo Aviso no Mural</h2>
+        <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Título do Aviso</label>
+            <input type="text" id="muralTitulo" placeholder="Ex: Atenção: Veículo Suspeito" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Tipo de Aviso</label>
+            <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
+              <option value="noticia">📢 Notícia</option>
+              <option value="procurado">🔍 Procurado</option>
+              <option value="desaparecido">🆘 Desaparecido</option>
+              <option value="ordem_servico">📋 Ordem de Serviço</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Conteúdo/Descrição</label>
+            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..." style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;"></textarea>
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Fotos (máx 3)</label>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" onchange="app.previewMultiplasImagensMural(this)">
+              <button type="button" onclick="document.getElementById('muralArquivo').click()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:12px;">
+                <i class="fas fa-camera"></i> Selecionar Fotos (máx 3)
+              </button>
+              <div id="muralPreviewArea" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
+              <input type="hidden" id="muralImagens" value="">
+              <div class="input-hint">
+                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                Máximo 3 imagens. Cada imagem será comprimida para até 1MB.
+              </div>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="muralPrioridade" style="width:18px;height:18px;accent-color:var(--erro);">
+            <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:20px;">
+            <button onclick="app.salvarAvisoMural()" class="btn-primary" style="flex:2;border-radius:12px;">
+              <i class="fas fa-paper-plane"></i> Publicar no Mural
+            </button>
+            <button onclick="app.renderMural(document.getElementById('muralContent') || document.getElementById('page-mural'))" class="btn-secondary" style="flex:1;border-radius:12px;">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  previewMultiplasImagensMural(input) {
+    const area = document.getElementById("muralPreviewArea");
+    if (!area) return;
+
+    const files = input.files;
+    if (files.length > 3) {
+      this.showToast("Máximo 3 imagens permitidas", "warning");
+      input.value = "";
+      return;
+    }
+
+    area.innerHTML = "";
+    const imagensData = [];
+
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        this.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
+        continue;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const div = document.createElement("div");
+        div.style.cssText =
+          "position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
+        div.innerHTML = `
+          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
+          <button type="button" onclick="app.removerImagemMuralPreview(this)" 
+                  style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
+            <i class="fas fa-times"></i>
+          </button>
+        `;
+        area.appendChild(div);
+        imagensData.push(file);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Armazenar os arquivos para upload
+    window._muralArquivosTemp = imagensData;
+  }
+
+  removerImagemMuralPreview(btn) {
+    const div = btn.closest("div");
+    const img = div.querySelector("img");
+    if (img) {
+      // Remover do array temp
+      const files = window._muralArquivosTemp || [];
+      const index = files.findIndex((f) => {
+        // Comparação simples pelo nome
+        return f.name === img.alt || f.name === img.src.split("/").pop();
+      });
+      if (index > -1) {
+        files.splice(index, 1);
+        window._muralArquivosTemp = files;
+      }
+    }
+    div.remove();
+  }
+
+  // ============================================
+  // MURAL - COMPRESSÃO DE IMAGENS
+  // ============================================
+
+  comprimirImagem(file, maxWidth = 800, qualidade = 0.8) {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith("image/")) {
+        resolve(file);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const compressedFile = new File([blob], file.name, {
+                  type: "image/jpeg",
+                });
+                resolve(compressedFile);
+              } else {
+                resolve(file);
+              }
+            },
+            "image/jpeg",
+            qualidade,
+          );
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async processarAnexosMural(files) {
+    const maxFiles = 3;
+    const maxSize = 1 * 1024 * 1024; // 1MB
+    const anexos = [];
+
+    const filesToProcess = Array.from(files).slice(0, maxFiles);
+
+    for (const file of filesToProcess) {
+      try {
+        let fileProcessado = await this.comprimirImagem(file, 800, 0.8);
+
+        if (fileProcessado.size > maxSize) {
+          fileProcessado = await this.comprimirImagem(file, 600, 0.6);
+          if (fileProcessado.size > maxSize) {
+            this.showToast(
+              `Arquivo ${file.name} excede 1MB mesmo após compressão`,
+              "warning",
+            );
+            continue;
+          }
+        }
+
+        anexos.push({
+          nome: file.name,
+          tipo: "image",
+          tamanho: fileProcessado.size,
+          arquivo: fileProcessado,
+          url: null,
+        });
+      } catch (error) {
+        console.error("Erro ao processar anexo:", error);
+        this.showToast(`Erro ao processar ${file.name}`, "error");
+      }
+    }
+
+    return anexos;
+  }
+
+  async uploadAnexosMural(avisoId, anexos) {
+    if (!anexos || anexos.length === 0) return [];
+
+    const client = supabaseClient.getClient();
+    const urls = [];
+
+    for (const anexo of anexos) {
+      try {
+        const fileExt = anexo.arquivo.name.split(".").pop();
+        const fileName = `mural/${avisoId}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+
+        const { error: uploadError } = await client.storage
+          .from("anexos")
+          .upload(fileName, anexo.arquivo);
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = client.storage
+          .from("anexos")
+          .getPublicUrl(fileName);
+
+        urls.push({
+          url: urlData.publicUrl,
+          tipo: anexo.tipo,
+          ordem: urls.length,
+        });
+      } catch (error) {
+        console.error("Erro no upload do anexo:", error);
+      }
+    }
+
+    return urls;
+  }
+
+  async salvarAvisoMural() {
+    const user = authManager.getUser();
+    const titulo = document.getElementById("muralTitulo").value.trim();
+    const conteudo = document.getElementById("muralConteudo").value.trim();
+    const prioridade = document.getElementById("muralPrioridade").checked;
+    const tipo = document.getElementById("muralTipo").value;
+
+    if (!titulo || !conteudo) {
+      return this.showToast("Título e conteúdo são obrigatórios", "warning");
+    }
+
+    const files = window._muralArquivosTemp || [];
+    if (files.length > 3) {
+      return this.showToast("Máximo 3 imagens permitidas", "warning");
+    }
+
+    this.showToast("Processando imagens...", "info");
+
+    try {
+      const client = supabaseClient.getClient();
+
+      // Processar anexos
+      let anexos = [];
+      let anexosUrls = [];
+
+      if (files.length > 0) {
+        anexos = await this.processarAnexosMural(files);
+
+        if (anexos.length === 0) {
+          this.showToast("Nenhum anexo válido foi processado", "warning");
+        }
+      }
+
+      // Criar aviso
+      const dados = {
+        titulo,
+        tipo,
+        conteudo,
+        prioridade,
+        criado_por: user.id,
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
+        anexos: [],
+      };
+
+      const { data: aviso, error } = await client
+        .from("mural_avisos")
+        .insert([dados])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Upload dos anexos
+      if (anexos.length > 0) {
+        this.showToast("Enviando imagens...", "info");
+        anexosUrls = await this.uploadAnexosMural(aviso.id, anexos);
+
+        if (anexosUrls.length > 0) {
+          const { error: updateError } = await client
+            .from("mural_avisos")
+            .update({ anexos: anexosUrls })
+            .eq("id", aviso.id);
+
+          if (updateError) {
+            console.error("Erro ao atualizar anexos:", updateError);
+          }
+        }
+      }
+
+      // Limpar preview
+      document.getElementById("muralPreviewArea").innerHTML = "";
+      window._muralArquivosTemp = [];
+      document.getElementById("muralArquivo").value = "";
+
+      // Notificar guardas
+      await this.notificarNovoAviso(aviso);
+
+      this.showToast("Aviso publicado com sucesso!", "success");
+      this.renderMural(
+        document.getElementById("muralContent") ||
+          document.getElementById("page-mural"),
+      );
+    } catch (error) {
+      console.error("Erro ao salvar aviso:", error);
+      this.showToast(
+        "Erro ao publicar: " + (error.message || "Erro desconhecido"),
+        "error",
+      );
+    }
+  }
+
+  async editarAvisoMural(id) {
+    try {
+      const client = supabaseClient.getClient();
+      const { data: aviso, error } = await client
+        .from("mural_avisos")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error) throw error;
+
+      const container =
+        document.getElementById("muralContent") ||
+        document.getElementById("page-mural");
+      container.innerHTML = `
+        <div class="container" style="padding-bottom:100px;">
+          <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">Editar Aviso</h2>
+          <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Título do Aviso</label>
+              <input type="text" id="muralTitulo" value="${aviso.titulo}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Tipo de Aviso</label>
+              <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
+                <option value="noticia" ${aviso.tipo === "noticia" ? "selected" : ""}>📢 Notícia</option>
+                <option value="procurado" ${aviso.tipo === "procurado" ? "selected" : ""}>🔍 Procurado</option>
+                <option value="desaparecido" ${aviso.tipo === "desaparecido" ? "selected" : ""}>🆘 Desaparecido</option>
+                <option value="ordem_servico" ${aviso.tipo === "ordem_servico" ? "selected" : ""}>📋 Ordem de Serviço</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Conteúdo/Descrição</label>
+              <textarea id="muralConteudo" rows="4" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;">${aviso.conteudo}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""} style="width:18px;height:18px;accent-color:var(--erro);">
+              <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:20px;">
+              <button onclick="app.salvarEdicaoAviso('${id}')" class="btn-primary" style="flex:2;border-radius:12px;">
+                <i class="fas fa-save"></i> Salvar Alterações
+              </button>
+              <button onclick="app.renderMural(document.getElementById('muralContent') || document.getElementById('page-mural'))" class="btn-secondary" style="flex:1;border-radius:12px;">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    } catch (error) {
+      console.error("Erro ao carregar aviso para edição:", error);
+      this.showToast("Erro ao carregar aviso", "error");
+    }
+  }
+
+  async salvarEdicaoAviso(id) {
+    const titulo = document.getElementById("muralTitulo").value.trim();
+    const tipo = document.getElementById("muralTipo").value;
+    const conteudo = document.getElementById("muralConteudo").value.trim();
+    const prioridade = document.getElementById("muralPrioridade").checked;
+
+    if (!titulo || !conteudo) {
+      return this.showToast("Título e conteúdo são obrigatórios", "warning");
+    }
+
+    try {
+      const client = supabaseClient.getClient();
+      const { error } = await client
+        .from("mural_avisos")
+        .update({
+          titulo,
+          tipo,
+          conteudo,
+          prioridade,
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      this.showToast("Aviso atualizado com sucesso!", "success");
+      this.renderMural(
+        document.getElementById("muralContent") ||
+          document.getElementById("page-mural"),
+      );
+    } catch (error) {
+      console.error("Erro ao salvar edição:", error);
+      this.showToast("Erro ao salvar: " + error.message, "error");
+    }
+  }
+
+  async deletarAvisoMural(id) {
+    const confirmado = await this.confirmar(
+      "Tem certeza que deseja excluir este aviso?",
+    );
+    if (!confirmado) return;
+
+    try {
+      const client = supabaseClient.getClient();
+      const { error } = await client.from("mural_avisos").delete().eq("id", id);
+      if (error) throw error;
+
+      this.showToast("Aviso excluído", "success");
+      this.carregarAvisosMural();
+    } catch (error) {
+      console.error("Erro ao deletar:", error);
+      this.showToast("Erro ao excluir aviso", "error");
+    }
+  }
+
+  // ============================================
+  // MURAL - NOTIFICAÇÕES
+  // ============================================
+
+  async notificarNovoAviso(aviso) {
+    try {
+      const client = supabaseClient.getClient();
+
+      const { data: usuarios, error } = await client
+        .from("usuarios")
+        .select("id")
+        .eq("status", "ativo")
+        .neq("id", aviso.criado_por);
+
+      if (error) throw error;
+
+      if (usuarios.length === 0) return;
+
+      const notificacoes = usuarios.map((u) => ({
+        usuario_id: u.id,
+        titulo: `📢 Novo aviso: ${aviso.titulo}`,
+        mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
+        tipo: "sistema",
+        link: "#mural",
+        criado_em: new Date().toISOString(),
+      }));
+
+      const batchSize = 50;
+      for (let i = 0; i < notificacoes.length; i += batchSize) {
+        const batch = notificacoes.slice(i, i + batchSize);
+        const { error: insertError } = await client
+          .from("notificacoes")
+          .insert(batch);
+        if (insertError)
+          console.warn("Erro ao inserir notificações em lote:", insertError);
+      }
+
+      console.log(
+        `✅ ${notificacoes.length} notificações enviadas para o novo aviso`,
+      );
+    } catch (error) {
+      console.error("Erro ao enviar notificações:", error);
+    }
+  }
+
+  // ============================================
+  // MURAL - FILTROS
+  // ============================================
+
+  aplicarFiltrosMural() {
+    const busca = document.getElementById("muralBusca")?.value || "";
+    const tipo = document.getElementById("muralFiltroTipo")?.value || "todos";
+    const dataInicio = document.getElementById("muralDataInicio")?.value || "";
+    const dataFim = document.getElementById("muralDataFim")?.value || "";
+
+    if (dataInicio && dataFim && dataFim < dataInicio) {
+      this.showToast(
+        "Data final deve ser maior ou igual à data inicial",
+        "warning",
+      );
+      return;
+    }
+
+    this.filtrosMural = {
+      busca: busca,
+      tipo: tipo,
+      dataInicio: dataInicio,
+      dataFim: dataFim,
+    };
+
+    this.carregarAvisosMural();
+  }
+
+  limparFiltrosMural() {
+    this.filtrosMural = {
+      busca: "",
+      tipo: "todos",
+      dataInicio: "",
+      dataFim: "",
+    };
+
+    document.getElementById("muralBusca").value = "";
+    document.getElementById("muralFiltroTipo").value = "todos";
+    document.getElementById("muralDataInicio").value = "";
+    document.getElementById("muralDataFim").value = "";
+
+    this.carregarAvisosMural();
+    this.showToast("Filtros removidos", "info");
+  }
+
+  // ============================================
+  // MURAL - CONTROLE DE LEITURA (CORRIGIDO)
+  // ============================================
+
+  async atualizarBadgeMural() {
+    try {
+      const user = authManager.getUser();
+      if (!user) return;
+
+      const client = supabaseClient.getClient();
+
+      // Buscar último aviso lido pelo usuário
+      const { data: leitura, error: leituraError } = await client
+        .from("mural_leituras")
+        .select("ultimo_aviso_lido_id, lido_em")
+        .eq("usuario_id", user.id)
+        .maybeSingle();
+
+      if (leituraError && leituraError.code !== "PGRST116") {
+        console.error("Erro ao buscar leitura:", leituraError);
+        return;
+      }
+
+      // Buscar todos os avisos ativos
+      const { data: avisos, error: avisosError } = await client
+        .from("mural_avisos")
+        .select("id, criado_em")
+        .order("criado_em", { ascending: false });
+
+      if (avisosError) {
+        console.error("Erro ao buscar avisos:", avisosError);
+        return;
+      }
+
+      if (!avisos || avisos.length === 0) {
+        this._atualizarBadgeMuralUI(0);
+        return;
+      }
+
+      // Se não tem registro de leitura, todos são não lidos
+      if (!leitura) {
+        this._atualizarBadgeMuralUI(avisos.length);
+        return;
+      }
+
+      // Contar avisos criados APÓS a última leitura
+      const dataUltimaLeitura = new Date(leitura.lido_em);
+      const naoLidos = avisos.filter((a) => {
+        const dataAviso = new Date(a.criado_em);
+        return dataAviso > dataUltimaLeitura;
+      });
+
+      this._atualizarBadgeMuralUI(naoLidos.length);
+    } catch (error) {
+      console.error("Erro ao atualizar badge do mural:", error);
+    }
+  }
+
+  _atualizarBadgeMuralUI(count) {
+    const badge = document.getElementById("badge-mural");
+    if (badge) {
+      if (count > 0) {
+        badge.textContent = count > 9 ? "9+" : count;
+        badge.style.display = "flex";
+      } else {
+        badge.style.display = "none";
+      }
+    }
+  }
+
+  async marcarMuralComoLido() {
+    try {
+      const user = authManager.getUser();
+      if (!user) return;
+
+      const client = supabaseClient.getClient();
+
+      // Buscar o ID do último aviso (mais recente)
+      const { data: ultimoAviso, error } = await client
+        .from("mural_avisos")
+        .select("id")
+        .order("criado_em", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Erro ao buscar último aviso:", error);
+        return;
+      }
+
+      // Atualizar ou inserir registro de leitura
+      await client.from("mural_leituras").upsert(
+        {
+          usuario_id: user.id,
+          ultimo_aviso_lido_id: ultimoAviso?.id || null,
+          lido_em: new Date().toISOString(),
+        },
+        { onConflict: "usuario_id" },
+      );
+
+      // Atualizar badge
+      this.atualizarBadgeMural();
+    } catch (error) {
+      console.error("Erro ao marcar mural como lido:", error);
     }
   }
 
@@ -4035,7 +6975,7 @@ class App {
                     (o) => `
                   <tr onclick="app.verDetalhes('${o.id}')" style="cursor:pointer;">
                     <td style="font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || "Rascunho"}</td>
-                    <td style="font-size:10px;color:var(--cinza-medio);">${new Date(o.criado_em).toLocaleDateString("pt-BR")}</td>
+                    <td style="font-size:10px;color:var(--cinza-medio);">${this.formatarDataHoraLocal(o.criado_em)}</td>
                     <td>${this.getTipoLabel(o.tipo_ocorrencia)}</td>
                     <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || "-"}</td>
                     <td><span class="badge badge-${this.getStatusClass(o.status)}" style="font-size:9px;">${this.getStatusLabel(o.status)}</span></td>
@@ -4316,7 +7256,6 @@ class App {
       return;
     }
 
-    // Carregar dados
     const result = await authManager.listarLogsAcesso({ limit: 200 });
     if (!result.success) {
       container.innerHTML = `
@@ -4333,11 +7272,9 @@ class App {
     const logs = result.data || [];
     const stats = await authManager.getLogStats();
 
-    // Obter lista de usuários para o filtro
     const usuariosResult = await authManager.listarUsuarios();
     const usuarios = usuariosResult.success ? usuariosResult.data : [];
 
-    // Opções de ações para o filtro
     const acoes = [
       { value: "", label: "Todas" },
       { value: "login", label: "Login" },
@@ -4370,7 +7307,6 @@ class App {
           ${logs.length} registros encontrados
         </p>
 
-        <!-- Estatísticas rápidas -->
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">
           <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
             <div style="font-size:18px;font-weight:800;">${logs.length}</div>
@@ -4386,7 +7322,6 @@ class App {
           </div>
         </div>
 
-        <!-- Filtros -->
         <div class="filtros-container" style="margin-bottom:12px;">
           <div class="filtros-row">
             <div class="filtro-group" style="flex:1;">
@@ -4435,7 +7370,6 @@ class App {
           </div>
         </div>
 
-        <!-- Tabela de Logs -->
         <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
           <div class="table-wrapper">
             <table style="font-size:12px;">
@@ -4480,7 +7414,7 @@ class App {
                       return `
                       <tr>
                         <td style="font-size:11px;color:var(--cinza-medio);">
-                          ${new Date(log.data_hora).toLocaleString("pt-BR")}
+                          ${this.formatarDataHoraLocal(log.data_hora)}
                         </td>
                         <td>${log.usuarios?.nome_completo || "Desconhecido"}</td>
                         <td>
@@ -4583,7 +7517,6 @@ class App {
       return;
     }
 
-    // Atualizar a tabela com os logs filtrados
     const container = document.getElementById("logsContent");
     if (container) {
       this.filtrosLogs = filtros;
@@ -4626,6 +7559,8 @@ class App {
         dados: {
           forma_solicitacao: "",
           nome_solicitante: "",
+          cpf_solicitante: "",
+          rg_solicitante: "",
           telefone_solicitante: "",
           endereco_solicitante: "",
           codigo_municipal: "",
@@ -4777,9 +7712,6 @@ class App {
     }
   }
 
-  // ============================================
-  // ETAPA 1 - ORIGEM DA SOLICITAÇÃO
-  // ============================================
   renderEtapa1(dados) {
     const opcoesForma = [
       { value: "", label: "Selecione..." },
@@ -4823,7 +7755,48 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-user input-icon-left"></i>
-                    <input type="text" id="nome_solicitante" class="form-control" placeholder="Nome completo" value="${dados.nome_solicitante || ""}">
+                    <input type="text" id="nome_solicitante" class="form-control" 
+                        placeholder="Nome completo (deixe em branco para anônimo)" 
+                        value="${dados.nome_solicitante || ""}">
+                </div>
+                <div class="input-hint">
+                    <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                    Deixe em branco para registrar ocorrência anônima
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="cpf_solicitante">
+                    <i class="fas fa-id-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>
+                    CPF do Solicitante
+                </label>
+                <div class="input-wrapper">
+                    <i class="fas fa-id-card input-icon-left"></i>
+                    <input type="text" id="cpf_solicitante" class="form-control" 
+                        placeholder="123.456.789-00" 
+                        value="${dados.cpf_solicitante || ""}"
+                        maxlength="14">
+                </div>
+                <div class="input-hint">
+                    <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                    Opcional - para identificação do solicitante
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="rg_solicitante">
+                    <i class="fas fa-address-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>
+                    RG do Solicitante
+                </label>
+                <div class="input-wrapper">
+                    <i class="fas fa-address-card input-icon-left"></i>
+                    <input type="text" id="rg_solicitante" class="form-control" 
+                        placeholder="RG do solicitante" 
+                        value="${dados.rg_solicitante || ""}">
+                </div>
+                <div class="input-hint">
+                    <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
+                    Opcional - apenas se informado pelo solicitante
                 </div>
             </div>
 
@@ -4834,7 +7807,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-phone input-icon-left"></i>
-                    <input type="tel" id="telefone_solicitante" class="form-control" placeholder="(44) 99999-9999" value="${dados.telefone_solicitante || ""}">
+                    <input type="tel" id="telefone_solicitante" class="form-control" 
+                        placeholder="(44) 99999-9999" 
+                        value="${dados.telefone_solicitante || ""}">
                 </div>
             </div>
 
@@ -4845,7 +7820,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-map-marker-alt input-icon-left"></i>
-                    <input type="text" id="endereco_solicitante" class="form-control" placeholder="Rua, número, bairro" value="${dados.endereco_solicitante || ""}">
+                    <input type="text" id="endereco_solicitante" class="form-control" 
+                        placeholder="Rua, número, bairro" 
+                        value="${dados.endereco_solicitante || ""}">
                 </div>
             </div>
 
@@ -4856,7 +7833,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-hashtag input-icon-left"></i>
-                    <input type="text" id="codigo_municipal" class="form-control" placeholder="Código do imóvel" value="${dados.codigo_municipal || ""}">
+                    <input type="text" id="codigo_municipal" class="form-control" 
+                        placeholder="Código do imóvel" 
+                        value="${dados.codigo_municipal || ""}">
                 </div>
             </div>
 
@@ -4867,7 +7846,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-pen input-icon-left"></i>
-                    <input type="text" id="complemento" class="form-control" placeholder="Apto, bloco, ponto de referência" value="${dados.complemento || ""}">
+                    <input type="text" id="complemento" class="form-control" 
+                        placeholder="Apto, bloco, ponto de referência" 
+                        value="${dados.complemento || ""}">
                 </div>
             </div>
 
@@ -4878,7 +7859,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-location-dot input-icon-left"></i>
-                    <input type="text" id="bairro_solicitante" class="form-control" placeholder="Bairro" value="${dados.bairro_solicitante || ""}">
+                    <input type="text" id="bairro_solicitante" class="form-control" 
+                        placeholder="Bairro" 
+                        value="${dados.bairro_solicitante || ""}">
                 </div>
             </div>
 
@@ -4887,29 +7870,27 @@ class App {
                     <i class="fas fa-info-circle" style="margin-right:6px;color:var(--azul-bandeira);"></i>
                     Identificação adicional do solicitante
                 </label>
-                <textarea id="identificacao_adicional" class="form-control" rows="3" placeholder="Informações adicionais para identificar o solicitante">${dados.identificacao_adicional || ""}</textarea>
+                <textarea id="identificacao_adicional" class="form-control" rows="3" 
+                    placeholder="Informações adicionais para identificar o solicitante">${dados.identificacao_adicional || ""}</textarea>
             </div>
         `;
   }
 
-  // ============================================
-  // ETAPA 2 - DADOS DA OCORRÊNCIA
-  // ============================================
   renderEtapa2(dados) {
     const brasiliaNow = this.obterDataHoraBrasilia();
     let dataInicio = dados.data_hora_inicio;
     if (!dataInicio || dataInicio === "") {
-      dataInicio = this.formatarDataHoraLocal(brasiliaNow);
+      dataInicio = this.formatarDataHoraInput(brasiliaNow);
     } else {
       try {
         const dateObj = new Date(dataInicio);
         if (!isNaN(dateObj.getTime())) {
-          dataInicio = this.formatarDataHoraLocal(dateObj);
+          dataInicio = this.formatarDataHoraInput(dateObj);
         } else {
-          dataInicio = this.formatarDataHoraLocal(brasiliaNow);
+          dataInicio = this.formatarDataHoraInput(brasiliaNow);
         }
       } catch (e) {
-        dataInicio = this.formatarDataHoraLocal(brasiliaNow);
+        dataInicio = this.formatarDataHoraInput(brasiliaNow);
       }
     }
 
@@ -4928,7 +7909,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-barcode input-icon-left"></i>
-                    <input type="text" id="codigo_operacional" class="form-control" placeholder="Código da ocorrência" value="${dados.codigo_operacional || ""}">
+                    <input type="text" id="codigo_operacional" class="form-control" 
+                        placeholder="Código da ocorrência" 
+                        value="${dados.codigo_operacional || ""}">
                 </div>
             </div>
 
@@ -4957,7 +7940,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-map-marker-alt input-icon-left"></i>
-                    <input type="text" id="local_ocorrencia" class="form-control" placeholder="Endereço completo" required value="${dados.local_ocorrencia || ""}">
+                    <input type="text" id="local_ocorrencia" class="form-control" 
+                        placeholder="Endereço completo" required 
+                        value="${dados.local_ocorrencia || ""}">
                 </div>
             </div>
 
@@ -4968,7 +7953,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-road input-icon-left"></i>
-                    <input type="text" id="rodovia" class="form-control" placeholder="BR-123, km 45" value="${dados.rodovia || ""}">
+                    <input type="text" id="rodovia" class="form-control" 
+                        placeholder="BR-123, km 45" 
+                        value="${dados.rodovia || ""}">
                 </div>
             </div>
 
@@ -4979,7 +7966,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-location-dot input-icon-left"></i>
-                    <input type="text" id="bairro_ocorrencia" class="form-control" placeholder="Bairro" value="${dados.bairro_ocorrencia || ""}">
+                    <input type="text" id="bairro_ocorrencia" class="form-control" 
+                        placeholder="Bairro" 
+                        value="${dados.bairro_ocorrencia || ""}">
                 </div>
             </div>
 
@@ -4990,7 +7979,9 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-info-circle input-icon-left"></i>
-                    <input type="text" id="referencia" class="form-control" placeholder="Ponto de referência próximo" value="${dados.referencia || ""}">
+                    <input type="text" id="referencia" class="form-control" 
+                        placeholder="Ponto de referência próximo" 
+                        value="${dados.referencia || ""}">
                 </div>
             </div>
 
@@ -5001,7 +7992,8 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-calendar input-icon-left"></i>
-                    <input type="datetime-local" id="data_hora_inicio" class="form-control" required value="${dataInicio}">
+                    <input type="datetime-local" id="data_hora_inicio" class="form-control" required 
+                        value="${dataInicio}">
                 </div>
                 <div class="input-hint">
                     <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
@@ -5016,7 +8008,8 @@ class App {
                 </label>
                 <div class="input-wrapper">
                     <i class="fas fa-calendar-check input-icon-left"></i>
-                    <input type="datetime-local" id="data_hora_encerramento" class="form-control" value="${dataFim}">
+                    <input type="datetime-local" id="data_hora_encerramento" class="form-control" 
+                        value="${dataFim}">
                 </div>
                 <div class="input-hint">
                     <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
@@ -5026,9 +8019,6 @@ class App {
         `;
   }
 
-  // ============================================
-  // ETAPA 3 - QUALIFICAÇÃO DOS ENVOLVIDOS
-  // ============================================
   renderEtapa3(dados) {
     const envolvidos = dados.envolvidos || [];
 
@@ -5041,41 +8031,126 @@ class App {
             </div>
 
             <div id="listaEnvolvidos">
-                ${
-                  envolvidos.length === 0
-                    ? `
-                    <div class="lista-vazia">
-                        <i class="fas fa-users"></i>
-                        <p>Nenhum envolvido cadastrado</p>
-                        <p class="sub">Clique no botão abaixo para adicionar</p>
-                    </div>
-                `
-                    : `
-                    ${envolvidos
-                      .map(
-                        (env, index) => `
-                        <div class="envolvido-card">
-                            <div class="envolvido-header">
-                                <div>
-                                    <span class="badge badge-azul">
-                                        <i class="fas fa-user"></i> ${this.getTipoEnvolvidoLabel(env.tipo)}
-                                    </span>
-                                    <span style="font-weight:600;margin-left:8px;">${env.nome_completo || "Nome não informado"}</span>
-                                </div>
-                                <button type="button" class="remove-btn" onclick="app.removerEnvolvido(${index})">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
-                            </div>
-                            <div class="envolvido-detalhes">
-                                ${env.cpf ? `<span><i class="fas fa-id-card"></i> ${env.cpf}</span>` : ""}
-                                ${env.telefone ? `<span><i class="fas fa-phone"></i> ${env.telefone}</span>` : ""}
-                            </div>
+    `;
+
+    if (envolvidos.length === 0) {
+      html += `
+                <div class="lista-vazia">
+                    <i class="fas fa-users"></i>
+                    <p>Nenhum envolvido cadastrado</p>
+                    <p class="sub">Clique no botão abaixo para adicionar</p>
+                </div>
+            `;
+    } else {
+      envolvidos.forEach((env, index) => {
+        html += `
+            <div class="envolvido-item-modern">
+                <div class="header">
+                    <span class="badge badge-azul">
+                        <i class="fas fa-user" style="margin-right:4px;"></i>
+                        ${this.getTipoEnvolvidoLabel(env.tipo)}
+                    </span>
+                    <span class="nome">${env.nome_completo || "Nome não informado"}</span>
+                    <button type="button" class="remove-btn" onclick="app.removerEnvolvido(${index})" style="margin-left:auto;background:none;border:none;color:var(--erro);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+                <div class="detalhes-grid">
+                    ${
+                      env.cpf
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-id-card"></i>
+                            <span class="label">CPF:</span>
+                            <span class="valor">${env.cpf}</span>
                         </div>
-                    `,
-                      )
-                      .join("")}
-                `
-                }
+                    `
+                        : ""
+                    }
+                    ${
+                      env.rg
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-address-card"></i>
+                            <span class="label">RG:</span>
+                            <span class="valor">${env.rg}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.telefone
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-phone"></i>
+                            <span class="label">Tel:</span>
+                            <span class="valor">${env.telefone}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.data_nascimento
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-calendar-alt"></i>
+                            <span class="label">Nasc:</span>
+                            <span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.endereco
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-map-marker-alt"></i>
+                            <span class="label">End:</span>
+                            <span class="valor">${env.endereco}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.bairro
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-location-dot"></i>
+                            <span class="label">Bairro:</span>
+                            <span class="valor">${env.bairro}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.cidade
+                        ? `
+                        <div class="campo">
+                            <i class="fas fa-city"></i>
+                            <span class="label">Cidade:</span>
+                            <span class="valor">${env.cidade}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                    ${
+                      env.observacoes
+                        ? `
+                        <div class="campo" style="grid-column: 1 / -1;">
+                            <i class="fas fa-pencil-alt"></i>
+                            <span class="label">Obs:</span>
+                            <span class="valor">${env.observacoes}</span>
+                        </div>
+                    `
+                        : ""
+                    }
+                </div>
+            </div>
+        `;
+      });
+    }
+
+    html += `
             </div>
 
             <button type="button" class="btn-add" onclick="app.adicionarEnvolvido()">
@@ -5086,9 +8161,6 @@ class App {
     return html;
   }
 
-  // ============================================
-  // ETAPA 4 - OBSERVAÇÕES E RELATO DOS FATOS
-  // ============================================
   renderEtapa4(dados) {
     return `
             <div class="form-group">
@@ -5096,7 +8168,8 @@ class App {
                     <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
                     Observações e Relato dos Fatos <span class="required">*</span>
                 </label>
-                <textarea id="observacoes" class="form-control" rows="8" placeholder="Descreva detalhadamente o ocorrido..." required>${dados.observacoes || ""}</textarea>
+                <textarea id="observacoes" class="form-control" rows="8" 
+                    placeholder="Descreva detalhadamente o ocorrido..." required>${dados.observacoes || ""}</textarea>
                 <div class="input-hint">
                     <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
                     Seja o mais detalhado possível
@@ -5105,9 +8178,6 @@ class App {
         `;
   }
 
-  // ============================================
-  // ETAPA 5 - ANEXOS
-  // ============================================
   renderEtapa5(dados) {
     const anexos = dados.anexos || [];
 
@@ -5174,9 +8244,6 @@ class App {
         `;
   }
 
-  // ============================================
-  // ETAPA 6 - REVISÃO E FINALIZAÇÃO
-  // ============================================
   renderEtapa6(dados) {
     const envolvidos = dados.envolvidos || [];
     const anexos = dados.anexos || [];
@@ -5184,6 +8251,8 @@ class App {
     const camposSolicitante = [
       { label: "Forma", valor: dados.forma_solicitacao },
       { label: "Solicitante", valor: dados.nome_solicitante },
+      { label: "CPF do Solicitante", valor: dados.cpf_solicitante },
+      { label: "RG do Solicitante", valor: dados.rg_solicitante },
       { label: "Telefone", valor: dados.telefone_solicitante },
       { label: "Endereço", valor: dados.endereco_solicitante },
       { label: "Código Municipal", valor: dados.codigo_municipal },
@@ -5375,6 +8444,27 @@ class App {
         });
       });
 
+    const cpfInput = document.getElementById("cpf_solicitante");
+    if (cpfInput) {
+      cpfInput.addEventListener("input", function (e) {
+        let value = this.value.replace(/\D/g, "");
+        if (value.length > 11) value = value.slice(0, 11);
+        let formatted = "";
+        if (value.length > 0) {
+          formatted = value.replace(
+            /(\d{3})(\d{3})(\d{3})(\d{2})/,
+            "$1.$2.$3-$4",
+          );
+          if (value.length <= 3) formatted = value;
+          else if (value.length <= 6)
+            formatted = value.replace(/(\d{3})(\d{1,3})/, "$1.$2");
+          else if (value.length <= 9)
+            formatted = value.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+        }
+        this.value = formatted;
+      });
+    }
+
     const fileInput = document.getElementById("fileInput");
     if (fileInput) {
       fileInput.addEventListener("change", (e) => {
@@ -5394,6 +8484,10 @@ class App {
           document.getElementById("forma_solicitacao")?.value || "";
         dados.nome_solicitante =
           document.getElementById("nome_solicitante")?.value || "";
+        dados.cpf_solicitante =
+          document.getElementById("cpf_solicitante")?.value || "";
+        dados.rg_solicitante =
+          document.getElementById("rg_solicitante")?.value || "";
         dados.telefone_solicitante =
           document.getElementById("telefone_solicitante")?.value || "";
         dados.endereco_solicitante =
@@ -5799,25 +8893,43 @@ class App {
       try {
         const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
         if (!isNaN(dateObj.getTime())) {
-          dadosParaSalvar.data_hora_inicio = dateObj.toISOString();
+          const timezoneOffset = dateObj.getTimezoneOffset();
+          const adjustedDate = new Date(
+            dateObj.getTime() - timezoneOffset * 60000,
+          );
+          dadosParaSalvar.data_hora_inicio = adjustedDate.toISOString();
+          console.log(
+            "📅 Data/Hora Início (sem conversão):",
+            dadosParaSalvar.data_hora_inicio,
+          );
         } else {
-          const brasiliaNow = this.obterDataHoraBrasilia();
-          dadosParaSalvar.data_hora_inicio = brasiliaNow.toISOString();
+          const agora = new Date();
+          const offset = agora.getTimezoneOffset();
+          const adjusted = new Date(agora.getTime() - offset * 60000);
+          dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
         }
       } catch (e) {
-        const brasiliaNow = this.obterDataHoraBrasilia();
-        dadosParaSalvar.data_hora_inicio = brasiliaNow.toISOString();
+        const agora = new Date();
+        const offset = agora.getTimezoneOffset();
+        const adjusted = new Date(agora.getTime() - offset * 60000);
+        dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
       }
     } else {
-      const brasiliaNow = this.obterDataHoraBrasilia();
-      dadosParaSalvar.data_hora_inicio = brasiliaNow.toISOString();
+      const agora = new Date();
+      const offset = agora.getTimezoneOffset();
+      const adjusted = new Date(agora.getTime() - offset * 60000);
+      dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
     }
 
     if (dadosParaSalvar.data_hora_encerramento) {
       try {
         const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
         if (!isNaN(dateObj.getTime())) {
-          dadosParaSalvar.data_hora_encerramento = dateObj.toISOString();
+          const timezoneOffset = dateObj.getTimezoneOffset();
+          const adjustedDate = new Date(
+            dateObj.getTime() - timezoneOffset * 60000,
+          );
+          dadosParaSalvar.data_hora_encerramento = adjustedDate.toISOString();
         } else {
           dadosParaSalvar.data_hora_encerramento = null;
         }
@@ -5828,7 +8940,6 @@ class App {
       dadosParaSalvar.data_hora_encerramento = null;
     }
 
-    // ===== CAPTURAR GEOLOCALIZAÇÃO =====
     const localizacao = await this.obterLocalizacao();
 
     const result = await ocorrenciaManager.criar({
@@ -5904,6 +9015,8 @@ class App {
       dados: {
         forma_solicitacao: "",
         nome_solicitante: "",
+        cpf_solicitante: "",
+        rg_solicitante: "",
         telefone_solicitante: "",
         endereco_solicitante: "",
         codigo_municipal: "",
@@ -6479,7 +9592,7 @@ class App {
                   .map(
                     (log) => `
                   <tr style="border-bottom:1px solid var(--cinza-claro);">
-                    <td style="padding:6px 8px;">${new Date(log.data_hora).toLocaleString("pt-BR")}</td>
+                    <td style="padding:6px 8px;">${this.formatarDataHoraLocal(log.data_hora)}</td>
                     <td style="padding:6px 8px;">${log.acao || "login"}</td>
                     <td style="padding:6px 8px;">${log.ip || "-"}</td>
                   </tr>
@@ -6851,7 +9964,7 @@ class App {
   }
 
   // ============================================
-  // LOGIN
+  // LOGIN - SETUP LISTENERS
   // ============================================
 
   setupListeners() {
@@ -6860,76 +9973,136 @@ class App {
       if (event === "login") {
         this.atualizarHeader();
         this.carregarRascunho();
+        sessionManager.resetSession();
         this.route();
       } else if (event === "logout") {
         this.route();
       }
     });
 
+    // ===== BOTTOM NAV - INÍCIO =====
     document
-      .getElementById("menuToggle")
-      ?.addEventListener("click", () => this.toggleMenu());
+      .querySelectorAll(".nav-item[data-page='dashboard']")
+      .forEach((item) => {
+        item.addEventListener("click", () => {
+          if (
+            this.currentPage === "nova-ocorrencia" &&
+            this.alteracoesNaoSalvas
+          ) {
+            this.paginaDestino = "dashboard";
+            this.paramsDestino = null;
+            this.perguntarSalvarRascunho("dashboard");
+          } else {
+            this.navigateTo("dashboard");
+          }
+        });
+      });
+
+    // ===== BOTTOM NAV - MURAL =====
     document
-      .getElementById("menuOverlay")
-      ?.addEventListener("click", () => this.closeMenu());
+      .querySelectorAll(".nav-item[data-page='mural']")
+      .forEach((item) => {
+        item.addEventListener("click", () => {
+          if (
+            this.currentPage === "nova-ocorrencia" &&
+            this.alteracoesNaoSalvas
+          ) {
+            this.paginaDestino = "mural";
+            this.paramsDestino = null;
+            this.perguntarSalvarRascunho("mural");
+          } else {
+            this.navigateTo("mural");
+          }
+        });
+      });
 
-    document.querySelectorAll(".menu-item[data-page]").forEach((item) => {
-      item.addEventListener("click", (e) => {
-        if (!authManager.isLoggedIn()) {
-          this.closeMenu();
-          this.navigateTo("login");
-          return;
-        }
+    // ===== BOTTOM NAV - NOVA OCORRÊNCIA =====
+    document
+      .querySelectorAll(".nav-item[data-page='nova-ocorrencia']")
+      .forEach((item) => {
+        item.addEventListener("click", () => {
+          if (
+            this.currentPage === "nova-ocorrencia" &&
+            this.alteracoesNaoSalvas
+          ) {
+            this.showToast("Você já está na página de nova ocorrência", "info");
+            return;
+          }
+          this.navigateTo("nova-ocorrencia");
+        });
+      });
 
-        const page = item.dataset.page;
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
-          e.preventDefault();
-          this.paginaDestino = page;
-          this.paramsDestino = null;
-          this.perguntarSalvarRascunho(page);
-        } else {
-          this.navigateTo(page);
-        }
-        this.closeMenu();
+    // ===== BOTTOM NAV - MINHAS OCORRÊNCIAS =====
+    document
+      .querySelectorAll(".nav-item[data-page='ocorrencias']")
+      .forEach((item) => {
+        item.addEventListener("click", () => {
+          if (
+            this.currentPage === "nova-ocorrencia" &&
+            this.alteracoesNaoSalvas
+          ) {
+            this.paginaDestino = "ocorrencias";
+            this.paramsDestino = null;
+            this.perguntarSalvarRascunho("ocorrencias");
+          } else {
+            this.navigateTo("ocorrencias");
+          }
+        });
+      });
+
+    // ===== BOTTOM NAV - MAIS (BOTTOM SHEET) =====
+    const navMais = document.getElementById("navMais");
+    if (navMais) {
+      navMais.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log("🔘 Botão 'Mais' clicado - abrindo bottom sheet");
+        this.toggleBottomSheet();
+      });
+    } else {
+      console.warn("⚠️ Elemento #navMais não encontrado no DOM");
+    }
+
+    document.querySelectorAll(".nav-item[data-page='mais']").forEach((item) => {
+      item.addEventListener("click", () => {
+        this.toggleBottomSheet();
       });
     });
 
-    document
-      .getElementById("btnLogout")
-      ?.addEventListener("click", async () => {
-        this.closeMenu();
+    // ===== BOTTOM SHEET OVERLAY =====
+    const overlay = document.getElementById("bottomSheetOverlay");
+    if (overlay) {
+      overlay.addEventListener("click", () => this.closeBottomSheet());
+    }
 
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
-          this.paginaDestino = "login";
-          this.paramsDestino = null;
-          this.perguntarSalvarRascunho("login", async () => {
-            await authManager.logout();
-            this.route();
-            this.showToast("Logout realizado", "info");
-          });
-        } else {
-          await authManager.logout();
-          this.route();
-          this.showToast("Logout realizado", "info");
-        }
-      });
+    // ===== BEFOREUNLOAD =====
+    window.addEventListener("beforeunload", (e) => {
+      if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
+        e.preventDefault();
+        e.returnValue =
+          "Você tem alterações não salvas. Deseja realmente sair?";
+        return e.returnValue;
+      }
+    });
 
-    document
-      .getElementById("loginForm")
-      ?.addEventListener("submit", async (e) => {
+    // ===== ESC PARA FECHAR BOTTOM SHEET =====
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") this.closeBottomSheet();
+    });
+
+    // ===== LOGIN FORM =====
+    const loginForm = document.getElementById("loginForm");
+    if (loginForm) {
+      loginForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         await this.handleLogin();
       });
+    }
 
-    document
-      .querySelector(".toggle-password")
-      ?.addEventListener("click", (e) => {
+    // ===== TOGGLE SENHA =====
+    const toggleBtn = document.querySelector(".toggle-password");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (e) => {
         const input = document.getElementById("loginSenha");
         const icon = e.currentTarget.querySelector("i");
         if (input.type === "password") {
@@ -6940,33 +10113,7 @@ class App {
           icon.className = "fas fa-eye";
         }
       });
-
-    document.getElementById("fab")?.addEventListener("click", () => {
-      this.navigateTo("nova-ocorrencia");
-    });
-
-    window.addEventListener("beforeunload", (e) => {
-      if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
-        e.preventDefault();
-        e.returnValue =
-          "Você tem alterações não salvas. Deseja realmente sair?";
-        return e.returnValue;
-      }
-    });
-
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") this.closeMenu();
-    });
-  }
-
-  toggleMenu() {
-    document.getElementById("sideMenu").classList.toggle("open");
-    document.getElementById("menuOverlay").classList.toggle("active");
-  }
-
-  closeMenu() {
-    document.getElementById("sideMenu").classList.remove("open");
-    document.getElementById("menuOverlay").classList.remove("active");
+    }
   }
 
   async handleLogin() {
@@ -6995,6 +10142,8 @@ class App {
 
       this.atualizarHeader();
       await this.carregarRascunho();
+
+      sessionManager.resetSession();
 
       if (result.primeiro_acesso) {
         this.showPrimeiroAcesso();
@@ -7061,6 +10210,56 @@ class App {
             </div>
         `;
     this.showPage("login");
+  }
+
+  // ============================================
+  // LOGS PERICIAIS E AUDITORIA
+  // ============================================
+
+  async registrarLogPericial(
+    acao,
+    tabela = null,
+    registroId = null,
+    dadosAnt = null,
+    dadosNov = null,
+  ) {
+    try {
+      const user = authManager.getUser();
+      const loc = await this.obterLocalizacao();
+      const client = supabaseClient.getClient();
+
+      const logData = {
+        usuario_id: user?.id,
+        acao: acao,
+        tabela_afetada: tabela,
+        registro_id: registroId?.toString(),
+        dados_anteriores: dadosAnt,
+        dados_novos: dadosNov,
+        ip_address: await this.obterIP(),
+        user_agent: navigator.userAgent,
+        latitude: loc.latitude?.toString(),
+        longitude: loc.longitude?.toString(),
+        criado_em: new Date().toISOString(),
+      };
+
+      await client.from("logs_periciais").insert([logData]);
+    } catch (error) {
+      console.error("Erro ao registrar log pericial:", error);
+    }
+  }
+
+  // ============================================
+  // SISTEMA DE NOTIFICAÇÕES (BADGES)
+  // ============================================
+
+  async obterIP() {
+    try {
+      const response = await fetch("https://api.ipify.org?format=json");
+      const data = await response.json();
+      return data.ip;
+    } catch (error) {
+      return null;
+    }
   }
 }
 

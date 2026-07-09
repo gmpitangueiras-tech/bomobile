@@ -23,6 +23,19 @@
     <!-- CSS -->
     <link rel="stylesheet" href="css/style.css" />
 
+    <!-- ===== LEAFLET - MAPA ===== -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+
     <!-- Manifest PWA -->
     <link rel="manifest" href="manifest.json" />
 
@@ -53,9 +66,7 @@
       <header id="app-header" style="display: none">
         <div class="header-content">
           <div class="logo-area">
-            <button id="menuToggle" class="menu-btn" aria-label="Abrir menu">
-              <i class="fas fa-bars"></i>
-            </button>
+            <!-- Botão menu removido -->
             <div
               style="
                 width: 36px;
@@ -88,90 +99,6 @@
           </div>
         </div>
       </header>
-
-      <!-- ========== MENU LATERAL ========== -->
-      <div id="menuOverlay" class="menu-overlay"></div>
-      <nav id="sideMenu" class="side-menu">
-        <div class="menu-header">
-          <div class="avatar" id="menuAvatar">
-            <i class="fas fa-user" style="font-size: 28px"></i>
-          </div>
-          <div class="nome" id="menuNome">Carregando...</div>
-          <div class="matricula" id="menuMatricula"></div>
-          <div class="perfil-badge" id="menuPerfil">Guarda</div>
-        </div>
-        <div class="menu-items">
-          <button class="menu-item active" data-page="dashboard">
-            <i class="fas fa-home"></i>
-            <span>Início</span>
-          </button>
-          <button class="menu-item" data-page="ocorrencias">
-            <i class="fas fa-file-alt"></i>
-            <span>Minhas Ocorrências</span>
-          </button>
-          <button class="menu-item" data-page="nova-ocorrencia">
-            <i class="fas fa-plus-circle"></i>
-            <span>Nova Ocorrência</span>
-          </button>
-          <button
-            class="menu-item"
-            data-page="retificacoes"
-            id="menuRetificacoes"
-            style="display: none"
-          >
-            <i class="fas fa-sync-alt"></i>
-            <span>Retificações Pendentes</span>
-          </button>
-          <button
-            class="menu-item"
-            data-page="relatorios"
-            id="menuRelatorios"
-            style="display: none"
-          >
-            <i class="fas fa-chart-bar"></i>
-            <span>Relatórios</span>
-          </button>
-          <!-- ===== NOVO BOTÃO DE LOGS ===== -->
-          <button
-            class="menu-item"
-            data-page="logs"
-            id="menuLogs"
-            style="display: none"
-          >
-            <i class="fas fa-history"></i>
-            <span>Logs do Sistema</span>
-          </button>
-          <button
-            class="menu-item"
-            data-page="usuarios"
-            id="menuUsuarios"
-            style="display: none"
-          >
-            <i class="fas fa-users"></i>
-            <span>Gerenciar Usuários</span>
-          </button>
-          <div class="menu-divider"></div>
-          <button class="menu-item" data-page="perfil">
-            <i class="fas fa-user"></i>
-            <span>Meu Perfil</span>
-          </button>
-          <button class="menu-item" id="btnLogout">
-            <i class="fas fa-sign-out-alt"></i>
-            <span>Sair</span>
-          </button>
-        </div>
-        <div class="menu-footer">
-          <span>
-            <i class="fas fa-code" style="margin-right: 4px"></i>
-            v1.0.0
-          </span>
-          <span class="separator">•</span>
-          <span>
-            <i class="fas fa-building" style="margin-right: 4px"></i>
-            Pitangueiras - PR
-          </span>
-        </div>
-      </nav>
 
       <!-- ========== CONTEÚDO PRINCIPAL ========== -->
       <main id="main-content">
@@ -312,6 +239,20 @@
           </div>
         </div>
 
+        <!-- Consulta Operacional -->
+        <div id="page-consulta" class="page" style="display: none">
+          <div class="container" id="consultaContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Mural de Avisos -->
+        <div id="page-mural" class="page" style="display: none">
+          <div class="container" id="muralContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
         <!-- Ocorrências -->
         <div id="page-ocorrencias" class="page" style="display: none">
           <div class="container" id="ocorrenciasContent">
@@ -347,7 +288,7 @@
           </div>
         </div>
 
-        <!-- ===== NOVA PÁGINA DE LOGS ===== -->
+        <!-- Logs do Sistema -->
         <div id="page-logs" class="page" style="display: none">
           <div class="container" id="logsContent">
             <!-- Carregado via JavaScript -->
@@ -369,11 +310,59 @@
         </div>
       </main>
 
-      <!-- ========== FAB - Botão Flutuante ========== -->
-      <button id="fab" class="fab" style="display: none">
-        <i class="fas fa-plus"></i>
-        <span class="fab-label">Nova Ocorrência</span>
-      </button>
+      <!-- ========== BOTTOM NAVIGATION (sempre visível, exceto login) ========== -->
+      <nav id="bottom-nav" class="bottom-nav" style="display: none">
+        <!-- Início -->
+        <button class="nav-item active" data-page="dashboard">
+          <i class="fas fa-th-large"></i>
+          <span>Início</span>
+        </button>
+
+        <!-- Mural -->
+        <button class="nav-item" data-page="mural">
+          <div class="icon-wrapper">
+            <i class="fas fa-bullhorn"></i>
+            <span id="badge-mural" class="badge-count" style="display: none"
+              >0</span
+            >
+          </div>
+          <span>Mural</span>
+        </button>
+
+        <!-- Novo BO (central com destaque) -->
+        <button class="nav-item" data-page="nova-ocorrencia">
+          <div class="nav-fab">
+            <i class="fas fa-plus"></i>
+          </div>
+          <span>Novo BO</span>
+        </button>
+
+        <!-- Minhas Ocorrências -->
+        <button class="nav-item" data-page="ocorrencias">
+          <i class="fas fa-list-ul"></i>
+          <span>Ocorrências</span>
+        </button>
+
+        <!-- Mais (abre bottom sheet) -->
+        <button class="nav-item" id="navMais">
+          <i class="fas fa-ellipsis-h"></i>
+          <span>Mais</span>
+        </button>
+      </nav>
+
+      <!-- ========== BOTTOM SHEET (painel "Mais") ========== -->
+      <div
+        id="bottomSheetOverlay"
+        class="bottom-sheet-overlay"
+        style="display: none"
+      >
+        <div id="bottomSheet" class="bottom-sheet">
+          <div class="bottom-sheet-handle"></div>
+          <div class="bottom-sheet-items">
+            <!-- Itens serão inseridos dinamicamente pelo JavaScript -->
+          </div>
+        </div>
+      </div>
 
       <!-- ========== TOAST - Notificações ========== -->
       <div id="toastContainer"></div>
@@ -385,6 +374,10 @@
     <script src="js/supabase.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/ocorrencia.js"></script>
+    <script src="js/session.js"></script>
     <script src="js/app.js"></script>
+    <!-- Bibliotecas para PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
   </body>
 </html>

@@ -2,20 +2,20 @@
   "name": "Guarda Municipal - Pitangueiras/PR",
   "short_name": "Guarda Municipal",
   "description": "Sistema de Registro de Ocorrências da Guarda Municipal de Pitangueiras - PR",
-  "start_url": "/bomobile/",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#003F87",
   "theme_color": "#003F87",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/bomobile/assets/icons/icon-192x192.png",
+      "src": "assets/icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/bomobile/assets/icons/icon-512x512.png",
+      "src": "assets/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

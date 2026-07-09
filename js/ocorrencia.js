@@ -16,7 +16,7 @@
  * - Suporte a geolocalização (latitude/longitude)
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
  * - Logs: todas as ações importantes são registradas na tabela logs_acesso
- * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada)
+ * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada com cache)
  */
 
 class OcorrenciaManager {
@@ -34,6 +34,8 @@ class OcorrenciaManager {
     return [
       // Dados do Solicitante (correção cadastral)
       "nome_solicitante",
+      "cpf_solicitante",
+      "rg_solicitante",
       "telefone_solicitante",
       "endereco_solicitante",
       "bairro_solicitante",
@@ -214,7 +216,11 @@ class OcorrenciaManager {
         dataHoraInicio === "" ||
         dataHoraInicio === "null"
       ) {
-        dataHoraInicio = new Date().toISOString();
+        dataHoraInicio = new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19);
       }
 
       const ocorrencia = {
@@ -222,7 +228,11 @@ class OcorrenciaManager {
         numero_temporario: numeroTemporario,
         status: dados.status || "draft",
         criado_por: user.id,
-        criado_em: new Date().toISOString(),
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
         data_hora_inicio: dataHoraInicio,
         numero_versao: 1,
         esta_ativa: true,
@@ -237,6 +247,9 @@ class OcorrenciaManager {
         numero_bo: dados.numero_bo || null,
         orgao_bo: dados.orgao_bo || null,
         data_bo: dados.data_bo || null,
+        // Campos do solicitante (incluindo CPF e RG)
+        cpf_solicitante: dados.cpf_solicitante || null,
+        rg_solicitante: dados.rg_solicitante || null,
         // Campos para retificação
         ocorrencia_original_id: null,
         justificativa_retificacao: null,
@@ -307,7 +320,7 @@ class OcorrenciaManager {
         query = query.gte("criado_em", filtros.data_inicio);
       }
       if (filtros.data_fim) {
-        query = query.lte("criado_em", filtros.data_fim);
+        query = query.lte("criado_em", filtros.data_fim + "T23:59:59");
       }
       if (filtros.search) {
         query = query.or(
@@ -414,7 +427,11 @@ class OcorrenciaManager {
         .update({
           ...dados,
           atualizado_por: user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         })
         .eq("id", id)
         .select()
@@ -470,12 +487,30 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
+      // ===== PEGA A DATA/HORA ATUAL DE BRASÍLIA PARA ENCERRAMENTO =====
+      const agora = new Date();
+      const timezoneOffset = agora.getTimezoneOffset();
+      const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
+      const dataEncerramento = adjustedDate.toISOString();
+
+      // Gerar Hash Pericial (SHA-256)
+      const conteudoParaHash = `${ocorrencia.tipo_ocorrencia}|${ocorrencia.local_ocorrencia}|${ocorrencia.observacoes}|${dataEncerramento}|${ocorrencia.criado_por}`;
+      const msgUint8 = new TextEncoder().encode(conteudoParaHash);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
       const result = await this.atualizar(id, {
         status: status,
         numero_ocorrencia: numeroOficial,
-        data_hora_encerramento: new Date().toISOString(),
+        data_hora_encerramento: dataEncerramento,
         esta_ativa: true,
+        hash_pericial: hashHex
       });
+
+      if (result.success && window.app && typeof window.app.registrarLogPericial === 'function') {
+        await window.app.registrarLogPericial('FINALIZACAO_OCORRENCIA', 'ocorrencias', id, null, { numero: numeroOficial, hash: hashHex });
+      }
 
       if (result.success) {
         // ===== REGISTRAR LOG DE FINALIZAÇÃO DE OCORRÊNCIA =====
@@ -528,9 +563,17 @@ class OcorrenciaManager {
         .update({
           status: "cancelled",
           cancelado_por: user.id,
-          cancelado_em: new Date().toISOString(),
+          cancelado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
           motivo_cancelamento: motivo,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
           esta_ativa: false,
         })
         .eq("id", id)
@@ -659,14 +702,32 @@ class OcorrenciaManager {
         id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
         ocorrencia_original_id: id,
         justificativa_retificacao: isSupervisor ? justificativa : null,
-        retificado_em: isSupervisor ? new Date().toISOString() : null,
+        retificado_em: isSupervisor
+          ? new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19)
+          : null,
         retificado_por: isSupervisor ? user.id : null,
         solicitacao_retificacao_justificativa: isSupervisor
           ? null
           : justificativa,
-        solicitada_em: isSupervisor ? null : new Date().toISOString(),
+        solicitada_em: isSupervisor
+          ? null
+          : new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19),
         solicitada_por: isSupervisor ? null : user.id,
-        aprovada_em: isSupervisor ? new Date().toISOString() : null,
+        aprovada_em: isSupervisor
+          ? new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19)
+          : null,
         aprovada_por: isSupervisor ? user.id : null,
         rejeitada_em: null,
         rejeitada_por: null,
@@ -674,8 +735,16 @@ class OcorrenciaManager {
         status: statusFinal,
         esta_ativa: isSupervisor ? true : false,
         numero_versao: (original.numero_versao || 1) + 1,
-        criado_em: new Date().toISOString(),
-        atualizado_em: new Date().toISOString(),
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
+        atualizado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
         // NÃO COPIA O NÚMERO DA OCORRÊNCIA - evita duplicidade
         numero_ocorrencia: null,
         numero_temporario: `RET-${Date.now()}`,
@@ -699,7 +768,11 @@ class OcorrenciaManager {
           .from("ocorrencias")
           .update({
             esta_ativa: false,
-            atualizado_em: new Date().toISOString(),
+            atualizado_em: new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19),
           })
           .eq("id", id);
 
@@ -722,7 +795,11 @@ class OcorrenciaManager {
           ...env,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date().toISOString(),
+          criado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         }));
 
         novosEnvolvidos.forEach((env) => delete env.id);
@@ -743,7 +820,11 @@ class OcorrenciaManager {
           ...anexo,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date().toISOString(),
+          criado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         }));
 
         novosAnexos.forEach((anexo) => delete anexo.id);
@@ -784,6 +865,8 @@ class OcorrenciaManager {
   getCampoLabel(campo) {
     const labels = {
       nome_solicitante: "Nome do Solicitante",
+      cpf_solicitante: "CPF do Solicitante",
+      rg_solicitante: "RG do Solicitante",
       telefone_solicitante: "Telefone do Solicitante",
       endereco_solicitante: "Endereço do Solicitante",
       bairro_solicitante: "Bairro do Solicitante",
@@ -867,7 +950,11 @@ class OcorrenciaManager {
         .update({
           esta_ativa: false,
           status: "rectified",
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         })
         .eq("id", original.id);
 
@@ -882,11 +969,23 @@ class OcorrenciaManager {
           numero_ocorrencia: numeroOriginal,
           justificativa_retificacao:
             retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: new Date().toISOString(),
+          retificado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
           retificado_por: user.id,
-          aprovada_em: new Date().toISOString(),
+          aprovada_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
           aprovada_por: user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         })
         .eq("id", retificacaoId)
         .select()
@@ -957,10 +1056,18 @@ class OcorrenciaManager {
         .update({
           status: "rectification_rejected",
           esta_ativa: false,
-          rejeitada_em: new Date().toISOString(),
+          rejeitada_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
           rejeitada_por: user.id,
           motivo_rejeicao: motivo,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: new Date(
+            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .slice(0, 19),
         })
         .eq("id", retificacaoId)
         .select()
@@ -1243,6 +1350,95 @@ class OcorrenciaManager {
     }
   }
 
+  /**
+   * Busca ocorrências que possuem coordenadas de localização
+   * @param {object} filtros - { data_inicio, data_fim, tipo_ocorrencia, status }
+   * @returns {Promise<Object>}
+   */
+  async buscarOcorrenciasComLocalizacao(filtros = {}) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        return { success: false, error: "Usuário não autenticado" };
+      }
+
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      // ===== CORREÇÃO: Buscar sem JOIN, apenas as ocorrências com coordenadas =====
+      let query = client
+        .from("ocorrencias")
+        .select("*")
+        .eq("esta_ativa", true)
+        .not("latitude", "is", null)
+        .not("longitude", "is", null);
+
+      // Filtros
+      if (filtros.data_inicio) {
+        query = query.gte("criado_em", filtros.data_inicio);
+      }
+      if (filtros.data_fim) {
+        query = query.lte("criado_em", filtros.data_fim + "T23:59:59");
+      }
+      if (filtros.tipo_ocorrencia) {
+        query = query.eq("tipo_ocorrencia", filtros.tipo_ocorrencia);
+      }
+      if (filtros.status) {
+        query = query.eq("status", filtros.status);
+      }
+
+      // Limitar para performance
+      query = query.limit(filtros.limit || 500);
+      query = query.order("criado_em", { ascending: false });
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // ===== BUSCAR DADOS DOS CRIADORES EM LOTE =====
+      const ocorrencias = data || [];
+      if (ocorrencias.length > 0) {
+        const idsCriadores = ocorrencias
+          .map((o) => o.criado_por)
+          .filter((id) => id);
+        const dadosUsuarios =
+          await this.buscarDadosUsuariosEmLote(idsCriadores);
+
+        // Adiciona os dados do criador em cada ocorrência
+        ocorrencias.forEach((ocorrencia) => {
+          ocorrencia.criador = dadosUsuarios[ocorrencia.criado_por] || {
+            nome_completo: null,
+            cpf: null,
+          };
+        });
+      }
+
+      // Processa os dados para o mapa
+      const pontosMapa = ocorrencias.map((occ) => ({
+        id: occ.id,
+        latitude: occ.latitude,
+        longitude: occ.longitude,
+        tipo: occ.tipo_ocorrencia,
+        status: occ.status,
+        local: occ.local_ocorrencia,
+        data: occ.criado_em,
+        numero: occ.numero_ocorrencia || occ.numero_temporario || "Rascunho",
+        criador: occ.criador || { nome_completo: "Desconhecido" },
+      }));
+
+      return {
+        success: true,
+        data: pontosMapa,
+        total: pontosMapa.length,
+      };
+    } catch (error) {
+      console.error("❌ Erro ao buscar ocorrências com localização:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
   // ============================================
   // ENVOLVIDOS
   // ============================================
@@ -1263,7 +1459,11 @@ class OcorrenciaManager {
         ...dados,
         ocorrencia_id: ocorrenciaId,
         criado_por: user.id,
-        criado_em: new Date().toISOString(),
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
       };
 
       const { data, error } = await client
@@ -1358,7 +1558,11 @@ class OcorrenciaManager {
         url: urlData.publicUrl,
         mime_type: arquivo.type,
         criado_por: user.id,
-        criado_em: new Date().toISOString(),
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
       };
 
       const { data, error } = await client
@@ -1461,7 +1665,11 @@ class OcorrenciaManager {
         cidade: env.cidade || null,
         observacoes: env.observacoes || null,
         criado_por: user.id,
-        criado_em: new Date().toISOString(),
+        criado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
       }));
 
       const { data, error } = await client
@@ -1535,7 +1743,11 @@ class OcorrenciaManager {
             url: urlFinal,
             mime_type: anexo.arquivo?.type || null,
             criado_por: user.id,
-            criado_em: new Date().toISOString(),
+            criado_em: new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19),
           })
           .select()
           .single();
@@ -1599,7 +1811,12 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = new Date(
+        new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+      )
+        .toISOString()
+        .slice(0, 19)
+        .slice(0, 10);
       const stats = {
         total: data.length,
         hoje: data.filter((o) => o.criado_em.slice(0, 10) === hoje).length,

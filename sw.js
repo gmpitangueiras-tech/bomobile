@@ -1,5 +1,5 @@
-const CACHE_NAME = "guarda-pitangueiras-v1";
-const BASE_PATH = "/bomobile/";
+const CACHE_NAME = "guarda-pitangueiras-v2";
+const BASE_PATH = "./";
 
 const ASSETS = [
   BASE_PATH,
@@ -18,7 +18,7 @@ self.addEventListener("install", (event) => {
     caches
       .open(CACHE_NAME)
       .then((cache) => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -30,9 +30,10 @@ self.addEventListener("activate", (event) => {
         Promise.all(
           keys
             .filter((key) => key !== CACHE_NAME)
-            .map((key) => caches.delete(key))
-        )
+            .map((key) => caches.delete(key)),
+        ),
       )
+      .then(() => self.clients.claim()),
   );
 });
 
@@ -42,7 +43,7 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       caches.match(BASE_PATH + "index.html").then((response) => {
         return response || fetch(event.request);
-      })
+      }),
     );
     return;
   }
@@ -51,6 +52,6 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(event.request).then((response) => {
       return response || fetch(event.request);
-    })
+    }),
   );
 });

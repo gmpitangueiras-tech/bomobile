@@ -13,6 +13,7 @@
  * - Debounce e Throttle
  * - Cache de dados estáticos em localStorage
  * - Compressão otimizada de imagens
+ * - Speech-to-Text com tratamento de erros robusto e solicitação de permissão
  */
 
 // ============================================
@@ -949,6 +950,421 @@ export async function obterDataAtual(forceRefresh = false) {
 }
 
 // ============================================
+// PERMISSÃO DE MICROFONE
+// ============================================
+
+/**
+ * Solicita permissão para usar o microfone
+ * @param {Object} appInstance - Instância do app para toasts
+ * @returns {Promise<boolean>} - True se a permissão foi concedida
+ */
+export async function solicitarPermissaoMicrofone(appInstance) {
+  try {
+    // Verificar se a API está disponível
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (appInstance && appInstance.showToast) {
+        appInstance.showToast(
+          "Microfone não suportado neste navegador",
+          "error",
+        );
+      }
+      return false;
+    }
+
+    // Verificar se já tem permissão
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const result = await navigator.permissions.query({
+          name: "microphone",
+        });
+        if (result.state === "granted") {
+          console.log("✅ Permissão de microfone já concedida");
+          return true;
+        }
+        if (result.state === "denied") {
+          if (appInstance && appInstance.showToast) {
+            appInstance.showToast(
+              "Permissão de microfone negada. Habilite nas configurações do navegador.",
+              "warning",
+            );
+          }
+          return false;
+        }
+      } catch (e) {
+        console.warn("⚠️ Não foi possível verificar permissão:", e);
+      }
+    }
+
+    // Solicitar permissão
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast(
+        "🎤 Solicitando acesso ao microfone...",
+        "info",
+        2000,
+      );
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Parar as tracks imediatamente (só precisamos da permissão)
+    stream.getTracks().forEach((track) => track.stop());
+
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast(
+        "✅ Acesso ao microfone concedido!",
+        "success",
+        1500,
+      );
+    }
+
+    console.log("✅ Permissão de microfone concedida");
+    return true;
+  } catch (error) {
+    console.error("❌ Erro ao solicitar permissão do microfone:", error);
+
+    let mensagem = "Erro ao acessar microfone.";
+    if (
+      error.name === "NotAllowedError" ||
+      error.name === "PermissionDeniedError"
+    ) {
+      mensagem =
+        "Permissão de microfone negada. Habilite nas configurações do navegador.";
+    } else if (
+      error.name === "NotFoundError" ||
+      error.name === "DevicesNotFoundError"
+    ) {
+      mensagem = "Nenhum microfone encontrado no dispositivo.";
+    } else if (error.name === "NotReadableError") {
+      mensagem = "Microfone está sendo usado por outro aplicativo.";
+    } else {
+      mensagem = `Erro: ${error.message}`;
+    }
+
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast(mensagem, "warning");
+    }
+
+    return false;
+  }
+}
+
+// ============================================
+// RECONHECIMENTO DE VOZ (SPEECH-TO-TEXT) - CORRIGIDO
+// ============================================
+
+/**
+ * Inicializa o reconhecimento de voz para um campo de texto
+ * @param {string} textareaId - ID do campo de texto
+ * @param {string} buttonId - ID do botão de microfone
+ * @param {Object} appInstance - Instância do app para toasts
+ */
+export function initSpeechToText(textareaId, buttonId, appInstance) {
+  // Verificar suporte
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    console.warn("⚠️ Reconhecimento de voz não suportado neste navegador");
+    const btn = document.getElementById(buttonId);
+    if (btn) {
+      btn.style.display = "none";
+      btn.title = "Reconhecimento de voz não suportado neste navegador";
+    }
+    return;
+  }
+
+  const btn = document.getElementById(buttonId);
+  const textarea = document.getElementById(textareaId);
+
+  if (!btn) {
+    console.warn(`⚠️ Botão ${buttonId} não encontrado`);
+    return;
+  }
+
+  if (!textarea) {
+    console.warn(`⚠️ Textarea ${textareaId} não encontrado`);
+    return;
+  }
+
+  // Remover listeners antigos (evita duplicação)
+  const newBtn = btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn, btn);
+
+  // Usar o novo botão
+  const finalBtn = document.getElementById(buttonId);
+  if (!finalBtn) return;
+
+  let recognition = null;
+  let isListening = false;
+  let permissaoConcedida = false;
+
+  // Função para resetar o botão
+  function resetButton() {
+    isListening = false;
+    finalBtn.classList.remove("listening");
+    finalBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+    finalBtn.style.background = "";
+    finalBtn.style.color = "";
+    finalBtn.style.borderColor = "";
+
+    // Restaurar placeholder
+    if (
+      textarea &&
+      textarea.placeholder &&
+      textarea.placeholder.startsWith("Ouvindo:")
+    ) {
+      textarea.placeholder =
+        textarea.getAttribute("data-original-placeholder") ||
+        "Fale o relato...";
+    }
+  }
+
+  // Função para criar nova instância de reconhecimento
+  function createRecognition() {
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = "pt-BR";
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        console.log("🎤 Reconhecimento iniciado");
+        isListening = true;
+        finalBtn.classList.add("listening");
+        finalBtn.innerHTML = '<i class="fas fa-stop"></i>';
+        finalBtn.style.background = "#dc2626";
+        finalBtn.style.color = "white";
+        finalBtn.style.borderColor = "#dc2626";
+
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast("🎤 Ouvindo... Fale agora.", "info", 3000);
+        } else {
+          showToastFallback("🎤 Ouvindo... Fale agora.", "info");
+        }
+      };
+
+      rec.onerror = (event) => {
+        console.error("❌ Erro no reconhecimento:", event.error);
+
+        // Erros que não são críticos
+        const ignoredErrors = ["no-speech", "audio-capture", "not-allowed"];
+        if (ignoredErrors.includes(event.error)) {
+          if (event.error === "no-speech") {
+            if (appInstance && appInstance.showToast) {
+              appInstance.showToast(
+                "Nenhuma fala detectada. Tente novamente.",
+                "warning",
+              );
+            } else {
+              showToastFallback(
+                "Nenhuma fala detectada. Tente novamente.",
+                "warning",
+              );
+            }
+          }
+          resetButton();
+          return;
+        }
+
+        // Erros críticos
+        resetButton();
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast(`Erro: ${event.error}`, "error");
+        } else {
+          showToastFallback(`Erro: ${event.error}`, "error");
+        }
+      };
+
+      rec.onresult = (event) => {
+        try {
+          const results = event.results;
+          const lastResult = results[results.length - 1];
+
+          if (!lastResult) return;
+
+          const transcript = lastResult[0].transcript;
+          const isFinal = lastResult.isFinal;
+
+          console.log(
+            `📝 Transcrição ${isFinal ? "final" : "parcial"}:`,
+            transcript,
+          );
+
+          // Se for final, adiciona ao textarea
+          if (isFinal && transcript.trim()) {
+            const currentText = textarea.value.trim();
+
+            // Capitalizar primeira letra
+            const formattedText =
+              transcript.charAt(0).toUpperCase() + transcript.slice(1);
+
+            // Adicionar espaço se já houver texto
+            const newText = currentText
+              ? currentText + " " + formattedText
+              : formattedText;
+
+            textarea.value = newText;
+
+            // Disparar evento de input para atualizar estados do app
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+            if (appInstance && appInstance.showToast) {
+              appInstance.showToast(
+                "✅ Transcrição adicionada!",
+                "success",
+                1500,
+              );
+            }
+
+            // Parar automaticamente após sucesso
+            if (recognition) {
+              try {
+                recognition.stop();
+              } catch (e) {
+                // Ignora erro ao parar
+              }
+            }
+            resetButton();
+          } else if (!isFinal) {
+            // Mostrar resultado parcial no placeholder
+            textarea.setAttribute(
+              "data-original-placeholder",
+              textarea.placeholder,
+            );
+            textarea.placeholder = `Ouvindo: ${transcript}...`;
+          }
+        } catch (error) {
+          console.error("Erro ao processar resultado:", error);
+        }
+      };
+
+      rec.onend = () => {
+        console.log("🔚 Reconhecimento finalizado");
+        resetButton();
+      };
+
+      return rec;
+    } catch (error) {
+      console.error("Erro ao criar reconhecimento:", error);
+      return null;
+    }
+  }
+
+  // Função para iniciar reconhecimento
+  async function startRecognition() {
+    try {
+      // Verificar permissão antes de iniciar
+      if (!permissaoConcedida) {
+        const hasPermission = await solicitarPermissaoMicrofone(appInstance);
+        if (!hasPermission) {
+          resetButton();
+          return;
+        }
+        permissaoConcedida = true;
+      }
+
+      // Criar e iniciar reconhecimento
+      recognition = createRecognition();
+      if (recognition) {
+        recognition.start();
+      } else {
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast("Erro ao iniciar reconhecimento", "error");
+        } else {
+          showToastFallback("Erro ao iniciar reconhecimento", "error");
+        }
+        resetButton();
+      }
+    } catch (error) {
+      console.error("❌ Erro ao iniciar reconhecimento:", error);
+      if (appInstance && appInstance.showToast) {
+        appInstance.showToast("Erro ao iniciar: " + error.message, "error");
+      } else {
+        showToastFallback("Erro ao iniciar: " + error.message, "error");
+      }
+      resetButton();
+    }
+  }
+
+  // Função para parar reconhecimento
+  function stopRecognition() {
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (e) {
+        console.warn("Erro ao parar reconhecimento:", e);
+      }
+    }
+    resetButton();
+  }
+
+  // Evento de clique no botão
+  finalBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log("🎤 Botão de microfone clicado");
+
+    // Se já está ouvindo, para
+    if (isListening) {
+      stopRecognition();
+    } else {
+      await startRecognition();
+    }
+  });
+
+  // Suporte para toque em dispositivos móveis
+  finalBtn.addEventListener(
+    "touchstart",
+    (e) => {
+      e.preventDefault();
+    },
+    { passive: false },
+  );
+
+  // Salvar placeholder original
+  if (textarea) {
+    textarea.setAttribute("data-original-placeholder", textarea.placeholder);
+  }
+
+  console.log(`✅ Speech-to-Text inicializado para ${textareaId}`);
+}
+
+// ============================================
+// FUNÇÃO AUXILIAR PARA TOAST (FALLBACK)
+// ============================================
+
+function showToastFallback(message, type = "info") {
+  if (typeof window.app !== "undefined" && window.app.showToast) {
+    window.app.showToast(message, type);
+    return;
+  }
+
+  const container = document.getElementById("toastContainer");
+  if (!container) {
+    console.log(`${type}: ${message}`);
+    return;
+  }
+
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  const cores = {
+    success: "var(--verde-bandeira)",
+    error: "var(--erro)",
+    warning: "var(--aviso)",
+    info: "var(--azul-bandeira)",
+  };
+  toast.style.background = cores[type] || cores.info;
+  toast.innerHTML = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add("out");
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// ============================================
 // VALIDAÇÕES
 // ============================================
 
@@ -1006,6 +1422,60 @@ export function validarPlaca(placa) {
 // ============================================
 // EXPORTAÇÕES
 // ============================================
+
+// ============================================
+// EXPORTAÇÃO PARA WINDOW (para uso em scripts não-module)
+// ============================================
+
+// Expor funções principais no window para uso global
+if (typeof window !== "undefined") {
+  window.utils = {
+    obterDataHoraPrecisa,
+    obterDataHoraBrasiliaISO,
+    obterDataAtualISO,
+    obterHoraAtual,
+    obterDataHoraInput,
+    formatarDataHoraLocal,
+    formatarDataInput,
+    formatarDataHoraInput,
+    calcularDiferencaMinutos,
+    formatarMinutos,
+    formatarCPFSeguro,
+    aplicarMascaraCPF,
+    aplicarMascaraTelefone,
+    aplicarMascaraPlaca,
+    formatarTamanho,
+    getStatusClass,
+    getStatusLabel,
+    getTipoLabel,
+    getTipoEnvolvidoLabel,
+    getIconAnexo,
+    obterLocalizacao,
+    calcularDistancia,
+    obterIP,
+    gerarUUID,
+    comprimirImagem,
+    gerarHashArquivo,
+    setCachedData,
+    getCachedData,
+    clearCachedData,
+    clearAllCache,
+    confirmar,
+    inputModal,
+    calcularDiasPeriodo,
+    calcularDataAnterior,
+    obterPrimeiroDiaMes,
+    obterDataAtual,
+    validarCPF,
+    validarEmail,
+    validarPlaca,
+    debounce,
+    throttle,
+    solicitarPermissaoMicrofone,
+    initSpeechToText,
+  };
+  console.log("✅ Utils exposto globalmente via window.utils");
+}
 
 export default {
   // Data/Hora
@@ -1074,4 +1544,10 @@ export default {
   // Utilitários
   debounce,
   throttle,
+
+  // Microfone
+  solicitarPermissaoMicrofone,
+
+  // Speech-to-Text
+  initSpeechToText,
 };

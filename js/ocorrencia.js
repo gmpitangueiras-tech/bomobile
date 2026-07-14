@@ -17,12 +17,20 @@
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
  * - Logs: todas as ações importantes são registradas na tabela logs_acesso
  * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada com cache)
+ *
+ * MELHORIAS APLICADAS:
+ * - Correção de anexos (verificação de URLs e persistência)
+ * - Logs periciais automáticos em ações críticas
+ * - Hash SHA-256 em imagens para integridade
+ * - Auditoria de visualização (registra quem visualizou cada ocorrência)
+ * - Compressão otimizada de imagens
  */
 
 class OcorrenciaManager {
   constructor() {
     this.initialized = false;
     this.cacheUsuarios = {};
+    this.cacheAnexos = {};
   }
 
   /**
@@ -101,7 +109,6 @@ class OcorrenciaManager {
   async buscarDadosUsuario(usuarioId) {
     if (!usuarioId) return { nome_completo: null, cpf: null };
 
-    // Verifica cache
     if (this.cacheUsuarios[usuarioId]) {
       return this.cacheUsuarios[usuarioId];
     }
@@ -121,7 +128,6 @@ class OcorrenciaManager {
         return { nome_completo: null, cpf: null };
       }
 
-      // Armazena em cache
       if (data) {
         this.cacheUsuarios[usuarioId] = data;
       }
@@ -134,14 +140,11 @@ class OcorrenciaManager {
   }
 
   async buscarDadosUsuariosEmLote(usuarioIds) {
-    // Remove duplicatas e nulls
     const ids = [...new Set(usuarioIds.filter((id) => id))];
     if (ids.length === 0) return {};
 
-    // Verifica quais IDs já estão em cache
     const idsParaBuscar = ids.filter((id) => !this.cacheUsuarios[id]);
     if (idsParaBuscar.length === 0) {
-      // Todos estão em cache
       const resultado = {};
       ids.forEach((id) => {
         resultado[id] = this.cacheUsuarios[id] || {
@@ -166,7 +169,6 @@ class OcorrenciaManager {
         return {};
       }
 
-      // Armazena em cache
       const resultado = {};
       data.forEach((usuario) => {
         this.cacheUsuarios[usuario.id] = {
@@ -176,7 +178,6 @@ class OcorrenciaManager {
         resultado[usuario.id] = this.cacheUsuarios[usuario.id];
       });
 
-      // Para IDs que não foram encontrados, adiciona como null
       idsParaBuscar.forEach((id) => {
         if (!resultado[id]) {
           resultado[id] = { nome_completo: null, cpf: null };
@@ -189,6 +190,193 @@ class OcorrenciaManager {
       console.warn("Erro ao buscar usuários em lote:", error);
       return {};
     }
+  }
+
+  // ============================================
+  // REGISTRO DE LOGS PERICIAIS
+  // ============================================
+
+  async registrarLogPericial(
+    acao,
+    tabela,
+    registroId,
+    dadosAnt = null,
+    dadosNov = null,
+  ) {
+    try {
+      const user = authManager.getUser();
+      if (!user) return;
+
+      const client = supabaseClient.getClient();
+      if (!client) return;
+
+      // Obter IP
+      let ip = null;
+      try {
+        const response = await fetch("https://api.ipify.org?format=json");
+        const data = await response.json();
+        ip = data.ip;
+      } catch (e) {}
+
+      // Obter localização
+      let latitude = null;
+      let longitude = null;
+      try {
+        if (navigator.geolocation) {
+          const position = await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve(pos),
+              () => resolve(null),
+              { enableHighAccuracy: true, timeout: 10000 },
+            );
+          });
+          if (position) {
+            latitude = position.coords.latitude;
+            longitude = position.coords.longitude;
+          }
+        }
+      } catch (e) {}
+
+      const logData = {
+        usuario_id: user.id,
+        acao: acao,
+        tabela_afetada: tabela,
+        registro_id: registroId?.toString(),
+        dados_anteriores: dadosAnt,
+        dados_novos: dadosNov,
+        ip_address: ip,
+        user_agent: navigator.userAgent,
+        latitude: latitude?.toString(),
+        longitude: longitude?.toString(),
+        criado_em: new Date().toISOString(),
+      };
+
+      await client.from("logs_periciais").insert([logData]);
+    } catch (error) {
+      console.warn("Erro ao registrar log pericial:", error);
+    }
+  }
+
+  // ============================================
+  // REGISTRO DE AUDITORIA DE VISUALIZAÇÃO
+  // ============================================
+
+  async registrarVisualizacao(ocorrenciaId) {
+    try {
+      const user = authManager.getUser();
+      if (!user) return;
+
+      const client = supabaseClient.getClient();
+      if (!client) return;
+
+      // Verificar se já existe registro de visualização para esta ocorrência pelo usuário
+      const { data: existing, error: checkError } = await client
+        .from("visualizacoes_ocorrencias")
+        .select("id, visualizado_em")
+        .eq("ocorrencia_id", ocorrenciaId)
+        .eq("usuario_id", user.id)
+        .maybeSingle();
+
+      if (checkError && checkError.code !== "PGRST116") {
+        console.warn("Erro ao verificar visualização:", checkError);
+        return;
+      }
+
+      if (existing) {
+        // Atualizar timestamp
+        await client
+          .from("visualizacoes_ocorrencias")
+          .update({
+            visualizado_em: new Date().toISOString(),
+            visualizacoes: client.raw("visualizacoes + 1"),
+          })
+          .eq("id", existing.id);
+      } else {
+        // Criar novo registro
+        await client.from("visualizacoes_ocorrencias").insert({
+          ocorrencia_id: ocorrenciaId,
+          usuario_id: user.id,
+          visualizado_em: new Date().toISOString(),
+          visualizacoes: 1,
+        });
+      }
+    } catch (error) {
+      console.warn("Erro ao registrar visualização:", error);
+    }
+  }
+
+  // ============================================
+  // GERAR HASH DE ANEXO
+  // ============================================
+
+  async gerarHashAnexo(arquivo) {
+    try {
+      const buffer = await arquivo.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (error) {
+      console.warn("Erro ao gerar hash do anexo:", error);
+      return null;
+    }
+  }
+
+  // ============================================
+  // COMPRESSÃO DE IMAGEM OTIMIZADA
+  // ============================================
+
+  async comprimirImagemOtimizada(file, maxWidth = 800, quality = 0.7) {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith("image/")) {
+        resolve(file);
+        return;
+      }
+
+      // Se o arquivo já é pequeno, não comprime
+      if (file.size < 1024 * 1024 && file.type === "image/jpeg") {
+        resolve(file);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const compressedFile = new File([blob], file.name, {
+                  type: "image/jpeg",
+                  lastModified: Date.now(),
+                });
+                resolve(compressedFile);
+              } else {
+                resolve(file);
+              }
+            },
+            "image/jpeg",
+            quality,
+          );
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
   }
 
   // ============================================
@@ -207,7 +395,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Gera número temporário se offline
       const numeroTemporario = !navigator.onLine ? `LOCAL-${Date.now()}` : null;
 
       let dataHoraInicio = dados.data_hora_inicio;
@@ -236,21 +423,16 @@ class OcorrenciaManager {
         data_hora_inicio: dataHoraInicio,
         numero_versao: 1,
         esta_ativa: true,
-        // Campos de geolocalização
         latitude: dados.latitude || null,
         longitude: dados.longitude || null,
-        // Campos de natureza da ocorrência
         tipo_ocorrencia: dados.tipo_ocorrencia || null,
         sub_tipo_ocorrencia: dados.sub_tipo_ocorrencia || null,
         gravidade: dados.gravidade || null,
-        // Campos de BO (outros órgãos)
         numero_bo: dados.numero_bo || null,
         orgao_bo: dados.orgao_bo || null,
         data_bo: dados.data_bo || null,
-        // Campos do solicitante (incluindo CPF e RG)
         cpf_solicitante: dados.cpf_solicitante || null,
         rg_solicitante: dados.rg_solicitante || null,
-        // Campos para retificação
         ocorrencia_original_id: null,
         justificativa_retificacao: null,
         retificado_em: null,
@@ -267,7 +449,6 @@ class OcorrenciaManager {
         versao_original: null,
       };
 
-      // Remove campos que não existem na tabela ou são undefined
       delete ocorrencia.envolvidos;
       delete ocorrencia.anexos;
 
@@ -281,8 +462,14 @@ class OcorrenciaManager {
 
       console.log("✅ Ocorrência criada:", data.id);
 
-      // ===== REGISTRAR LOG DE CRIAÇÃO DE OCORRÊNCIA =====
       await authManager.logCriarOcorrencia(user.id, data.id);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "CRIAR_OCORRENCIA",
+        "ocorrencias",
+        data.id,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -303,10 +490,8 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // ===== CORREÇÃO: Buscar apenas ocorrências ativas =====
       let query = client.from("ocorrencias").select("*").eq("esta_ativa", true);
 
-      // Filtros
       if (filtros.status) {
         query = query.eq("status", filtros.status);
       }
@@ -337,7 +522,6 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      // ===== BUSCAR DADOS DOS CRIADORES EM LOTE (OTIMIZADO) =====
       const ocorrencias = data || [];
       if (ocorrencias.length > 0) {
         const idsCriadores = ocorrencias
@@ -346,7 +530,6 @@ class OcorrenciaManager {
         const dadosUsuarios =
           await this.buscarDadosUsuariosEmLote(idsCriadores);
 
-        // Adiciona os dados do criador em cada ocorrência
         ocorrencias.forEach((ocorrencia) => {
           ocorrencia.criador = dadosUsuarios[ocorrencia.criado_por] || {
             nome_completo: null,
@@ -382,10 +565,14 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      // ===== BUSCAR DADOS DO CRIADOR =====
       if (data && data.criado_por) {
         const dadosCriador = await this.buscarDadosUsuario(data.criado_por);
         data.criador = dadosCriador;
+      }
+
+      // Registrar visualização (auditoria)
+      if (data) {
+        await this.registrarVisualizacao(id);
       }
 
       return { success: true, data };
@@ -402,13 +589,11 @@ class OcorrenciaManager {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      // Buscar ocorrência para verificar permissões
       const { data: ocorrencia, error: buscaError } = await this.buscar(id);
       if (buscaError || !ocorrencia) {
         return { success: false, error: "Ocorrência não encontrada" };
       }
 
-      // Verifica permissão: apenas o criador (se for rascunho) ou supervisor
       const podeEditar = authManager.podeEditar(ocorrencia);
       if (!podeEditar) {
         return {
@@ -421,6 +606,9 @@ class OcorrenciaManager {
       if (!client) {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
+
+      // Salvar dados anteriores para log pericial
+      const dadosAnteriores = { ...ocorrencia };
 
       const { data, error } = await client
         .from("ocorrencias")
@@ -440,6 +628,16 @@ class OcorrenciaManager {
       if (error) throw error;
 
       console.log("✅ Ocorrência atualizada:", id);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "ATUALIZAR_OCORRENCIA",
+        "ocorrencias",
+        id,
+        dadosAnteriores,
+        data,
+      );
+
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao atualizar ocorrência:", error);
@@ -454,7 +652,6 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência não encontrada" };
       }
 
-      // Verifica permissão
       const podeFinalizar = authManager.podeFinalizar(ocorrencia);
       if (!podeFinalizar) {
         return {
@@ -463,7 +660,6 @@ class OcorrenciaManager {
         };
       }
 
-      // Apenas rascunhos podem ser finalizados
       if (ocorrencia.status !== "draft") {
         return {
           success: false,
@@ -487,7 +683,6 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
-      // ===== PEGA A DATA/HORA ATUAL DE BRASÍLIA PARA ENCERRAMENTO =====
       const agora = new Date();
       const timezoneOffset = agora.getTimezoneOffset();
       const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
@@ -496,25 +691,49 @@ class OcorrenciaManager {
       // Gerar Hash Pericial (SHA-256)
       const conteudoParaHash = `${ocorrencia.tipo_ocorrencia}|${ocorrencia.local_ocorrencia}|${ocorrencia.observacoes}|${dataEncerramento}|${ocorrencia.criado_por}`;
       const msgUint8 = new TextEncoder().encode(conteudoParaHash);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      const hashHex = hashArray
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      const dadosAnteriores = { ...ocorrencia };
 
       const result = await this.atualizar(id, {
         status: status,
         numero_ocorrencia: numeroOficial,
         data_hora_encerramento: dataEncerramento,
         esta_ativa: true,
-        hash_pericial: hashHex
+        hash_pericial: hashHex,
       });
 
-      if (result.success && window.app && typeof window.app.registrarLogPericial === 'function') {
-        await window.app.registrarLogPericial('FINALIZACAO_OCORRENCIA', 'ocorrencias', id, null, { numero: numeroOficial, hash: hashHex });
-      }
-
       if (result.success) {
-        // ===== REGISTRAR LOG DE FINALIZAÇÃO DE OCORRÊNCIA =====
         await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
+
+        // Registrar log pericial
+        await this.registrarLogPericial(
+          "FINALIZAR_OCORRENCIA",
+          "ocorrencias",
+          id,
+          dadosAnteriores,
+          result.data,
+        );
+
+        if (
+          window.app &&
+          typeof window.app.registrarLogPericial === "function"
+        ) {
+          await window.app.registrarLogPericial(
+            "FINALIZACAO_OCORRENCIA",
+            "ocorrencias",
+            id,
+            null,
+            {
+              numero: numeroOficial,
+              hash: hashHex,
+            },
+          );
+        }
       }
 
       return result;
@@ -531,7 +750,6 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência não encontrada" };
       }
 
-      // Apenas supervisor pode cancelar
       if (!authManager.isSupervisor()) {
         return {
           success: false,
@@ -557,6 +775,8 @@ class OcorrenciaManager {
       if (!client) {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
+
+      const dadosAnteriores = { ...ocorrencia };
 
       const { data, error } = await client
         .from("ocorrencias")
@@ -584,8 +804,16 @@ class OcorrenciaManager {
 
       console.log("✅ Ocorrência cancelada:", id);
 
-      // ===== REGISTRAR LOG DE CANCELAMENTO DE OCORRÊNCIA =====
       await authManager.logCancelarOcorrencia(user.id, id, motivo);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "CANCELAR_OCORRENCIA",
+        "ocorrencias",
+        id,
+        dadosAnteriores,
+        data,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -603,10 +831,6 @@ class OcorrenciaManager {
    * Apenas campos retificáveis podem ser alterados
    * Data/Hora do fato são IMUTÁVEIS (histórico)
    * NÃO COPIA o número da ocorrência original para evitar duplicidade
-   * @param {string} id - ID da ocorrência original
-   * @param {object} dados - Dados corrigidos (apenas campos retificáveis)
-   * @param {string} justificativa - Motivo da retificação
-   * @returns {Promise<Object>}
    */
   async solicitarRetificacao(id, dados, justificativa) {
     try {
@@ -640,7 +864,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Verificar se já existe um pedido de retificação pendente para esta ocorrência
       const { data: pendente, error: pendenteError } = await client
         .from("ocorrencias")
         .select("id")
@@ -658,7 +881,6 @@ class OcorrenciaManager {
         };
       }
 
-      // FILTRAR APENAS CAMPOS RETIFICÁVEIS
       const dadosFiltrados = {};
       const camposAlterados = [];
 
@@ -679,7 +901,6 @@ class OcorrenciaManager {
         }
       }
 
-      // Verifica se algum campo foi alterado
       if (Object.keys(dadosFiltrados).length === 0) {
         return {
           success: false,
@@ -687,7 +908,6 @@ class OcorrenciaManager {
         };
       }
 
-      // ⚠️ GARANTE QUE DATA/HORA NÃO SEJAM ALTERADAS
       dadosFiltrados.data_hora_inicio = original.data_hora_inicio;
       dadosFiltrados.data_hora_encerramento = original.data_hora_encerramento;
       dadosFiltrados.forma_solicitacao = original.forma_solicitacao;
@@ -695,7 +915,6 @@ class OcorrenciaManager {
       const isSupervisor = authManager.isSupervisor();
       const statusFinal = isSupervisor ? "rectified" : "pending_rectification";
 
-      // Preparar dados para a nova ocorrência (retificação)
       const dadosRetificados = {
         ...original,
         ...dadosFiltrados,
@@ -745,24 +964,21 @@ class OcorrenciaManager {
         )
           .toISOString()
           .slice(0, 19),
-        // NÃO COPIA O NÚMERO DA OCORRÊNCIA - evita duplicidade
         numero_ocorrencia: null,
         numero_temporario: `RET-${Date.now()}`,
-        // CAMPOS IMUTÁVEIS PRESERVADOS
         criado_por: original.criado_por,
         criado_em: original.criado_em,
         data_hora_inicio: original.data_hora_inicio,
         data_hora_encerramento: original.data_hora_encerramento,
         forma_solicitacao: original.forma_solicitacao,
-        // Salvar campos alterados
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(original),
       };
 
-      // Remove campos que não devem ser inseridos
       delete dadosRetificados.id;
 
-      // Se for supervisor, desativa a original imediatamente
+      const dadosAnteriores = { ...original };
+
       if (isSupervisor) {
         const { error: updateError } = await client
           .from("ocorrencias")
@@ -779,7 +995,6 @@ class OcorrenciaManager {
         if (updateError) throw updateError;
       }
 
-      // Insere a nova ocorrência
       const { data: novaOcorrencia, error: insertError } = await client
         .from("ocorrencias")
         .insert([dadosRetificados])
@@ -788,7 +1003,7 @@ class OcorrenciaManager {
 
       if (insertError) throw insertError;
 
-      // Copiar envolvidos da original para a retificação
+      // Copiar envolvidos
       const envolvidosResult = await this.listarEnvolvidos(id);
       if (envolvidosResult.success && envolvidosResult.data.length > 0) {
         const novosEnvolvidos = envolvidosResult.data.map((env) => ({
@@ -813,7 +1028,7 @@ class OcorrenciaManager {
         }
       }
 
-      // Copiar anexos da original para a retificação
+      // Copiar anexos
       const anexosResult = await this.listarAnexos(id);
       if (anexosResult.success && anexosResult.data.length > 0) {
         const novosAnexos = anexosResult.data.map((anexo) => ({
@@ -840,8 +1055,16 @@ class OcorrenciaManager {
 
       console.log("✅ Retificação criada:", novaOcorrencia.id);
 
-      // ===== REGISTRAR LOG DE SOLICITAÇÃO DE RETIFICAÇÃO =====
       await authManager.logSolicitarRetificacao(user.id, id);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "SOLICITAR_RETIFICACAO",
+        "ocorrencias",
+        novaOcorrencia.id,
+        dadosAnteriores,
+        novaOcorrencia,
+      );
 
       return {
         success: true,
@@ -857,11 +1080,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Retorna o label amigável para um campo
-   * @param {string} campo - Nome do campo
-   * @returns {string} Label amigável
-   */
   getCampoLabel(campo) {
     const labels = {
       nome_solicitante: "Nome do Solicitante",
@@ -889,12 +1107,6 @@ class OcorrenciaManager {
     return labels[campo] || campo;
   }
 
-  /**
-   * Aprova uma retificação pendente (apenas supervisor)
-   * Mantém o mesmo número da ocorrência original
-   * @param {string} retificacaoId - ID da ocorrência de retificação pendente
-   * @returns {Promise<Object>}
-   */
   async aprovarRetificacao(retificacaoId) {
     try {
       const user = authManager.getUser();
@@ -915,7 +1127,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Buscar a retificação pendente
       const { data: retificacao, error: buscaError } = await client
         .from("ocorrencias")
         .select("*")
@@ -930,7 +1141,6 @@ class OcorrenciaManager {
         return { success: false, error: "Esta retificação não está pendente" };
       }
 
-      // Buscar a ocorrência original
       const { data: original, error: origError } = await client
         .from("ocorrencias")
         .select("*")
@@ -941,10 +1151,11 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência original não encontrada" };
       }
 
-      // Manter o mesmo número da original
       const numeroOriginal = original.numero_ocorrencia;
 
-      // Desativar a original e marcar como retificada
+      const dadosAnterioresOriginal = { ...original };
+      const dadosAnterioresRetificacao = { ...retificacao };
+
       const { error: updateOrigError } = await client
         .from("ocorrencias")
         .update({
@@ -960,7 +1171,6 @@ class OcorrenciaManager {
 
       if (updateOrigError) throw updateOrigError;
 
-      // Atualizar a retificação para aprovada com o mesmo número
       const { data, error } = await client
         .from("ocorrencias")
         .update({
@@ -995,8 +1205,19 @@ class OcorrenciaManager {
 
       console.log("✅ Retificação aprovada:", retificacaoId);
 
-      // ===== REGISTRAR LOG DE APROVAÇÃO DE RETIFICAÇÃO =====
       await authManager.logAprovarRetificacao(user.id, retificacaoId);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "APROVAR_RETIFICACAO",
+        "ocorrencias",
+        retificacaoId,
+        {
+          original: dadosAnterioresOriginal,
+          retificacao: dadosAnterioresRetificacao,
+        },
+        data,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -1005,12 +1226,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Rejeita uma retificação pendente (apenas supervisor)
-   * @param {string} retificacaoId - ID da ocorrência de retificação pendente
-   * @param {string} motivo - Motivo da rejeição
-   * @returns {Promise<Object>}
-   */
   async rejeitarRetificacao(retificacaoId, motivo) {
     try {
       const user = authManager.getUser();
@@ -1035,7 +1250,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Buscar a retificação pendente
       const { data: retificacao, error: buscaError } = await client
         .from("ocorrencias")
         .select("*")
@@ -1050,7 +1264,8 @@ class OcorrenciaManager {
         return { success: false, error: "Esta retificação não está pendente" };
       }
 
-      // Atualizar a retificação para rejeitada
+      const dadosAnteriores = { ...retificacao };
+
       const { data, error } = await client
         .from("ocorrencias")
         .update({
@@ -1077,8 +1292,16 @@ class OcorrenciaManager {
 
       console.log("❌ Retificação rejeitada:", retificacaoId);
 
-      // ===== REGISTRAR LOG DE REJEIÇÃO DE RETIFICAÇÃO =====
       await authManager.logRejeitarRetificacao(user.id, retificacaoId);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "REJEITAR_RETIFICACAO",
+        "ocorrencias",
+        retificacaoId,
+        dadosAnteriores,
+        data,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -1087,10 +1310,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Busca pedidos de retificação pendentes (para supervisor)
-   * @returns {Promise<Object>}
-   */
   async buscarRetificacoesPendentes() {
     try {
       const user = authManager.getUser();
@@ -1111,7 +1330,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Busca apenas ocorrências com status pending_rectification
       const { data, error } = await client
         .from("ocorrencias")
         .select("*")
@@ -1127,11 +1345,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Busca histórico de retificações de uma ocorrência
-   * @param {string} id - ID da ocorrência
-   * @returns {Promise<Object>}
-   */
   async buscarHistorico(id) {
     try {
       const user = authManager.getUser();
@@ -1144,7 +1357,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Busca a ocorrência original
       const { data: original, error: originalError } = await client
         .from("ocorrencias")
         .select("*")
@@ -1153,7 +1365,6 @@ class OcorrenciaManager {
 
       if (originalError) throw originalError;
 
-      // Busca todas as retificações vinculadas a esta ocorrência
       const { data: retificacoes, error: retError } = await client
         .from("ocorrencias")
         .select("*")
@@ -1162,7 +1373,6 @@ class OcorrenciaManager {
 
       if (retError) throw retError;
 
-      // Monta o histórico completo
       const historico = [
         { ...original, is_original: true },
         ...retificacoes.map((r) => ({ ...r, is_original: false })),
@@ -1175,11 +1385,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Busca detalhes das alterações de uma retificação
-   * @param {string} retificacaoId - ID da retificação
-   * @returns {Promise<Object>}
-   */
   async buscarDetalhesAlteracoes(retificacaoId) {
     try {
       const user = authManager.getUser();
@@ -1202,7 +1407,6 @@ class OcorrenciaManager {
         return { success: false, error: "Retificação não encontrada" };
       }
 
-      // Parse dos campos alterados
       let camposAlterados = [];
       let versaoOriginal = null;
 
@@ -1236,11 +1440,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Verifica se uma ocorrência tem retificações
-   * @param {string} id - ID da ocorrência
-   * @returns {Promise<boolean>}
-   */
   async temRetificacoes(id) {
     try {
       const client = supabaseClient.getClient();
@@ -1259,11 +1458,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Busca a versão ativa de uma ocorrência
-   * @param {string} id - ID da ocorrência original ou retificação
-   * @returns {Promise<Object>}
-   */
   async buscarVersaoAtiva(id) {
     try {
       const user = authManager.getUser();
@@ -1276,7 +1470,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Busca a ocorrência
       const { data: ocorrencia, error: buscaError } = await client
         .from("ocorrencias")
         .select("*")
@@ -1285,7 +1478,6 @@ class OcorrenciaManager {
 
       if (buscaError) throw buscaError;
 
-      // Se for uma retificação, busca a versão ativa
       if (ocorrencia.ocorrencia_original_id) {
         const { data: ativa, error: ativaError } = await client
           .from("ocorrencias")
@@ -1314,7 +1506,6 @@ class OcorrenciaManager {
         return { success: true, data: ativa };
       }
 
-      // Se for original, busca a versão ativa
       const { data: ativa, error: ativaError } = await client
         .from("ocorrencias")
         .select("*")
@@ -1350,11 +1541,6 @@ class OcorrenciaManager {
     }
   }
 
-  /**
-   * Busca ocorrências que possuem coordenadas de localização
-   * @param {object} filtros - { data_inicio, data_fim, tipo_ocorrencia, status }
-   * @returns {Promise<Object>}
-   */
   async buscarOcorrenciasComLocalizacao(filtros = {}) {
     try {
       const user = authManager.getUser();
@@ -1367,7 +1553,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // ===== CORREÇÃO: Buscar sem JOIN, apenas as ocorrências com coordenadas =====
       let query = client
         .from("ocorrencias")
         .select("*")
@@ -1375,7 +1560,6 @@ class OcorrenciaManager {
         .not("latitude", "is", null)
         .not("longitude", "is", null);
 
-      // Filtros
       if (filtros.data_inicio) {
         query = query.gte("criado_em", filtros.data_inicio);
       }
@@ -1389,7 +1573,6 @@ class OcorrenciaManager {
         query = query.eq("status", filtros.status);
       }
 
-      // Limitar para performance
       query = query.limit(filtros.limit || 500);
       query = query.order("criado_em", { ascending: false });
 
@@ -1397,7 +1580,6 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      // ===== BUSCAR DADOS DOS CRIADORES EM LOTE =====
       const ocorrencias = data || [];
       if (ocorrencias.length > 0) {
         const idsCriadores = ocorrencias
@@ -1406,7 +1588,6 @@ class OcorrenciaManager {
         const dadosUsuarios =
           await this.buscarDadosUsuariosEmLote(idsCriadores);
 
-        // Adiciona os dados do criador em cada ocorrência
         ocorrencias.forEach((ocorrencia) => {
           ocorrencia.criador = dadosUsuarios[ocorrencia.criado_por] || {
             nome_completo: null,
@@ -1415,7 +1596,6 @@ class OcorrenciaManager {
         });
       }
 
-      // Processa os dados para o mapa
       const pontosMapa = ocorrencias.map((occ) => ({
         id: occ.id,
         latitude: occ.latitude,
@@ -1522,7 +1702,7 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // ANEXOS
+  // ANEXOS - CORRIGIDO
   // ============================================
 
   async adicionarAnexo(ocorrenciaId, arquivo, tipo) {
@@ -1537,12 +1717,21 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      const fileExt = arquivo.name.split(".").pop();
-      const fileName = `${ocorrenciaId}/${Date.now()}-${arquivo.name}`;
+      // Comprimir imagem se for imagem
+      let arquivoProcessado = arquivo;
+      if (arquivo.type.startsWith("image/")) {
+        arquivoProcessado = await this.comprimirImagemOtimizada(arquivo);
+      }
+
+      // Gerar hash do arquivo
+      const hash = await this.gerarHashAnexo(arquivoProcessado);
+
+      const fileExt = arquivoProcessado.name.split(".").pop();
+      const fileName = `${ocorrenciaId}/${Date.now()}-${arquivoProcessado.name}`;
 
       const { error: uploadError } = await client.storage
         .from("anexos")
-        .upload(fileName, arquivo);
+        .upload(fileName, arquivoProcessado);
 
       if (uploadError) throw uploadError;
 
@@ -1552,11 +1741,16 @@ class OcorrenciaManager {
 
       const anexo = {
         ocorrencia_id: ocorrenciaId,
-        nome_arquivo: arquivo.name,
-        tipo_arquivo: tipo || this.determinarTipo(arquivo),
-        tamanho: arquivo.size,
+        nome_arquivo: arquivoProcessado.name,
+        tipo_arquivo: tipo || this.determinarTipo(arquivoProcessado),
+        tamanho: arquivoProcessado.size,
         url: urlData.publicUrl,
-        mime_type: arquivo.type,
+        mime_type: arquivoProcessado.type,
+        hash_arquivo: hash,
+        metadata: {
+          data_hora_upload: new Date().toISOString(),
+          tipo_original: arquivo.type,
+        },
         criado_por: user.id,
         criado_em: new Date(
           new Date().getTime() - new Date().getTimezoneOffset() * 60000,
@@ -1572,6 +1766,15 @@ class OcorrenciaManager {
         .single();
 
       if (error) throw error;
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "ADICIONAR_ANEXO",
+        "anexos",
+        data.id,
+        null,
+        { nome: anexo.nome_arquivo, tipo: anexo.tipo_arquivo, hash: hash },
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -1595,7 +1798,26 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      return { success: true, data: data || [] };
+      // Verificar URLs e cache
+      const anexos = data || [];
+      for (const anexo of anexos) {
+        if (anexo.url) {
+          try {
+            // Cache de verificação de URL
+            if (!this.cacheAnexos[anexo.id]) {
+              const response = await fetch(anexo.url, { method: "HEAD" });
+              anexo.url_valida = response.ok;
+              this.cacheAnexos[anexo.id] = response.ok;
+            } else {
+              anexo.url_valida = this.cacheAnexos[anexo.id];
+            }
+          } catch (e) {
+            anexo.url_valida = false;
+          }
+        }
+      }
+
+      return { success: true, data: anexos };
     } catch (error) {
       console.error("❌ Erro ao listar anexos:", error);
       return { success: false, error: error.message };
@@ -1609,9 +1831,30 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
+      // Buscar anexo antes de remover para log
+      const { data: anexo, error: buscaError } = await client
+        .from("anexos")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (buscaError) throw buscaError;
+
       const { error } = await client.from("anexos").delete().eq("id", id);
 
       if (error) throw error;
+
+      // Remover do cache
+      delete this.cacheAnexos[id];
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "REMOVER_ANEXO",
+        "anexos",
+        id,
+        anexo,
+        null,
+      );
 
       return { success: true };
     } catch (error) {
@@ -1631,7 +1874,7 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // SALVAR EM LOTE (PARA FINALIZAÇÃO)
+  // SALVAR EM LOTE
   // ============================================
 
   async salvarEnvolvidos(ocorrenciaId, envolvidos) {
@@ -1709,12 +1952,24 @@ class OcorrenciaManager {
 
       for (const anexo of anexos) {
         let urlFinal = anexo.url || null;
+        let hash = anexo.hash || null;
 
         if (anexo.arquivo) {
-          const fileName = `${ocorrenciaId}/${Date.now()}-${anexo.nome}`;
+          // Comprimir se for imagem
+          let arquivo = anexo.arquivo;
+          if (arquivo.type.startsWith("image/")) {
+            arquivo = await this.comprimirImagemOtimizada(arquivo);
+          }
+
+          // Gerar hash
+          hash = await this.gerarHashAnexo(arquivo);
+
+          const fileExt = arquivo.name.split(".").pop();
+          const fileName = `${ocorrenciaId}/${Date.now()}-${arquivo.name}`;
+
           const { error: uploadError } = await client.storage
             .from("anexos")
-            .upload(fileName, anexo.arquivo);
+            .upload(fileName, arquivo);
 
           if (uploadError) {
             console.error("Erro no upload do anexo:", uploadError);
@@ -1733,34 +1988,43 @@ class OcorrenciaManager {
           urlFinal = urlData.publicUrl;
         }
 
-        const { data, error } = await client
-          .from("anexos")
-          .insert({
-            ocorrencia_id: ocorrenciaId,
-            nome_arquivo: anexo.nome,
-            tipo_arquivo: anexo.tipo,
-            tamanho: anexo.tamanho || 0,
-            url: urlFinal,
-            mime_type: anexo.arquivo?.type || null,
-            criado_por: user.id,
-            criado_em: new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19),
-          })
-          .select()
-          .single();
+        if (urlFinal) {
+          const { data, error } = await client
+            .from("anexos")
+            .insert({
+              ocorrencia_id: ocorrenciaId,
+              nome_arquivo: anexo.nome || "anexo",
+              tipo_arquivo:
+                anexo.tipo ||
+                this.determinarTipo(anexo.arquivo || { type: "" }),
+              tamanho: anexo.tamanho || 0,
+              url: urlFinal,
+              mime_type: anexo.arquivo?.type || null,
+              hash_arquivo: hash,
+              metadata: {
+                data_hora_upload: new Date().toISOString(),
+                ...(anexo.metadata || {}),
+              },
+              criado_por: user.id,
+              criado_em: new Date(
+                new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+              )
+                .toISOString()
+                .slice(0, 19),
+            })
+            .select()
+            .single();
 
-        if (error) {
-          console.error("Erro ao salvar registro do anexo:", error);
-          resultados.push({
-            nome: anexo.nome,
-            success: false,
-            error: error.message,
-          });
-        } else {
-          resultados.push({ nome: anexo.nome, success: true, data });
+          if (error) {
+            console.error("Erro ao salvar registro do anexo:", error);
+            resultados.push({
+              nome: anexo.nome,
+              success: false,
+              error: error.message,
+            });
+          } else {
+            resultados.push({ nome: anexo.nome, success: true, data });
+          }
         }
       }
 
@@ -1782,7 +2046,7 @@ class OcorrenciaManager {
       );
       return { success: true, data: resultados };
     } catch (error) {
-      console.error("❌ Erro ao salvar anexos em lote:", error);
+      console.error("❌ Erro ao salvar anexos:", error);
       return { success: false, error: error.message };
     }
   }
@@ -1803,7 +2067,6 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      // Buscar apenas ocorrências ativas
       const { data, error } = await client
         .from("ocorrencias")
         .select("*")
@@ -1815,8 +2078,8 @@ class OcorrenciaManager {
         new Date().getTime() - new Date().getTimezoneOffset() * 60000,
       )
         .toISOString()
-        .slice(0, 19)
         .slice(0, 10);
+
       const stats = {
         total: data.length,
         hoje: data.filter((o) => o.criado_em.slice(0, 10) === hoje).length,
@@ -1841,6 +2104,20 @@ class OcorrenciaManager {
   }
 
   // ============================================
+  // LIMPAR CACHE
+  // ============================================
+
+  limparCacheUsuarios() {
+    this.cacheUsuarios = {};
+    console.log("🧹 Cache de usuários limpo");
+  }
+
+  limparCacheAnexos() {
+    this.cacheAnexos = {};
+    console.log("🧹 Cache de anexos limpo");
+  }
+
+  // ============================================
   // UTILITÁRIOS
   // ============================================
 
@@ -1853,15 +2130,6 @@ class OcorrenciaManager {
         return v.toString(16);
       },
     );
-  }
-
-  // ============================================
-  // LIMPAR CACHE (útil para testes)
-  // ============================================
-
-  limparCacheUsuarios() {
-    this.cacheUsuarios = {};
-    console.log("🧹 Cache de usuários limpo");
   }
 }
 

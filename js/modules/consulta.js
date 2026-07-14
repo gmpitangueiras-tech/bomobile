@@ -16,9 +16,10 @@
  * - GPS contínuo
  * - Debounce em buscas
  * - Ranking de reincidentes
+ * - Speech-to-Text (transcrição de voz)
  *
  * Depende de: authManager (global), supabaseClient (global),
- *             ocorrenciaManager (global)
+ *             ocorrenciaManager (global), utils
  */
 
 // ============================================
@@ -213,6 +214,7 @@ let estado = {
   ultimaBusca: "",
   rankingReincidentes: [],
   carregandoRanking: false,
+  sttInicializado: false,
 };
 
 // ============================================
@@ -345,6 +347,9 @@ export async function renderConsultaOperacional(container, appInstance) {
 
   // Salvar referência do app
   window._consultaApp = appInstance;
+
+  // Resetar flag de STT para nova inicialização
+  estado.sttInicializado = false;
 }
 
 // ============================================
@@ -576,6 +581,9 @@ function renderAbaConsulta() {
       }, 500);
     }
   };
+
+  // Resetar flag de STT para nova inicialização ao renderizar a aba
+  estado.sttInicializado = false;
 }
 
 // ============================================
@@ -1183,6 +1191,7 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
 
   const isVeiculo = estado.abaAtiva === "veiculos";
   estado.arquivosTemp = [];
+  estado.sttInicializado = false;
 
   const localizacaoAtual =
     typeof window.app !== "undefined"
@@ -1272,7 +1281,12 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
     </div>
     <div class="form-group" style="margin-bottom:12px;">
       <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Observações Adicionais</label>
-      <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;"></textarea>
+      <div style="position:relative;">
+        <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:8px;padding-right:45px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:50px;resize:vertical;"></textarea>
+        <button type="button" id="btnSttAbordagem" class="btn-stt" title="Falar observações" style="position:absolute; right:8px; bottom:8px; width:36px; height:36px; border-radius:50%; background:var(--azul-muito-claro); color:var(--azul-bandeira); border:2px solid var(--azul-claro); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5; transition:all 0.3s ease;">
+          <i class="fas fa-microphone" style="font-size:16px;"></i>
+        </button>
+      </div>
     </div>
 
     <div class="form-group" style="margin-bottom:12px;">
@@ -1324,6 +1338,11 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
   html += `</form></div>`;
   area.innerHTML = html;
 
+  // Inicializar Speech-to-Text para abordagem
+  setTimeout(() => {
+    inicializarSpeechToTextAbordagem();
+  }, 300);
+
   const cpfInput =
     document.getElementById("formCpf") ||
     document.getElementById("formCondutorCpf");
@@ -1347,6 +1366,25 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
       fileInput.click();
     }
   };
+}
+
+// ============================================
+// INICIALIZAR SPEECH-TO-TEXT PARA ABORDAGEM
+// ============================================
+
+function inicializarSpeechToTextAbordagem() {
+  if (estado.sttInicializado) return;
+
+  if (window.utils && window.utils.initSpeechToText) {
+    window.utils.initSpeechToText(
+      "formObservacoesAbordagem",
+      "btnSttAbordagem",
+      window._consultaApp || window.app,
+    );
+    estado.sttInicializado = true;
+  } else {
+    console.warn("⚠️ utils.initSpeechToText não disponível");
+  }
 }
 
 // ============================================
@@ -1422,7 +1460,7 @@ export function removerImagemAbordagemPreview(btn) {
 }
 
 // ============================================
-// SALVAR ABORDAGEM COM ANEXOS - CORRIGIDO
+// SALVAR ABORDAGEM COM ANEXOS
 // ============================================
 
 export async function salvarAbordagemComAnexos() {
@@ -1522,13 +1560,28 @@ export async function salvarAbordagemComAnexos() {
       anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
     }
 
-    // Obter localização (GPS contínuo ou fallback)
+    // Obter localização (GPS contínuo ou fallback) com resiliência
     let localizacao =
       typeof window.app !== "undefined"
         ? window.app.obterLocalizacaoAtual()
         : null;
-    if (!localizacao) {
+    if (!localizacao || !localizacao.latitude) {
       localizacao = await obterLocalizacaoInterna();
+    }
+
+    // Fallback para última localização da sessão se o GPS falhar
+    if (
+      (!localizacao || !localizacao.latitude) &&
+      window.sessionManager &&
+      window.sessionManager.ultimaLocalizacao
+    ) {
+      localizacao = window.sessionManager.ultimaLocalizacao;
+      if (typeof window.app !== "undefined" && window.app.showToast) {
+        window.app.showToast(
+          "GPS instável. Usando última posição conhecida.",
+          "info",
+        );
+      }
     }
 
     // CORREÇÃO: Formatar data sem timezone para o PostgreSQL

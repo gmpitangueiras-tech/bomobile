@@ -5,8 +5,8 @@
  * Este módulo gerencia:
  * - Estatísticas gerais do sistema
  * - Cards agrupados (Ocorrências e Abordagens)
- * - Últimas 3 ocorrências com miniaturas
- * - Últimas 3 abordagens
+ * - Últimas 3 ocorrências com miniaturas (TODAS as ocorrências)
+ * - Últimas 3 abordagens (TODAS as abordagens)
  * - Detalhes de abordagens via modal
  * - Briefing do turno (últimas 12 horas)
  * - Navegação para outras páginas
@@ -362,9 +362,10 @@ async function carregarBriefings() {
 
         const dozeHorasAtras = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
+        // Buscar TODAS as novas ocorrências (sem filtrar por usuário)
         const { data: novasOcorrencias, error: occError } = await client
             .from("ocorrencias")
-            .select("id, tipo_ocorrencia, criado_em, local_ocorrencia")
+            .select("id, tipo_ocorrencia, criado_em, local_ocorrencia, criado_por")
             .gte("criado_em", dozeHorasAtras)
             .eq("esta_ativa", true)
             .limit(5);
@@ -379,6 +380,7 @@ async function carregarBriefings() {
 
         if (avisoError) throw avisoError;
 
+        // Buscar nomes dos criadores
         const ocorrenciasComNomes = await Promise.all(
             (novasOcorrencias || []).map(async (occ) => {
                 let nomeCriador = "Desconhecido";
@@ -407,7 +409,7 @@ async function carregarBriefings() {
 }
 
 // ============================================
-// CARREGAR OCORRÊNCIAS - CORRIGIDO (SEM JOIN)
+// CARREGAR OCORRÊNCIAS - TODAS (NÃO APENAS DO USUÁRIO)
 // ============================================
 
 async function carregarOcorrencias() {
@@ -425,17 +427,10 @@ async function carregarOcorrencias() {
             return;
         }
 
-        const user = authManager.getUser();
-        if (!user) {
-            estado.ocorrenciasData = [];
-            return;
-        }
-
-        // Buscar ocorrências SEM JOIN
+        // Buscar TODAS as ocorrências ativas (sem filtrar por usuário)
         const { data: ocorrencias, error } = await client
             .from("ocorrencias")
             .select("*")
-            .eq("criado_por", user.id)
             .eq("esta_ativa", true)
             .order("criado_em", { ascending: false })
             .limit(10);
@@ -492,6 +487,10 @@ async function carregarOcorrencias() {
     }
 }
 
+// ============================================
+// CARREGAR ABORDAGENS - TODAS (NÃO APENAS DO USUÁRIO)
+// ============================================
+
 async function carregarAbordagens() {
     const cachedAbordagens = getCachedData(CACHE_KEY_ABORDAGENS);
     if (cachedAbordagens) {
@@ -507,23 +506,16 @@ async function carregarAbordagens() {
             return;
         }
 
-        const user = authManager.getUser();
-        if (!user) {
-            estado.abordagensData = { veiculos: [], pessoas: [] };
-            return;
-        }
-
+        // Buscar TODAS as abordagens (sem filtrar por usuário)
         const [veiculosResult, pessoasResult] = await Promise.all([
             client
                 .from("abordagens_veiculos")
                 .select("*, usuarios(nome_completo)")
-                .eq("criado_por", user.id)
                 .order("criado_em", { ascending: false })
                 .limit(3),
             client
                 .from("abordagens_pessoas")
                 .select("*, usuarios(nome_completo)")
-                .eq("criado_por", user.id)
                 .order("criado_em", { ascending: false })
                 .limit(3)
         ]);

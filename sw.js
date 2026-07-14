@@ -16,19 +16,21 @@
  * - Estratégias de cache otimizadas
  * - Gerenciamento de versões de cache
  * - Precache de rotas importantes
+ * - Atualização forçada com skipWaiting e clients.claim()
+ * - Verificação periódica de atualizações
  */
 
 // ============================================
-// CONSTANTES
+// CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v3.1";
+const CACHE_NAME = "guarda-pitangueiras-v4";
 const BASE_PATH = "./";
-const ASSETS_CACHE = "guarda-assets-v1";
-const API_CACHE = "guarda-api-v1";
-const IMAGES_CACHE = "guarda-images-v1";
-const DYNAMIC_CACHE = "guarda-dynamic-v1";
-const CACHE_VERSION = "v3";
+const ASSETS_CACHE = "guarda-assets-v2";
+const API_CACHE = "guarda-api-v2";
+const IMAGES_CACHE = "guarda-images-v2";
+const DYNAMIC_CACHE = "guarda-dynamic-v2";
+const CACHE_VERSION = "v4";
 
 const STATIC_ASSETS = [
   BASE_PATH,
@@ -72,13 +74,14 @@ self.addEventListener("install", (event) => {
       caches.open(DYNAMIC_CACHE),
     ]).then(() => {
       console.log("✅ Service Worker instalado com sucesso");
+      // FORÇAR SKIP WAITING - Pula a espera e ativa imediatamente
       return self.skipWaiting();
     }),
   );
 });
 
 // ============================================
-// ATIVAÇÃO
+// ATIVAÇÃO - FORÇAR ATUALIZAÇÃO
 // ============================================
 
 self.addEventListener("activate", (event) => {
@@ -105,10 +108,154 @@ self.addEventListener("activate", (event) => {
             }),
         );
       }),
-      // Reivindicar controle imediato
+      // REIVINDICAR CONTROLE IMEDIATO - FORÇA ATUALIZAÇÃO EM TODAS AS ABAS
       self.clients.claim(),
-    ]),
+    ]).then(() => {
+      // Notificar todos os clientes que o SW foi atualizado
+      self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'SW_UPDATED',
+            version: CACHE_VERSION,
+            timestamp: Date.now()
+          });
+        });
+      });
+      console.log(`✅ Service Worker ${CACHE_VERSION} ativado e controlando todos os clientes`);
+    }),
   );
+});
+
+// FORÇAR SKIP WAITING - Garantir que o SW seja ativado imediatamente
+self.skipWaiting();
+
+// ============================================
+// MENSAGENS DO CLIENTE - ATUALIZAÇÃO
+// ============================================
+
+self.addEventListener("message", (event) => {
+  console.log("📨 Mensagem recebida no Service Worker:", event.data);
+
+  // Forçar atualização do Service Worker
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.log('🔄 Forçando skipWaiting...');
+    self.skipWaiting();
+    // Notificar que o SW foi atualizado
+    event.waitUntil(
+      self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'SW_UPDATED',
+            version: CACHE_VERSION,
+            timestamp: Date.now()
+          });
+        });
+      })
+    );
+  }
+
+  // Verificar se há atualizações disponíveis
+  if (event.data && event.data.type === 'CHECK_FOR_UPDATE') {
+    console.log('🔍 Verificando atualizações...');
+    // Tentar atualizar o SW
+    event.waitUntil(
+      self.registration.update().then(() => {
+        console.log('✅ Verificação de atualização concluída');
+        // Notificar o cliente sobre o resultado
+        if (event.ports && event.ports[0]) {
+          event.ports[0].postMessage({
+            type: 'UPDATE_CHECK_RESULT',
+            version: CACHE_VERSION,
+            hasUpdate: false
+          });
+        }
+      }).catch((error) => {
+        console.warn('⚠️ Erro ao verificar atualização:', error);
+        if (event.ports && event.ports[0]) {
+          event.ports[0].postMessage({
+            type: 'UPDATE_CHECK_RESULT',
+            error: error.message
+          });
+        }
+      })
+    );
+  }
+
+  // Cache de URLs
+  if (event.data && event.data.type === "CACHE_URLS") {
+    const urls = event.data.urls || [];
+    event.waitUntil(
+      caches.open(DYNAMIC_CACHE).then((cache) => {
+        return cache
+          .addAll(urls)
+          .then(() => {
+            console.log("✅ URLs adicionadas ao cache:", urls.length);
+          })
+          .catch((error) => {
+            console.warn("⚠️ Erro ao cachear URLs:", error);
+          });
+      }),
+    );
+  }
+
+  // Limpar cache
+  if (event.data && event.data.type === "CLEAR_CACHE") {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((cacheNames) => {
+          return Promise.all(
+            cacheNames.map((cacheName) => {
+              if (
+                cacheName !== CACHE_NAME &&
+                cacheName !== ASSETS_CACHE &&
+                cacheName !== API_CACHE &&
+                cacheName !== IMAGES_CACHE &&
+                cacheName !== DYNAMIC_CACHE
+              ) {
+                console.log(`🗑️ Removendo cache: ${cacheName}`);
+                return caches.delete(cacheName);
+              }
+            }),
+          );
+        })
+        .then(() => {
+          console.log("✅ Cache limpo");
+          if (event.ports && event.ports[0]) {
+            event.ports[0].postMessage({ success: true });
+          }
+        }),
+    );
+  }
+
+  // Verificar versão do cache
+  if (event.data && event.data.type === "CHECK_VERSION") {
+    event.waitUntil(
+      caches
+        .open(CACHE_NAME)
+        .then((cache) => {
+          return cache.match("version.json");
+        })
+        .then((response) => {
+          if (response) {
+            return response.json().then((data) => {
+              if (event.ports && event.ports[0]) {
+                event.ports[0].postMessage({
+                  version: data.version || CACHE_VERSION,
+                  cacheName: CACHE_NAME,
+                });
+              }
+            });
+          }
+          if (event.ports && event.ports[0]) {
+            event.ports[0].postMessage({
+              version: CACHE_VERSION,
+              cacheName: CACHE_NAME,
+            });
+          }
+        }),
+    );
+  }
 });
 
 // ============================================
@@ -483,87 +630,6 @@ async function syncAll() {
 }
 
 // ============================================
-// MENSAGENS DO CLIENTE
-// ============================================
-
-self.addEventListener("message", (event) => {
-  console.log("📨 Mensagem recebida no Service Worker:", event.data);
-
-  if (event.data && event.data.type === "CACHE_URLS") {
-    const urls = event.data.urls || [];
-    event.waitUntil(
-      caches.open(DYNAMIC_CACHE).then((cache) => {
-        return cache
-          .addAll(urls)
-          .then(() => {
-            console.log("✅ URLs adicionadas ao cache:", urls.length);
-          })
-          .catch((error) => {
-            console.warn("⚠️ Erro ao cachear URLs:", error);
-          });
-      }),
-    );
-  }
-
-  if (event.data && event.data.type === "CLEAR_CACHE") {
-    event.waitUntil(
-      caches
-        .keys()
-        .then((cacheNames) => {
-          return Promise.all(
-            cacheNames.map((cacheName) => {
-              if (
-                cacheName !== CACHE_NAME &&
-                cacheName !== ASSETS_CACHE &&
-                cacheName !== API_CACHE &&
-                cacheName !== IMAGES_CACHE
-              ) {
-                return caches.delete(cacheName);
-              }
-            }),
-          );
-        })
-        .then(() => {
-          console.log("✅ Cache limpo");
-          if (event.ports && event.ports[0]) {
-            event.ports[0].postMessage({ success: true });
-          }
-        }),
-    );
-  }
-});
-
-// ============================================
-// GERENCIAMENTO DE VERSÃO
-// ============================================
-
-self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "CHECK_VERSION") {
-    event.waitUntil(
-      caches
-        .open(CACHE_NAME)
-        .then((cache) => {
-          return cache.match("version.json");
-        })
-        .then((response) => {
-          if (response) {
-            return response.json().then((data) => {
-              if (event.ports && event.ports[0]) {
-                event.ports[0].postMessage({
-                  version: data.version || CACHE_VERSION,
-                });
-              }
-            });
-          }
-          if (event.ports && event.ports[0]) {
-            event.ports[0].postMessage({ version: CACHE_VERSION });
-          }
-        }),
-    );
-  }
-});
-
-// ============================================
 // PERIODIC BACKGROUND SYNC (se suportado)
 // ============================================
 
@@ -578,12 +644,38 @@ if (self.registration && self.registration.periodicSync) {
 }
 
 // ============================================
+// GERENCIAMENTO DE VERSÃO
+// ============================================
+
+// Armazenar versão atual no cache
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      const versionData = {
+        version: CACHE_VERSION,
+        cacheName: CACHE_NAME,
+        installedAt: new Date().toISOString(),
+        assets: STATIC_ASSETS.length
+      };
+      const response = new Response(JSON.stringify(versionData), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      return cache.put('version.json', response);
+    })
+  );
+});
+
+// ============================================
 // Gerenciamento de Erros
 // ============================================
 
 self.addEventListener("error", (event) => {
   console.error("❌ Erro no Service Worker:", event.message);
   // Poderia enviar para um serviço de monitoramento
+});
+
+self.addEventListener("unhandledrejection", (event) => {
+  console.error("❌ Promise rejeitada no Service Worker:", event.reason);
 });
 
 // ============================================
@@ -596,3 +688,4 @@ console.log(`📂 Cache de assets: ${ASSETS_CACHE}`);
 console.log(`📂 Cache de API: ${API_CACHE}`);
 console.log(`📂 Cache de imagens: ${IMAGES_CACHE}`);
 console.log(`📂 Cache dinâmico: ${DYNAMIC_CACHE}`);
+console.log(`🔄 Atualização forçada ativada (skipWaiting + clients.claim())`);

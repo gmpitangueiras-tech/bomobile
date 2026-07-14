@@ -251,7 +251,8 @@ export function formatarDataHoraInput(date) {
  * @returns {number}
  */
 export function calcularDiferencaMinutos(dataInicio, dataFim) {
-  const inicio = typeof dataInicio === "string" ? new Date(dataInicio) : dataInicio;
+  const inicio =
+    typeof dataInicio === "string" ? new Date(dataInicio) : dataInicio;
   const fim = typeof dataFim === "string" ? new Date(dataFim) : dataFim;
   if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) return 0;
   return (fim.getTime() - inicio.getTime()) / (1000 * 60);
@@ -285,7 +286,8 @@ export function aplicarMascaraCPF(value) {
   if (limpo.length === 0) return "";
   if (limpo.length <= 3) return limpo;
   if (limpo.length <= 6) return limpo.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-  if (limpo.length <= 9) return limpo.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+  if (limpo.length <= 9)
+    return limpo.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
   return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
 }
 
@@ -300,7 +302,8 @@ export function aplicarMascaraTelefone(value) {
   if (limpo.length === 0) return "";
   if (limpo.length <= 2) return `(${limpo}`;
   if (limpo.length <= 6) return `(${limpo.slice(0, 2)}) ${limpo.slice(2)}`;
-  if (limpo.length <= 10) return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
+  if (limpo.length <= 10)
+    return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
   return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 7)}-${limpo.slice(7, 11)}`;
 }
 
@@ -315,7 +318,8 @@ export function aplicarMascaraPlaca(value) {
   if (upper.length === 0) return "";
   if (upper.length <= 3) return upper;
   if (upper.length <= 4) return `${upper.slice(0, 3)}${upper.slice(3)}`;
-  if (upper.length <= 6) return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
+  if (upper.length <= 6)
+    return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
   return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4, 5)}${upper.slice(5, 7)}`;
 }
 
@@ -330,7 +334,8 @@ export function formatarCPFSeguro(cpf, forceFull = false) {
   const limpo = cpf.replace(/\D/g, "");
   if (limpo.length !== 11) return cpf;
 
-  const isSupervisor = typeof authManager !== "undefined" && authManager.isSupervisor();
+  const isSupervisor =
+    typeof authManager !== "undefined" && authManager.isSupervisor();
   if (isSupervisor || forceFull) {
     return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
   }
@@ -527,7 +532,7 @@ export function gerarUUID() {
   if (crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0;
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
@@ -714,7 +719,7 @@ export function clearAllCache() {
  */
 export function debounce(func, delay = 300) {
   let timeoutId;
-  return function(...args) {
+  return function (...args) {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => func.apply(this, args), delay);
   };
@@ -728,7 +733,7 @@ export function debounce(func, delay = 300) {
  */
 export function throttle(func, limit = 300) {
   let inThrottle;
-  return function(...args) {
+  return function (...args) {
     if (!inThrottle) {
       func.apply(this, args);
       inThrottle = true;
@@ -848,7 +853,7 @@ export function inputModal(
       if (textarea) textarea.focus();
     }, 300);
 
-    window._confirmarInputModal = function() {
+    window._confirmarInputModal = function () {
       const textarea = document.getElementById("inputModalMotivo");
       if (!textarea) return;
       const valor = textarea.value.trim();

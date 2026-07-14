@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#003F87" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -17,13 +17,19 @@
       name="description"
       content="Sistema de Registro de Ocorrências da Guarda Municipal de Pitangueiras - PR"
     />
+    <meta name="apple-mobile-web-app-title" content="Guarda Municipal" />
+    <meta name="application-name" content="Guarda Municipal" />
 
     <title>Guarda Municipal - Pitangueiras/PR</title>
 
-    <!-- CSS -->
+    <!-- ============================================
+    CSS
+    ============================================ -->
     <link rel="stylesheet" href="css/style.css" />
 
-    <!-- ===== LEAFLET - MAPA ===== -->
+    <!-- ============================================
+    LEAFLET - MAPA
+    ============================================ -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -36,10 +42,14 @@
       crossorigin=""
     ></script>
 
-    <!-- Manifest PWA -->
+    <!-- ============================================
+    PWA - MANIFEST
+    ============================================ -->
     <link rel="manifest" href="manifest.json" />
 
-    <!-- Ícones -->
+    <!-- ============================================
+    ÍCONES
+    ============================================ -->
     <link
       rel="icon"
       type="image/png"
@@ -52,21 +62,118 @@
       sizes="512x512"
       href="assets/icons/icon-512x512.png"
     />
-    <link rel="apple-touch-icon" href="assets/icons/icon-192x192.png" />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="assets/icons/icon-192x192.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="assets/icons/favicon-32x32.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="assets/icons/favicon-16x16.png"
+    />
 
-    <!-- Font Awesome para ícones -->
+    <!-- ============================================
+    FONT AWESOME - ÍCONES
+    ============================================ -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
     />
+
+    <!-- ============================================
+    PWA - SERVICE WORKER REGISTRATION
+    ============================================ -->
+    <script>
+      // Registrar Service Worker para PWA e Notificações
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker
+            .register("sw.js")
+            .then(function (registration) {
+              console.log("✅ Service Worker registrado com sucesso");
+
+              // Verificar se há suporte para notificações push
+              if (
+                "Notification" in window &&
+                Notification.permission === "granted"
+              ) {
+                // Solicitar permissão para notificações após registro
+                console.log("🔔 Notificações já permitidas");
+              }
+
+              // Verificar suporte a Background Sync
+              if ("sync" in registration) {
+                console.log("🔄 Background Sync suportado");
+              }
+
+              // Verificar suporte a Periodic Sync
+              if ("periodicSync" in registration) {
+                console.log("🔄 Periodic Sync suportado");
+              }
+            })
+            .catch(function (error) {
+              console.warn("⚠️ Erro ao registrar Service Worker:", error);
+            });
+        });
+      } else {
+        console.log("ℹ️ Service Worker não suportado neste navegador");
+      }
+
+      // Solicitar permissão para notificações push
+      function requestNotificationPermission() {
+        if (!("Notification" in window)) {
+          console.log("ℹ️ Notificações não suportadas");
+          return;
+        }
+
+        if (Notification.permission === "granted") {
+          console.log("🔔 Notificações já permitidas");
+          return;
+        }
+
+        if (Notification.permission === "denied") {
+          console.log("🔔 Notificações bloqueadas pelo usuário");
+          return;
+        }
+
+        // Solicitar permissão após interação do usuário
+        document.addEventListener(
+          "click",
+          function requestPermission() {
+            Notification.requestPermission().then(function (permission) {
+              console.log("🔔 Permissão de notificações:", permission);
+              if (permission === "granted") {
+                // Registrar para receber notificações push
+                console.log("✅ Notificações push ativadas");
+              }
+            });
+            document.removeEventListener("click", requestPermission);
+          },
+          { once: true },
+        );
+      }
+
+      // Solicitar permissão quando a página carregar (após um pequeno delay)
+      setTimeout(requestNotificationPermission, 3000);
+    </script>
   </head>
+
   <body>
     <div id="app">
-      <!-- ========== HEADER ========== -->
+      <!-- ============================================
+      HEADER
+      ============================================ -->
       <header id="app-header" style="display: none">
         <div class="header-content">
           <div class="logo-area">
-            <!-- Botão menu removido -->
             <div
               style="
                 width: 36px;
@@ -100,7 +207,9 @@
         </div>
       </header>
 
-      <!-- ========== CONTEÚDO PRINCIPAL ========== -->
+      <!-- ============================================
+      CONTEÚDO PRINCIPAL
+      ============================================ -->
       <main id="main-content">
         <!-- Login Screen -->
         <div id="page-login" class="page">
@@ -155,6 +264,7 @@
                       placeholder="123.456.789-00"
                       maxlength="14"
                       autocomplete="username"
+                      inputmode="numeric"
                     />
                   </div>
                 </div>
@@ -310,16 +420,22 @@
         </div>
       </main>
 
-      <!-- ========== BOTTOM NAVIGATION (sempre visível, exceto login) ========== -->
+      <!-- ============================================
+      BOTTOM NAVIGATION
+      ============================================ -->
       <nav id="bottom-nav" class="bottom-nav" style="display: none">
         <!-- Início -->
-        <button class="nav-item active" data-page="dashboard">
+        <button
+          class="nav-item active"
+          data-page="dashboard"
+          aria-label="Início"
+        >
           <i class="fas fa-th-large"></i>
           <span>Início</span>
         </button>
 
         <!-- Mural -->
-        <button class="nav-item" data-page="mural">
+        <button class="nav-item" data-page="mural" aria-label="Mural">
           <div class="icon-wrapper">
             <i class="fas fa-bullhorn"></i>
             <span id="badge-mural" class="badge-count" style="display: none"
@@ -330,7 +446,11 @@
         </button>
 
         <!-- Novo BO (central com destaque) -->
-        <button class="nav-item" data-page="nova-ocorrencia">
+        <button
+          class="nav-item"
+          data-page="nova-ocorrencia"
+          aria-label="Nova Ocorrência"
+        >
           <div class="nav-fab">
             <i class="fas fa-plus"></i>
           </div>
@@ -338,19 +458,25 @@
         </button>
 
         <!-- Minhas Ocorrências -->
-        <button class="nav-item" data-page="ocorrencias">
+        <button
+          class="nav-item"
+          data-page="ocorrencias"
+          aria-label="Ocorrências"
+        >
           <i class="fas fa-list-ul"></i>
           <span>Ocorrências</span>
         </button>
 
         <!-- Mais (abre bottom sheet) -->
-        <button class="nav-item" id="navMais">
+        <button class="nav-item" id="navMais" aria-label="Mais opções">
           <i class="fas fa-ellipsis-h"></i>
           <span>Mais</span>
         </button>
       </nav>
 
-      <!-- ========== BOTTOM SHEET (painel "Mais") ========== -->
+      <!-- ============================================
+      BOTTOM SHEET (painel "Mais")
+      ============================================ -->
       <div
         id="bottomSheetOverlay"
         class="bottom-sheet-overlay"
@@ -358,26 +484,101 @@
       >
         <div id="bottomSheet" class="bottom-sheet">
           <div class="bottom-sheet-handle"></div>
+          <div class="bottom-sheet-title">Menu</div>
           <div class="bottom-sheet-items">
             <!-- Itens serão inseridos dinamicamente pelo JavaScript -->
           </div>
         </div>
       </div>
 
-      <!-- ========== TOAST - Notificações ========== -->
+      <!-- ============================================
+      TOAST - Notificações
+      ============================================ -->
       <div id="toastContainer"></div>
+
+      <!-- ============================================
+      FAB CONTEXTUAL (Floating Action Button)
+      ============================================ -->
+      <button
+        id="fabContextual"
+        class="fab"
+        style="display: none"
+        aria-label="Ação rápida"
+      >
+        <i class="fas fa-plus"></i>
+      </button>
     </div>
 
-    <!-- ========== SCRIPTS ========== -->
+    <!-- ============================================
+    SCRIPTS GLOBAIS
+    ============================================ -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Configurações e dependências -->
     <script src="js/config.js"></script>
     <script src="js/supabase.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/ocorrencia.js"></script>
     <script src="js/session.js"></script>
-    <script src="js/app.js"></script>
+
+    <!-- App principal (módulo ES6) -->
+    <script type="module" src="js/app.js"></script>
+
     <!-- Bibliotecas para PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- ============================================
+    INICIALIZAÇÃO ADICIONAL
+    ============================================ -->
+    <script>
+      // Detectar se é um dispositivo móvel para otimizações
+      const isMobile =
+        /Android|iPhone|iPad|iPod|BlackBerry|Opera Mini|IEMobile/i.test(
+          navigator.userAgent,
+        );
+      if (isMobile) {
+        document.documentElement.classList.add("is-mobile");
+        console.log("📱 Dispositivo móvel detectado");
+      }
+
+      // Prevenir zoom duplo toque em dispositivos móveis
+      document.addEventListener(
+        "dblclick",
+        function (e) {
+          if (isMobile) {
+            e.preventDefault();
+          }
+        },
+        { passive: false },
+      );
+
+      // Registrar interação do usuário para habilitar notificações
+      document.addEventListener(
+        "click",
+        function enableNotifications() {
+          if (
+            "Notification" in window &&
+            Notification.permission === "default"
+          ) {
+            Notification.requestPermission().then(function (permission) {
+              console.log("🔔 Permissão de notificações:", permission);
+            });
+          }
+          document.removeEventListener("click", enableNotifications);
+        },
+        { once: true },
+      );
+
+      console.log(`📱 Modo: ${isMobile ? "Mobile" : "Desktop"}`);
+      console.log(`🌐 Navegador: ${navigator.userAgent.split(" ").pop()}`);
+    </script>
+
+    <!-- ============================================
+    PRELOAD DE RECURSOS CRÍTICOS
+    ============================================ -->
+    <link rel="preconnect" href="https://wswezvcxfljzcttpqkch.supabase.co" />
+    <link rel="preconnect" href="https://api.ipify.org" />
+    <link rel="dns-prefetch" href="https://wswezvcxfljzcttpqkch.supabase.co" />
   </body>
 </html>

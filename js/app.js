@@ -1,12 +1,91 @@
+/**
+ * APP - Orquestrador Principal
+ * Guarda Municipal de Pitangueiras - PR
+ *
+ * Este é o ponto de entrada da aplicação. Ele gerencia:
+ * - Inicialização do sistema
+ * - Roteamento entre páginas
+ * - Estado global da aplicação
+ * - Eventos principais (login, logout, navegação)
+ * - Integração com todos os módulos
+ *
+ * MELHORIAS APLICADAS:
+ * - Fuso horário corrigido (prioridade: internet > dispositivo)
+ * - Logs periciais automáticos em ações críticas
+ * - Cache de dados estáticos em localStorage
+ * - GPS contínuo para localização automática
+ * - Debounce em buscas e eventos
+ * - Gestos de deslize entre abas (mobile)
+ *
+ * Depende de: authManager, supabaseClient, ocorrenciaManager,
+ *             sessionManager e todos os módulos em /modules/
+ */
+
+// ============================================
+// IMPORTAÇÕES DOS MÓDULOS
+// ============================================
+
+import * as ui from "./modules/ui.js";
+import * as utils from "./modules/utils.js";
+import * as dashboard from "./modules/dashboard.js";
+import * as consulta from "./modules/consulta.js";
+import * as mural from "./modules/mural.js";
+import * as relatorios from "./modules/relatorios.js";
+import * as usuarios from "./modules/usuarios.js";
+import * as perfil from "./modules/perfil.js";
+import * as logs from "./modules/logs.js";
+
+// ============================================
+// CONSTANTES
+// ============================================
+
+const CACHE_KEYS = {
+  TIPOS_OCORRENCIA: "tipos_ocorrencia",
+  USUARIOS: "usuarios",
+  CONFIGURACOES: "configuracoes",
+  STATS: "stats",
+};
+
+const CACHE_EXPIRY = 3600000; // 1 hora
+
+// ============================================
+// CLASSE APP
+// ============================================
+
 class App {
   constructor() {
     this.currentPage = "login";
     this.initialized = false;
-    this.filtroStatusAtual = null;
+    this.currentParams = null;
     this.paginaDestino = null;
     this.paramsDestino = null;
-    this.relatorioAtivo = null;
-    this.relatorioFiltros = { dataInicio: null, dataFim: null };
+    this.gpsWatchId = null;
+    this.ultimaLocalizacao = null;
+
+    // Estado para nova ocorrência
+    this.novaOcorrencia = null;
+    this.rascunhoId = null;
+    this.dadosRascunho = null;
+    this.alteracoesNaoSalvas = false;
+
+    // Estado para filtros
+    this.filtroStatusAtual = null;
+    this.filtrosOcorrencias = { status: "", dataInicio: "", dataFim: "" };
+    this.filtrosMural = {
+      busca: "",
+      tipo: "todos",
+      dataInicio: "",
+      dataFim: "",
+    };
+    this.filtrosConsulta = {
+      dataInicio: "",
+      dataFim: "",
+      guarda: "",
+      tipo: "todos",
+    };
+    this.filtrosLogs = {};
+
+    // Mapeamento de páginas
     this.pages = {
       login: { element: "page-login", showHeader: false, showNav: false },
       dashboard: { element: "page-dashboard", showHeader: true, showNav: true },
@@ -41,32 +120,9 @@ class App {
       consulta: { element: "page-consulta", showHeader: true, showNav: true },
       mural: { element: "page-mural", showHeader: true, showNav: true },
     };
-    this.rascunhoId = null;
-    this.dadosRascunho = null;
-    this.alteracoesNaoSalvas = false;
-    this.filtrosOcorrencias = { status: "", dataInicio: "", dataFim: "" };
-    this.filtrosLogs = {};
-    this.mapaInstance = null;
-    this.abaConsultaAtiva = "veiculos";
-    this.filtrosMural = {
-      tipo: "todos",
-      dataInicio: "",
-      dataFim: "",
-      busca: "",
-    };
-    this.muralAvisoAtivo = null;
-    this.filtrosConsulta = {
-      dataInicio: "",
-      dataFim: "",
-      guarda: "",
-      tipo: "todos",
-    };
-    this.listaGuardas = [];
-    this.consultaTimeout = null;
-  }
 
-  get TIPOS_OCORRENCIA() {
-    return [
+    // Tipos de ocorrência (usado em várias partes)
+    this.TIPOS_OCORRENCIA = [
       { value: "furto", label: "Furto" },
       { value: "roubo", label: "Roubo" },
       { value: "vandalismo", label: "Vandalismo" },
@@ -80,233 +136,71 @@ class App {
       { value: "atendimento_social", label: "Atendimento Social" },
       { value: "outro", label: "Outro" },
     ];
-  }
 
-  obterDataHoraBrasilia() {
-    const now = new Date();
-    const brasiliaOffset = -3 * 60;
-    const localOffset = now.getTimezoneOffset();
-    const diff = brasiliaOffset - localOffset;
-    return new Date(now.getTime() + diff * 60 * 1000);
-  }
-
-  formatarDataHoraLocal(date) {
-    if (!date) return "";
-    if (typeof date === "string") {
-      date = new Date(date);
-    }
-    if (isNaN(date.getTime())) return "Data inválida";
-    const brasiliaOffset = -3 * 60;
-    const localOffset = date.getTimezoneOffset();
-    const diff = brasiliaOffset - localOffset;
-    const brasiliaDate = new Date(date.getTime() + diff * 60 * 1000);
-    return brasiliaDate.toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  formatarDataHoraInput(date) {
-    if (!date) return "";
-    if (typeof date === "string") {
-      date = new Date(date);
-    }
-    if (isNaN(date.getTime())) return "";
-    const brasiliaDate = new Date(
-      date.getTime() - date.getTimezoneOffset() * 60000,
+    // Debounced functions
+    this.debouncedBuscar = utils.debounce(this.executarBusca.bind(this), 500);
+    this.debouncedSalvarRascunho = utils.debounce(
+      this.salvarRascunho.bind(this),
+      1000,
     );
-    return brasiliaDate.toISOString().slice(0, 16);
   }
 
-  formatarCPFSeguro(cpf) {
-    if (!cpf) return "***.***.***-**";
-    const cpfLimpo = cpf.replace(/\D/g, "");
-    if (authManager.isSupervisor()) {
-      return cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-    }
-    if (cpfLimpo.length === 11) {
-      const parte2 = cpfLimpo.substring(3, 6);
-      const parte4 = cpfLimpo.substring(9, 11);
-      return `***.${parte2}.***-${parte4}`;
-    }
-    return cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "***.$2.***-$4");
-  }
-
-  obterLocalizacao() {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        resolve({ latitude: null, longitude: null });
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-        },
-        () => {
-          resolve({ latitude: null, longitude: null });
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 60000,
-        },
-      );
-    });
-  }
-
-  confirmar(mensagem, titulo = "Confirmar") {
-    return new Promise((resolve) => {
-      const overlay = document.createElement("div");
-      overlay.className = "modal-overlay";
-      overlay.innerHTML = `
-        <div class="modal" style="max-width:400px;">
-          <div class="modal-header">
-            <div class="title">
-              <i class="fas fa-question-circle" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-              ${titulo}
-            </div>
-            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <div class="modal-body">
-            <p style="font-size:16px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;">
-              ${mensagem}
-            </p>
-          </div>
-          <div class="modal-footer" style="flex-direction:row;gap:10px;">
-            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(false);" style="flex:1;">
-              Cancelar
-            </button>
-            <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(true);" style="flex:1;">
-              <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
-            </button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-      window._confirmResolve = resolve;
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) {
-          overlay.remove();
-          resolve(false);
-        }
-      });
-    });
-  }
-
-  inputModal(
-    mensagem,
-    titulo = "Informe o motivo",
-    placeholder = "Digite o motivo...",
-  ) {
-    return new Promise((resolve) => {
-      const overlay = document.createElement("div");
-      overlay.className = "modal-overlay";
-      overlay.innerHTML = `
-        <div class="modal" style="max-width:450px;">
-          <div class="modal-header">
-            <div class="title">
-              <i class="fas fa-pencil-alt" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-              ${titulo}
-            </div>
-            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._inputResolve(null);">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <div class="modal-body">
-            <p style="font-size:14px;color:var(--cinza-escuro);margin-bottom:12px;">
-              ${mensagem}
-            </p>
-            <div class="form-group">
-              <label for="inputMotivo">Motivo <span class="required">*</span></label>
-              <textarea id="inputMotivo" class="form-control" rows="3" placeholder="${placeholder}" required></textarea>
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Mínimo 5 caracteres
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer" style="flex-direction:row;gap:10px;">
-            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._inputResolve(null);" style="flex:1;">
-              Cancelar
-            </button>
-            <button type="button" class="btn-primary" onclick="app.confirmarInputModal();" style="flex:1;">
-              <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
-            </button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-      window._inputResolve = resolve;
-      setTimeout(() => {
-        const textarea = document.getElementById("inputMotivo");
-        if (textarea) textarea.focus();
-      }, 300);
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) {
-          overlay.remove();
-          resolve(null);
-        }
-      });
-      document.addEventListener("keydown", function handler(e) {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault();
-          app.confirmarInputModal();
-        }
-      });
-    });
-  }
-
-  confirmarInputModal() {
-    const textarea = document.getElementById("inputMotivo");
-    if (!textarea) return;
-    const valor = textarea.value.trim();
-    if (valor.length < 5) {
-      this.showToast("O motivo deve ter pelo menos 5 caracteres", "warning");
-      return;
-    }
-    const overlay = textarea.closest(".modal-overlay");
-    if (overlay) {
-      window._inputResolve(valor);
-      overlay.remove();
-    }
-  }
+  // ============================================
+  // INICIALIZAÇÃO
+  // ============================================
 
   async init() {
     if (this.initialized) return;
+
     console.log("🚀 Iniciando aplicação...");
+
     try {
+      // Verificar dependências
       if (typeof authManager === "undefined") {
         throw new Error("authManager não definido!");
       }
       if (typeof authManager.isLoggedIn !== "function") {
-        console.error("❌ authManager.isLoggedIn não é uma função!");
-        console.log("🔍 authManager atual:", authManager);
-        throw new Error("authManager incompleto!");
+        throw new Error("authManager.isLoggedIn não é uma função!");
       }
+
+      // Inicializar serviços
       await supabaseClient.init();
       console.log("✅ Supabase inicializado");
+
       await authManager.init();
       console.log("✅ AuthManager inicializado");
+
       await ocorrenciaManager.init();
       console.log("✅ Ocorrência Manager inicializado");
+
+      // Inicializar UI
+      ui.initUI();
+      console.log("✅ UI inicializado");
+
+      // Inicializar sessão
       sessionManager.init(30);
+      console.log("✅ Session Manager inicializado");
+
+      // Carregar cache de dados estáticos
+      this.carregarDadosEstaticos();
+
+      // Iniciar GPS contínuo
+      this.iniciarGPS();
+
+      // Configurar listeners
       this.setupListeners();
+
+      // Se já estiver logado, atualizar header e carregar rascunho
       if (authManager.isLoggedIn()) {
         this.atualizarHeader();
         await this.carregarRascunho();
         sessionManager.resetSession();
-        this.atualizarBadgeMural();
+        await ui.atualizarBadgeMural();
       }
+
+      // Roteamento inicial
       await this.route();
+
       this.initialized = true;
       console.log("✅ Aplicação inicializada com sucesso!");
     } catch (error) {
@@ -315,12 +209,305 @@ class App {
     }
   }
 
+  // ============================================
+  // CACHE DE DADOS ESTÁTICOS
+  // ============================================
+
+  carregarDadosEstaticos() {
+    console.log("📦 Carregando dados estáticos do cache...");
+
+    // Carregar tipos de ocorrência do cache
+    const tiposCache = utils.getCachedData(CACHE_KEYS.TIPOS_OCORRENCIA);
+    if (tiposCache) {
+      this.TIPOS_OCORRENCIA = tiposCache;
+      console.log("✅ Tipos de ocorrência carregados do cache");
+    } else {
+      // Salvar no cache para uso futuro
+      utils.setCachedData(CACHE_KEYS.TIPOS_OCORRENCIA, this.TIPOS_OCORRENCIA);
+    }
+  }
+
+  // ============================================
+  // GPS CONTÍNUO
+  // ============================================
+
+  iniciarGPS() {
+    console.log("📍 Iniciando GPS contínuo...");
+
+    if (!navigator.geolocation) {
+      console.warn("⚠️ Geolocalização não disponível");
+      return;
+    }
+
+    // Opções do GPS
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 60000,
+    };
+
+    // Iniciar watchPosition
+    this.gpsWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        this.ultimaLocalizacao = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp,
+        };
+        // Notificar outros módulos se necessário
+        this.notificarMudancaLocalizacao(this.ultimaLocalizacao);
+      },
+      (error) => {
+        console.warn("⚠️ Erro no GPS:", error.message);
+      },
+      options,
+    );
+
+    console.log("✅ GPS contínuo iniciado");
+  }
+
+  notificarMudancaLocalizacao(localizacao) {
+    // Emitir evento para outros módulos
+    const event = new CustomEvent("localizacao_atualizada", {
+      detail: localizacao,
+    });
+    document.dispatchEvent(event);
+
+    // Atualizar sessão se houver movimento significativo (estender sessão)
+    if (this.ultimaLocalizacao && localizacao) {
+      const distancia = utils.calcularDistancia(
+        this.ultimaLocalizacao.latitude,
+        this.ultimaLocalizacao.longitude,
+        localizacao.latitude,
+        localizacao.longitude,
+      );
+      // Se moveu mais de 100 metros, estender sessão
+      if (distancia > 100) {
+        sessionManager.resetSession();
+        console.log("🔄 Sessão estendida devido a movimento detectado");
+      }
+    }
+  }
+
+  obterLocalizacaoAtual() {
+    return this.ultimaLocalizacao || null;
+  }
+
+  // ============================================
+  // ROTEAMENTO
+  // ============================================
+
+  async route() {
+    if (
+      typeof authManager === "undefined" ||
+      typeof authManager.isLoggedIn !== "function"
+    ) {
+      console.error("❌ AuthManager inválido para roteamento");
+      this.showPage("login");
+      return;
+    }
+
+    const isLoggedIn = authManager.isLoggedIn();
+
+    if (!isLoggedIn) {
+      this.showPage("login");
+      return;
+    }
+
+    if (authManager.isPrimeiroAcesso()) {
+      this.showPrimeiroAcesso();
+      return;
+    }
+
+    const page = this.getCurrentPageFromURL();
+    this.navigateTo(page);
+  }
+
+  getCurrentPageFromURL() {
+    const hash = window.location.hash.replace("#", "");
+    return this.pages[hash] ? hash : "dashboard";
+  }
+
+  navigateTo(page, params = null) {
+    // Se estiver na página de nova ocorrência com alterações não salvas
+    if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
+      this.paginaDestino = page;
+      this.paramsDestino = params;
+      this.perguntarSalvarRascunho(page);
+      return;
+    }
+
+    this.executarNavegacao(page, params);
+  }
+
+  executarNavegacao(page, params = null) {
+    // Verificar autenticação
+    if (!authManager.isLoggedIn() && page !== "login") {
+      this.showPage("login");
+      return;
+    }
+
+    // Validar página
+    if (!this.pages[page]) page = "dashboard";
+
+    // Salvar parâmetros
+    if (params) {
+      this.currentParams = params;
+    } else {
+      this.currentParams = null;
+    }
+
+    // Limpar filtro de status se não for dashboard
+    if (page !== "dashboard") {
+      this.filtroStatusAtual = null;
+    }
+
+    // Verificar permissões para páginas restritas
+    if (["relatorios", "usuarios", "retificacoes", "logs"].includes(page)) {
+      if (!authManager.isSupervisor()) {
+        this.showToast("Acesso restrito a supervisores", "warning");
+        page = "dashboard";
+      }
+    }
+
+    this.currentPage = page;
+    window.location.hash = page;
+    this.showPage(page);
+    this.updateBottomNav(page);
+    this.loadPageContent(page);
+  }
+
+  showPage(page) {
+    // Ocultar todas as páginas
+    document.querySelectorAll(".page").forEach((el) => {
+      el.classList.remove("active");
+      el.style.display = "none";
+    });
+
+    // Mostrar a página solicitada
+    const pageId = this.pages[page]?.element || `page-${page}`;
+    const element = document.getElementById(pageId);
+    if (element) {
+      element.style.display = "block";
+      void element.offsetWidth; // Trigger reflow
+      element.classList.add("active");
+    }
+
+    // Atualizar header e bottom nav
+    const header = document.getElementById("app-header");
+    const bottomNav = document.getElementById("bottom-nav");
+    const config = this.pages[page];
+
+    if (config) {
+      header.style.display = config.showHeader ? "flex" : "none";
+      header.classList.toggle("active", config.showHeader);
+      bottomNav.style.display = config.showNav ? "flex" : "none";
+      bottomNav.classList.toggle("active", config.showNav);
+    }
+
+    // Fechar bottom sheet
+    ui.closeBottomSheet();
+  }
+
+  updateBottomNav(page) {
+    document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
+      item.classList.toggle("active", item.dataset.page === page);
+    });
+  }
+
+  async loadPageContent(page) {
+    const containerId = this.pages[page]?.element || `page-${page}`;
+    const container = document.getElementById(containerId);
+
+    if (!container) return;
+
+    // Mostrar loader
+    container.innerHTML = `
+      <div class="container" style="text-align:center;padding:40px 20px;">
+        <div class="spinner-azul" style="margin:0 auto;"></div>
+        <p style="margin-top:12px;color:var(--cinza-medio);">Carregando...</p>
+      </div>
+    `;
+
+    try {
+      switch (page) {
+        case "dashboard":
+          await dashboard.renderDashboard(container, this);
+          break;
+
+        case "ocorrencias":
+          await this.renderOcorrencias(container);
+          break;
+
+        case "nova-ocorrencia":
+          await this.renderNovaOcorrencia(container);
+          break;
+
+        case "detalhe-ocorrencia":
+          await this.renderDetalheOcorrencia(container);
+          break;
+
+        case "retificacoes":
+          await this.renderRetificacoes(container);
+          break;
+
+        case "relatorios":
+          await relatorios.renderRelatorios(container, this);
+          break;
+
+        case "logs":
+          await logs.renderLogs(container, this);
+          break;
+
+        case "usuarios":
+          await usuarios.renderUsuarios(container, this);
+          break;
+
+        case "perfil":
+          await perfil.renderPerfil(container, this);
+          break;
+
+        case "consulta":
+          await consulta.renderConsultaOperacional(container, this);
+          break;
+
+        case "mural":
+          await mural.renderMural(container, this);
+          break;
+
+        default:
+          container.innerHTML = `<h2>Página ${page} em desenvolvimento</h2>`;
+      }
+    } catch (error) {
+      console.error(`❌ Erro ao carregar página ${page}:`, error);
+      container.innerHTML = `
+        <div class="container" style="text-align:center;padding:40px 20px;">
+          <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+          <h3>Erro ao carregar</h3>
+          <p style="color:var(--cinza-medio);">${error.message}</p>
+          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+            Voltar
+          </button>
+        </div>
+      `;
+    }
+  }
+
+  // ============================================
+  // RASCUNHO DE OCORRÊNCIA
+  // ============================================
+
   async carregarRascunho() {
     try {
       const user = authManager.getUser();
       if (!user) return;
+
       const client = supabaseClient.getClient();
       if (!client) return;
+
       const { data, error } = await client
         .from("ocorrencias")
         .select("*")
@@ -329,7 +516,9 @@ class App {
         .order("criado_em", { ascending: false })
         .limit(1)
         .maybeSingle();
+
       if (error) throw error;
+
       if (data) {
         this.rascunhoId = data.id;
         this.dadosRascunho = {
@@ -355,10 +544,14 @@ class App {
           observacoes: data.observacoes || "",
           anexos: [],
         };
+
+        // Carregar envolvidos
         const envResult = await ocorrenciaManager.listarEnvolvidos(data.id);
         if (envResult.success) {
           this.dadosRascunho.envolvidos = envResult.data;
         }
+
+        // Carregar anexos
         const anexosResult = await ocorrenciaManager.listarAnexos(data.id);
         if (anexosResult.success) {
           this.dadosRascunho.anexos = anexosResult.data.map((a) => ({
@@ -368,6 +561,7 @@ class App {
             url: a.url,
           }));
         }
+
         console.log("📂 Rascunho carregado:", this.rascunhoId);
         this.alteracoesNaoSalvas = true;
       }
@@ -383,6 +577,8 @@ class App {
         this.showToast("Nenhum dado para salvar como rascunho", "warning");
         return;
       }
+
+      // Verificar se há dados relevantes
       const camposPreenchidos = Object.keys(dados).filter((key) => {
         const valor = dados[key];
         if (key === "envolvidos" || key === "anexos") {
@@ -390,6 +586,7 @@ class App {
         }
         return valor && (typeof valor !== "string" || valor.trim() !== "");
       });
+
       const camposIgnorados = [
         "data_hora_inicio",
         "data_hora_encerramento",
@@ -399,6 +596,7 @@ class App {
       const temDadosRelevantes = camposPreenchidos.some(
         (key) => !camposIgnorados.includes(key),
       );
+
       if (
         !temDadosRelevantes &&
         dados.envolvidos.length === 0 &&
@@ -407,45 +605,45 @@ class App {
         this.showToast("Não há dados para salvar como rascunho", "warning");
         return;
       }
+
       const user = authManager.getUser();
       if (!user) {
         this.showToast("Usuário não autenticado", "error");
         return;
       }
+
       const client = supabaseClient.getClient();
       if (!client) {
         this.showToast("Erro ao conectar ao servidor", "error");
         return;
       }
+
+      // Preparar dados para salvar
       const dadosParaSalvar = { ...dados };
       delete dadosParaSalvar.envolvidos;
       delete dadosParaSalvar.anexos;
-      if (
-        !dadosParaSalvar.data_hora_inicio ||
-        dadosParaSalvar.data_hora_inicio === ""
-      ) {
-        dadosParaSalvar.data_hora_inicio = null;
-      } else {
+
+      // Ajustar data/hora com fuso correto
+      if (dadosParaSalvar.data_hora_inicio) {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
           if (!isNaN(dateObj.getTime())) {
-            const offset = dateObj.getTimezoneOffset();
-            const adjustedDate = new Date(dateObj.getTime() - offset * 60000);
-            dadosParaSalvar.data_hora_inicio = adjustedDate.toISOString();
+            dadosParaSalvar.data_hora_inicio = dateObj.toISOString();
           } else {
-            dadosParaSalvar.data_hora_inicio = null;
+            const agora = await utils.obterDataHoraPrecisa();
+            dadosParaSalvar.data_hora_inicio = agora.toISOString();
           }
         } catch (e) {
-          dadosParaSalvar.data_hora_inicio = null;
+          const agora = await utils.obterDataHoraPrecisa();
+          dadosParaSalvar.data_hora_inicio = agora.toISOString();
         }
       }
+
       if (dadosParaSalvar.data_hora_encerramento) {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
           if (!isNaN(dateObj.getTime())) {
-            const offset = dateObj.getTimezoneOffset();
-            const adjustedDate = new Date(dateObj.getTime() - offset * 60000);
-            dadosParaSalvar.data_hora_encerramento = adjustedDate.toISOString();
+            dadosParaSalvar.data_hora_encerramento = dateObj.toISOString();
           } else {
             dadosParaSalvar.data_hora_encerramento = null;
           }
@@ -455,6 +653,7 @@ class App {
       } else {
         dadosParaSalvar.data_hora_encerramento = null;
       }
+
       const ocorrencia = {
         ...dadosParaSalvar,
         status: "draft",
@@ -464,6 +663,7 @@ class App {
         numero_versao: 1,
         esta_ativa: true,
       };
+
       let result;
       if (this.rascunhoId) {
         const { data, error } = await client
@@ -484,6 +684,8 @@ class App {
         this.rascunhoId = data.id;
         result = { data };
       }
+
+      // Salvar envolvidos
       if (dados.envolvidos && dados.envolvidos.length > 0) {
         await client
           .from("envolvidos")
@@ -500,6 +702,8 @@ class App {
           );
         }
       }
+
+      // Salvar anexos
       if (dados.anexos && dados.anexos.length > 0) {
         await client
           .from("anexos")
@@ -513,6 +717,7 @@ class App {
           console.warn("Erro ao salvar anexos do rascunho:", anexoResult.error);
         }
       }
+
       this.alteracoesNaoSalvas = false;
       this.showToast("Rascunho salvo com sucesso!", "success");
       console.log("✅ Rascunho salvo:", this.rascunhoId);
@@ -576,6 +781,7 @@ class App {
       </div>
     `;
     document.body.appendChild(overlay);
+
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) {
         overlay.remove();
@@ -584,23 +790,65 @@ class App {
     });
   }
 
+  // ============================================
+  // NOVA OCORRÊNCIA
+  // ============================================
+
+  async renderNovaOcorrencia(container) {
+    const { renderNovaOcorrencia } =
+      await import("./modules/nova-ocorrencia.js");
+    await renderNovaOcorrencia(container, this);
+  }
+
+  // ============================================
+  // DETALHE DA OCORRÊNCIA
+  // ============================================
+
+  async renderDetalheOcorrencia(container) {
+    const { renderDetalheOcorrencia } =
+      await import("./modules/detalhe-ocorrencia.js");
+    await renderDetalheOcorrencia(container, this);
+  }
+
+  // ============================================
+  // OCORRÊNCIAS (LISTA)
+  // ============================================
+
+  async renderOcorrencias(container) {
+    const { renderOcorrencias } =
+      await import("./modules/ocorrencias-lista.js");
+    await renderOcorrencias(container, this);
+  }
+
+  // ============================================
+  // RETIFICAÇÕES
+  // ============================================
+
+  async renderRetificacoes(container) {
+    const { renderRetificacoes } = await import("./modules/retificacoes.js");
+    await renderRetificacoes(container, this);
+  }
+
+  // ============================================
+  // HEADER
+  // ============================================
+
   atualizarHeader() {
     const user = authManager.getUser();
-    if (!user) {
-      console.warn("⚠️ Nenhum usuário logado para atualizar o header");
-      return;
-    }
-    console.log("📝 Atualizando header com usuário:", user.nome_completo);
+    if (!user) return;
+
     const userNameEl = document.getElementById("userName");
     if (userNameEl) {
       userNameEl.textContent = user.nome_completo || "Guarda";
     }
+
     const userMatriculaEl = document.getElementById("userMatricula");
     if (userMatriculaEl) {
       userMatriculaEl.textContent = user.matricula
         ? `Mat. ${user.matricula}`
         : "";
     }
+
     const userAvatarEl = document.getElementById("userAvatar");
     if (userAvatarEl) {
       const inicial = user.nome_completo?.charAt(0) || "G";
@@ -608,8359 +856,60 @@ class App {
     }
   }
 
-  async route() {
-    if (
-      typeof authManager === "undefined" ||
-      typeof authManager.isLoggedIn !== "function"
-    ) {
-      console.error("❌ AuthManager inválido para roteamento");
-      this.showPage("login");
-      return;
-    }
-    const isLoggedIn = authManager.isLoggedIn();
-    if (!isLoggedIn) {
-      this.showPage("login");
-      return;
-    }
-    if (authManager.isPrimeiroAcesso()) {
-      this.showPrimeiroAcesso();
-      return;
-    }
-    const page = this.getCurrentPageFromURL();
-    this.navigateTo(page);
-  }
-
-  getCurrentPageFromURL() {
-    const hash = window.location.hash.replace("#", "");
-    return this.pages[hash] ? hash : "dashboard";
-  }
-
-  navigateTo(page, params = null) {
-    if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
-      this.paginaDestino = page;
-      this.paramsDestino = params;
-      this.perguntarSalvarRascunho(page);
-      return;
-    }
-    this.executarNavegacao(page, params);
-  }
-
-  executarNavegacao(page, params = null) {
-    if (!authManager.isLoggedIn() && page !== "login") {
-      this.showPage("login");
-      return;
-    }
-    if (!this.pages[page]) page = "dashboard";
-    if (params) {
-      this.currentParams = params;
-    } else {
-      this.currentParams = null;
-    }
-    if (page !== "dashboard") {
-      this.filtroStatusAtual = null;
-    }
-    if (
-      page === "relatorios" ||
-      page === "usuarios" ||
-      page === "retificacoes" ||
-      page === "logs"
-    ) {
-      if (!authManager.isSupervisor()) {
-        this.showToast("Acesso restrito a supervisores", "warning");
-        page = "dashboard";
-      }
-    }
-    this.currentPage = page;
-    window.location.hash = page;
-    this.showPage(page);
-    this.updateBottomNav(page);
-    this.loadPageContent(page);
-  }
-
-  showPage(page) {
-    document.querySelectorAll(".page").forEach((el) => {
-      el.classList.remove("active");
-      el.style.display = "none";
-    });
-    const pageId = this.pages[page]?.element || `page-${page}`;
-    const element = document.getElementById(pageId);
-    if (element) {
-      element.style.display = "block";
-      void element.offsetWidth;
-      element.classList.add("active");
-    }
-    const header = document.getElementById("app-header");
-    const bottomNav = document.getElementById("bottom-nav");
-    const config = this.pages[page];
-    if (config) {
-      header.style.display = config.showHeader ? "flex" : "none";
-      header.classList.toggle("active", config.showHeader);
-      bottomNav.style.display = config.showNav ? "flex" : "none";
-      bottomNav.classList.toggle("active", config.showNav);
-    }
-    this.closeBottomSheet();
-  }
-
-  updateBottomNav(page) {
-    document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
-      item.classList.toggle("active", item.dataset.page === page);
-    });
-  }
-
-  async loadPageContent(page) {
-    const containerId = this.pages[page]?.element || `page-${page}`;
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div class="spinner-azul" style="margin:0 auto;"></div>
-        <p style="margin-top:12px;color:var(--cinza-medio);">Carregando...</p>
-      </div>
-    `;
-    try {
-      switch (page) {
-        case "dashboard":
-          await this.renderDashboard(container);
-          break;
-        case "ocorrencias":
-          await this.renderOcorrencias(container);
-          break;
-        case "nova-ocorrencia":
-          await this.renderNovaOcorrencia(container);
-          break;
-        case "detalhe-ocorrencia":
-          await this.renderDetalheOcorrencia(container);
-          break;
-        case "retificacoes":
-          await this.renderRetificacoes(container);
-          break;
-        case "relatorios":
-          await this.renderRelatorios(container);
-          break;
-        case "logs":
-          await this.renderLogs(container);
-          break;
-        case "usuarios":
-          await this.renderUsuarios(container);
-          break;
-        case "perfil":
-          await this.renderPerfil(container);
-          break;
-        case "consulta":
-          await this.renderConsultaOperacional(container);
-          break;
-        case "mural":
-          await this.renderMural(container);
-          break;
-        default:
-          container.innerHTML = `<h2>Página ${page} em desenvolvimento</h2>`;
-      }
-    } catch (error) {
-      container.innerHTML = `
-        <div class="container" style="text-align:center;padding:40px 20px;">
-          <div style="font-size:48px;">⚠️</div>
-          <h3>Erro ao carregar</h3>
-          <p style="color:var(--cinza-medio);">${error.message}</p>
-          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-            Voltar
-          </button>
-        </div>
-      `;
-    }
-  }
-
-  toggleBottomSheet() {
-    console.log("🔄 toggleBottomSheet chamado");
-    const overlay = document.getElementById("bottomSheetOverlay");
-    const sheet = document.getElementById("bottomSheet");
-    if (!overlay || !sheet) {
-      console.error("❌ Bottom sheet elements not found:", { overlay, sheet });
-      return;
-    }
-    const isOpen =
-      overlay.style.display === "block" || overlay.classList.contains("active");
-    console.log(
-      "📌 Estado atual do bottom sheet:",
-      isOpen ? "aberto" : "fechado",
-    );
-    if (isOpen) {
-      this.closeBottomSheet();
-    } else {
-      this.openBottomSheet();
-    }
-  }
-
-  openBottomSheet() {
-    console.log("🚀 openBottomSheet chamado");
-    const overlay = document.getElementById("bottomSheetOverlay");
-    const sheet = document.getElementById("bottomSheet");
-    if (!overlay || !sheet) {
-      console.error("❌ Bottom sheet elements not found:", { overlay, sheet });
-      return;
-    }
-    this.renderBottomSheetItems();
-    overlay.style.display = "block";
-    overlay.classList.add("active");
-    sheet.classList.add("open");
-    document.body.style.overflow = "hidden";
-    console.log("✅ Bottom sheet aberto");
-  }
-
-  closeBottomSheet() {
-    console.log("🔚 closeBottomSheet chamado");
-    const overlay = document.getElementById("bottomSheetOverlay");
-    const sheet = document.getElementById("bottomSheet");
-    if (!overlay || !sheet) return;
-    overlay.style.display = "none";
-    overlay.classList.remove("active");
-    sheet.classList.remove("open");
-    document.body.style.overflow = "";
-    console.log("✅ Bottom sheet fechado");
-  }
-
-  renderBottomSheetItems() {
-    console.log("📋 renderBottomSheetItems chamado");
-    const container = document.querySelector(".bottom-sheet-items");
-    if (!container) {
-      console.error("❌ .bottom-sheet-items não encontrado");
-      return;
-    }
-    const isSupervisor = authManager.isSupervisor();
-    console.log("👤 isSupervisor:", isSupervisor);
-    let html = `
-      <button class="bottom-sheet-item" data-page="consulta">
-        <i class="fas fa-search"></i>
-        <span class="item-label">Consulta Operacional</span>
-      </button>
-    `;
-    if (isSupervisor) {
-      html += `
-        <button class="bottom-sheet-item" data-page="retificacoes">
-          <i class="fas fa-sync-alt"></i>
-          <span class="item-label">Retificações Pendentes</span>
-          <span class="item-badge" id="sheetBadgeRetificacoes">0</span>
-        </button>
-        <button class="bottom-sheet-item" data-page="relatorios">
-          <i class="fas fa-chart-bar"></i>
-          <span class="item-label">Relatórios</span>
-        </button>
-        <button class="bottom-sheet-item" data-page="logs">
-          <i class="fas fa-history"></i>
-          <span class="item-label">Logs do Sistema</span>
-        </button>
-        <button class="bottom-sheet-item" data-page="usuarios">
-          <i class="fas fa-users"></i>
-          <span class="item-label">Gerenciar Usuários</span>
-        </button>
-      `;
-    }
-    html += `
-      <button class="bottom-sheet-item danger" id="btnLogoutSheet">
-        <i class="fas fa-sign-out-alt"></i>
-        <span class="item-label">Sair</span>
-      </button>
-    `;
-    container.innerHTML = html;
-    console.log("✅ Bottom sheet items renderizados");
-    container
-      .querySelectorAll(".bottom-sheet-item[data-page]")
-      .forEach((item) => {
-        item.addEventListener("click", () => {
-          const page = item.dataset.page;
-          console.log("📌 Navegando para:", page);
-          this.closeBottomSheet();
-          this.navigateTo(page);
-        });
-      });
-    const logoutBtn = document.getElementById("btnLogoutSheet");
-    if (logoutBtn) {
-      logoutBtn.addEventListener("click", async () => {
-        console.log("🚪 Logout clicado no bottom sheet");
-        this.closeBottomSheet();
-        if (
-          this.currentPage === "nova-ocorrencia" &&
-          this.alteracoesNaoSalvas
-        ) {
-          this.paginaDestino = "login";
-          this.paramsDestino = null;
-          this.perguntarSalvarRascunho("login", async () => {
-            await authManager.logout();
-            this.route();
-            this.showToast("Logout realizado", "info");
-          });
-        } else {
-          await authManager.logout();
-          this.route();
-          this.showToast("Logout realizado", "info");
-        }
-      });
-    }
-    this.atualizarBadgeRetificacoes();
-  }
-
-  async atualizarBadgeRetificacoes() {
-    if (!authManager.isSupervisor()) return;
-    try {
-      const result = await ocorrenciaManager.buscarRetificacoesPendentes();
-      if (result.success) {
-        const count = result.data?.length || 0;
-        const badge = document.getElementById("sheetBadgeRetificacoes");
-        if (badge) {
-          badge.textContent = count > 0 ? count : "0";
-          badge.style.display = count > 0 ? "inline" : "none";
-        }
-      }
-    } catch (error) {
-      console.error("Erro ao atualizar badge de retificações:", error);
-    }
-  }
-
-  async renderDashboard(container) {
-    const user = authManager.getUser();
-    const stats = await ocorrenciaManager.getStats();
-    const statsData = stats.success
-      ? stats.data
-      : {
-          total: 0,
-          hoje: 0,
-          draft: 0,
-          pending: 0,
-          synced: 0,
-          cancelled: 0,
-          rectified: 0,
-          pending_rectification: 0,
-        };
-    let pendentesCount = 0;
-    let pendentesData = [];
-    if (authManager.isSupervisor()) {
-      const pendentesResult =
-        await ocorrenciaManager.buscarRetificacoesPendentes();
-      console.log(
-        "📋 Dashboard - Resultado da busca de retificações:",
-        pendentesResult,
-      );
-      if (pendentesResult.success) {
-        pendentesData = pendentesResult.data || [];
-        pendentesCount = pendentesData.length;
-        console.log(`📋 Dashboard - Retificações pendentes: ${pendentesCount}`);
-      }
-    }
-    const filtroAtivo = this.filtroStatusAtual;
-    const tituloFiltro = filtroAtivo
-      ? this.getStatusLabel(filtroAtivo)
-      : "Todas";
-    const dozeHorasAtras = new Date(
-      new Date().getTime() - 12 * 60 * 60 * 1000,
-    ).toISOString();
-    const client = supabaseClient.getClient();
-    const { data: novasOcorrencias } = await client
-      .from("ocorrencias")
-      .select("id, tipo_ocorrencia, criado_em")
-      .gte("criado_em", dozeHorasAtras)
-      .eq("esta_ativa", true)
-      .limit(3);
-    const { data: novosAvisos } = await client
-      .from("mural_avisos")
-      .select("id, titulo, tipo")
-      .gte("criado_em", dozeHorasAtras)
-      .limit(3);
-    const temNovidades =
-      novasOcorrencias?.length > 0 || novosAvisos?.length > 0;
-    container.innerHTML = `
-      <div class="container">
-        ${
-          temNovidades
-            ? `
-          <div id="briefing-container" style="background:var(--gradiente-principal); border-radius:var(--border-radius); padding:16px; margin-bottom:20px; color:white; box-shadow:var(--sombra-media); animation: slideIn 0.5s ease-out;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-              <h3 style="margin:0; font-size:16px;"><i class="fas fa-bolt" style="margin-right:8px;"></i>Briefing do Turno</h3>
-              <button onclick="this.parentElement.parentElement.remove()" style="background:none; border:none; color:white; opacity:0.7;"><i class="fas fa-times"></i></button>
-            </div>
-            <p style="font-size:12px; opacity:0.9; margin-bottom:12px;">Veja o que aconteceu nas últimas 12 horas enquanto você estava fora:</p>
-            <div style="display:flex; flex-direction:column; gap:8px;">
-              ${(novasOcorrencias || [])
-                .map(
-                  (o) => `
-                <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px;">
-                  <i class="fas fa-file-alt" style="font-size:14px;"></i>
-                  <span style="font-size:13px;">Nova Ocorrência: <b>${o.tipo_ocorrencia}</b></span>
-                </div>
-              `,
-                )
-                .join("")}
-              ${(novosAvisos || [])
-                .map(
-                  (a) => `
-                <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px;">
-                  <i class="fas fa-bullhorn" style="font-size:14px;"></i>
-                  <span style="font-size:13px;">Mural: <b>${a.titulo}</b></span>
-                </div>
-              `,
-                )
-                .join("")}
-            </div>
-            <button onclick="app.navigateTo('mural')" style="width:100%; margin-top:12px; background:white; color:var(--azul-bandeira); border:none; padding:8px; border-radius:8px; font-weight:700; font-size:12px;">
-              VER TUDO
-            </button>
-          </div>
-        `
-            : ""
-        }
-        <h2 style="margin-bottom:4px;color:var(--azul-bandeira);">
-          Olá, ${user?.nome_completo || "Guarda"}!
-        </h2>
-        <p style="color:var(--cinza-medio);margin-bottom:16px;">
-          ${authManager.isSupervisor() ? "Visão geral do sistema" : "Suas ocorrências"}
-        </p>
-        <div class="stats-grid">
-          <div class="stat-card" onclick="app.filtrarPorStatus(null)" style="cursor:pointer;">
-            <div class="icon"><i class="fas fa-tasks"></i></div>
-            <div class="value">${statsData.total}</div>
-            <div class="label">Total</div>
-          </div>
-          <div class="stat-card amarelo" onclick="app.filtrarPorStatus('pending_sync')" style="cursor:pointer;">
-            <div class="icon"><i class="fas fa-clock"></i></div>
-            <div class="value">${statsData.pending}</div>
-            <div class="label">Pendentes</div>
-          </div>
-          <div class="stat-card verde" onclick="app.filtrarPorStatus('synced')" style="cursor:pointer;">
-            <div class="icon"><i class="fas fa-check-circle"></i></div>
-            <div class="value">${statsData.synced}</div>
-            <div class="label">Finalizadas</div>
-          </div>
-          <div class="stat-card" style="border-left:3px solid var(--azul-bandeira);background:var(--azul-muito-claro);" onclick="app.filtrarPorStatus('rectified')">
-            <div class="icon"><i class="fas fa-sync-alt" style="color:var(--azul-bandeira);"></i></div>
-            <div class="value" style="color:var(--azul-bandeira);">${statsData.rectified || 0}</div>
-            <div class="label" style="color:var(--azul-bandeira);">Retificadas</div>
-          </div>
-          <div class="stat-card" style="border-left:3px solid var(--aviso);background:#fef3c7;" onclick="app.filtrarPorStatus('pending_rectification')">
-            <div class="icon"><i class="fas fa-clock" style="color:#92400e;"></i></div>
-            <div class="value" style="color:#92400e;">${statsData.pending_rectification || 0}</div>
-            <div class="label" style="color:#92400e;">Retif. Pendente</div>
-          </div>
-          <div class="stat-card vermelho" onclick="app.filtrarPorStatus('cancelled')" style="cursor:pointer;">
-            <div class="icon"><i class="fas fa-times-circle"></i></div>
-            <div class="value">${statsData.cancelled}</div>
-            <div class="label">Canceladas</div>
-          </div>
-        </div>
-        ${
-          authManager.isSupervisor()
-            ? `
-          <div style="margin-top:12px;background:var(--branco);border-radius:var(--border-radius);padding:12px 16px;box-shadow:var(--sombra-suave);border-left:4px solid var(--azul-bandeira);display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="app.navigateTo('retificacoes')">
-            <div>
-              <span style="font-weight:600;font-size:14px;">
-                <i class="fas fa-sync-alt" style="color:var(--azul-bandeira);margin-right:8px;"></i>
-                Solicitações de Retificação Pendentes
-              </span>
-              <span style="font-size:12px;color:var(--cinza-medio);margin-left:8px;">
-                Aguardando sua análise
-              </span>
-            </div>
-            <span class="badge badge-pending" style="font-size:14px;padding:6px 14px;">
-              ${pendentesCount}
-            </span>
-          </div>
-        `
-            : ""
-        }
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;margin-bottom:8px;">
-          <h3 style="font-size:16px;font-weight:700;margin:0;">
-            <i class="fas fa-list-ul" style="margin-right:8px;"></i>
-            ${filtroAtivo ? `Ocorrências - ${tituloFiltro}` : "Últimas Ocorrências"}
-          </h3>
-          ${
-            filtroAtivo
-              ? `
-            <button class="btn-secondary" onclick="app.filtrarPorStatus(null)" style="padding:4px 12px;font-size:12px;min-height:auto;">
-              <i class="fas fa-times" style="margin-right:4px;"></i> Limpar Filtro
-            </button>
-          `
-              : ""
-          }
-        </div>
-        <div id="listaOcorrenciasContainer">
-          <div style="text-align:center;padding:20px;">
-            <div class="spinner-azul" style="margin:0 auto;"></div>
-            <p style="margin-top:8px;color:var(--cinza-medio);">Carregando ocorrências...</p>
-          </div>
-        </div>
-      </div>
-    `;
-    await this.renderOcorrenciasLista(
-      document.getElementById("listaOcorrenciasContainer"),
-      this.filtroStatusAtual,
-    );
-  }
-
-  filtrarPorStatus(status) {
-    if (this.filtroStatusAtual === status && status !== null) {
-      this.filtroStatusAtual = null;
-    } else {
-      this.filtroStatusAtual = status;
-    }
-    this.loadPageContent("dashboard");
-  }
-
-  async renderOcorrenciasLista(container, statusFilter = null) {
-    const filtros = { limit: statusFilter ? 100 : 5 };
-    if (statusFilter) {
-      filtros.status = statusFilter;
-    }
-    const result = await ocorrenciaManager.listar(filtros);
-    if (!result.success || result.data.length === 0) {
-      const mensagem = statusFilter
-        ? `Nenhuma ocorrência com status "${this.getStatusLabel(statusFilter)}" encontrada`
-        : "Nenhuma ocorrência encontrada";
-      container.innerHTML = `
-        <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-inbox"></i>
-          </div>
-          <p style="font-weight:500;">${mensagem}</p>
-          ${!statusFilter ? '<p style="font-size:13px;">Clique em "+" para criar sua primeira ocorrência</p>' : ""}
-          ${
-            statusFilter
-              ? `
-            <button onclick="app.filtrarPorStatus(null)" class="btn-secondary" style="margin-top:12px;">
-              <i class="fas fa-arrow-left" style="margin-right:6px;"></i>
-              Ver todas
-            </button>
-          `
-              : ""
-          }
-        </div>
-      `;
-      return;
-    }
-    let html = "";
-    result.data.forEach((occ) => {
-      const numero =
-        occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
-      const statusClass = this.getStatusClass(occ.status);
-      const statusLabel = this.getStatusLabel(occ.status);
-      const data = this.formatarDataHoraLocal(occ.criado_em);
-      const hora = new Date(occ.criado_em).toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
-      const tipoBadge = occ.tipo_ocorrencia
-        ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
-        : "";
-      const versaoBadge =
-        occ.status === "rectified" && occ.numero_versao > 1
-          ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>`
-          : "";
-      const guardaNome = occ.criador?.nome_completo || "Desconhecido";
-      const guardaCPF = occ.criador?.cpf || "";
-      const cpfExibido = this.formatarCPFSeguro(guardaCPF);
-      html += `
-        <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
-          <div class="header">
-            <div>
-              <div class="numero">#${numero} ${tipoBadge} ${versaoBadge}</div>
-              <div class="data">${data}</div>
-            </div>
-            <span class="badge badge-${statusClass}">${statusLabel}</span>
-          </div>
-          <div class="local">
-            <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);"></i>
-            ${occ.local_ocorrencia || "Local não informado"}
-          </div>
-          <div class="guarda" style="font-size:11px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
-            <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
-            <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
-          </div>
-        </div>
-      `;
-    });
-    if (!statusFilter) {
-      html += `
-        <button class="btn-secondary" style="width:100%;padding:12px;border:none;border-radius:var(--border-radius);font-weight:600;cursor:pointer;background:var(--cinza-claro);color:var(--cinza-escuro);" onclick="app.navigateTo('ocorrencias')">
-          <i class="fas fa-arrow-right" style="margin-right:6px;"></i>
-          Ver todas as ocorrências
-        </button>
-      `;
-    } else {
-      html += `
-        <div style="text-align:center;padding:12px;color:var(--cinza-medio);font-size:13px;">
-          <i class="fas fa-filter" style="margin-right:4px;"></i>
-          ${result.data.length} ocorrência(s) encontrada(s)
-        </div>
-      `;
-    }
-    container.innerHTML = html;
-  }
-
-  async renderOcorrencias(container) {
-    const filtros = {};
-    if (this.filtrosOcorrencias.status) {
-      filtros.status = this.filtrosOcorrencias.status;
-    }
-    if (this.filtrosOcorrencias.dataInicio) {
-      filtros.data_inicio = this.filtrosOcorrencias.dataInicio;
-    }
-    if (this.filtrosOcorrencias.dataFim) {
-      filtros.data_fim = this.filtrosOcorrencias.dataFim;
-    }
-    const result = await ocorrenciaManager.listar(filtros);
-    const opcoesStatus = [
-      { value: "", label: "Todos os status" },
-      { value: "draft", label: "Rascunho" },
-      { value: "pending_sync", label: "Pendente" },
-      { value: "synced", label: "Finalizada" },
-      { value: "rectified", label: "Retificada" },
-      { value: "pending_rectification", label: "Retificação Pendente" },
-      { value: "cancelled", label: "Cancelada" },
-    ];
-    const hoje = new Date().toISOString().slice(0, 10);
-    const dataInicioFiltro = this.filtrosOcorrencias.dataInicio || "";
-    const dataFimFiltro = this.filtrosOcorrencias.dataFim || "";
-    let html = `
-      <div class="container">
-        <h2 style="color:var(--azul-bandeira);margin-bottom:8px;">
-          <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-          Minhas Ocorrências
-        </h2>
-        <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:14px;">
-          <i class="fas fa-filter" style="margin-right:4px;"></i>
-          Filtre suas ocorrências por período e status
-        </p>
-        <div class="filtros-container">
-          <div class="filtros-row">
-            <div class="filtro-group">
-              <label><i class="fas fa-tag" style="margin-right:4px;"></i> Status</label>
-              <select id="filtroStatus">
-                ${opcoesStatus
-                  .map(
-                    (op) => `
-                  <option value="${op.value}" ${this.filtrosOcorrencias.status === op.value ? "selected" : ""}>
-                    ${op.label}
-                  </option>
-                `,
-                  )
-                  .join("")}
-              </select>
-            </div>
-            <div class="filtro-group">
-              <label><i class="fas fa-calendar-alt" style="margin-right:4px;"></i> Data Início</label>
-              <input type="date" id="filtroDataInicio" value="${dataInicioFiltro}">
-            </div>
-            <div class="filtro-group">
-              <label><i class="fas fa-calendar-alt" style="margin-right:4px;"></i> Data Fim</label>
-              <input type="date" id="filtroDataFim" value="${dataFimFiltro}">
-            </div>
-            <div class="filtros-actions">
-              <button onclick="app.aplicarFiltrosOcorrencias()" class="btn-primary" style="padding:6px 14px;font-size:12px;min-height:36px;width:auto;">
-                <i class="fas fa-search" style="margin-right:6px;"></i> Filtrar
-              </button>
-              <button onclick="app.limparFiltrosOcorrencias()" class="btn-secondary" style="padding:6px 14px;font-size:12px;min-height:36px;width:auto;">
-                <i class="fas fa-undo" style="margin-right:6px;"></i> Limpar
-              </button>
-            </div>
-          </div>
-          <div class="filtros-info">
-            <span>
-              <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-              ${result.success ? `${result.data.length} ocorrência(s) encontrada(s)` : "Carregando..."}
-            </span>
-            ${
-              this.filtrosOcorrencias.status ||
-              this.filtrosOcorrencias.dataInicio ||
-              this.filtrosOcorrencias.dataFim
-                ? `
-              <span style="color:var(--azul-bandeira);">
-                <i class="fas fa-filter" style="margin-right:4px;"></i> Filtro ativo
-              </span>
-            `
-                : ""
-            }
-          </div>
-        </div>
-    `;
-    if (!result.success) {
-      html += `<p style="color:var(--erro);">Erro ao carregar: ${result.error}</p>`;
-      html += `</div>`;
-      container.innerHTML = html;
-      return;
-    }
-    if (result.data.length === 0) {
-      html += `
-        <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-inbox"></i>
-          </div>
-          <p style="font-weight:500;">Nenhuma ocorrência encontrada</p>
-          <p style="font-size:13px;">${this.filtrosOcorrencias.status || this.filtrosOcorrencias.dataInicio || this.filtrosOcorrencias.dataFim ? "Tente ajustar os filtros aplicados" : 'Clique em "+" para criar sua primeira ocorrência'}</p>
-          ${
-            this.filtrosOcorrencias.status ||
-            this.filtrosOcorrencias.dataInicio ||
-            this.filtrosOcorrencias.dataFim
-              ? `
-            <button onclick="app.limparFiltrosOcorrencias()" class="btn-secondary" style="margin-top:12px;">
-              <i class="fas fa-undo" style="margin-right:6px;"></i>
-              Limpar Filtros
-            </button>
-          `
-              : `
-            <button onclick="app.navigateTo('nova-ocorrencia')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-              <i class="fas fa-plus" style="margin-right:6px;"></i>
-              Nova Ocorrência
-            </button>
-          `
-          }
-        </div>
-      `;
-      html += `</div>`;
-      container.innerHTML = html;
-      return;
-    }
-    html += `<div style="margin-top:8px;">`;
-    result.data.forEach((occ) => {
-      const numero =
-        occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
-      const statusClass = this.getStatusClass(occ.status);
-      const statusLabel = this.getStatusLabel(occ.status);
-      const data = this.formatarDataHoraLocal(occ.criado_em);
-      const hora = new Date(occ.criado_em).toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const tipoLabel = this.getTipoLabel(occ.tipo_ocorrencia);
-      const tipoBadge = occ.tipo_ocorrencia
-        ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
-        : "";
-      const versaoBadge =
-        occ.status === "rectified" && occ.numero_versao > 1
-          ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>`
-          : "";
-      const guardaNome = occ.criador?.nome_completo || "Desconhecido";
-      const guardaCPF = occ.criador?.cpf || "";
-      const cpfExibido = this.formatarCPFSeguro(guardaCPF);
-      html += `
-        <div class="ocorrencia-item status-${occ.status}" onclick="app.verDetalhes('${occ.id}')">
-          <div class="header">
-            <div>
-              <div class="numero">#${numero} ${tipoBadge} ${versaoBadge}</div>
-              <div class="data">${data}</div>
-            </div>
-            <span class="badge badge-${statusClass}">${statusLabel}</span>
-          </div>
-          <div class="local">
-            <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);"></i>
-            ${occ.local_ocorrencia || "Local não informado"}
-          </div>
-          <div class="guarda" style="font-size:11px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
-            <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
-            <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
-          </div>
-        </div>
-      `;
-    });
-    html += `</div></div>`;
-    container.innerHTML = html;
-  }
-
-  aplicarFiltrosOcorrencias() {
-    const status = document.getElementById("filtroStatus")?.value || "";
-    const dataInicio = document.getElementById("filtroDataInicio")?.value || "";
-    const dataFim = document.getElementById("filtroDataFim")?.value || "";
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
-      return;
-    }
-    this.filtrosOcorrencias = {
-      status: status,
-      dataInicio: dataInicio,
-      dataFim: dataFim,
-    };
-    this.loadPageContent("ocorrencias");
-  }
-
-  limparFiltrosOcorrencias() {
-    this.filtrosOcorrencias = {
-      status: "",
-      dataInicio: "",
-      dataFim: "",
-    };
-    this.loadPageContent("ocorrencias");
-    this.showToast("Filtros removidos", "info");
-  }
-
-  verDetalhes(ocorrenciaId) {
-    this.navigateTo("detalhe-ocorrencia", { id: ocorrenciaId });
-  }
-
-  async renderDetalheOcorrencia(container) {
-    const id = this.currentParams?.id;
-    if (!id) {
-      container.innerHTML = `
-        <div class="container" style="text-align:center;padding:40px 20px;">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-exclamation-triangle"></i>
-          </div>
-          <h3>Ocorrência não encontrada</h3>
-          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;">
-            Voltar
-          </button>
-        </div>
-      `;
-      return;
-    }
-    const result = await ocorrenciaManager.buscar(id);
-    if (!result.success || !result.data) {
-      container.innerHTML = `
-        <div class="container" style="text-align:center;padding:40px 20px;">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-exclamation-triangle"></i>
-          </div>
-          <h3>Ocorrência não encontrada</h3>
-          <p style="color:var(--cinza-medio);">${result.error || "ID inválido"}</p>
-          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;">
-            Voltar
-          </button>
-        </div>
-      `;
-      return;
-    }
-    const occ = result.data;
-    const isRetificacao = occ.ocorrencia_original_id !== null;
-    let original = null;
-    let camposAlterados = [];
-    if (isRetificacao) {
-      const origResult = await ocorrenciaManager.buscar(
-        occ.ocorrencia_original_id,
-      );
-      if (origResult.success) {
-        original = origResult.data;
-      }
-      if (occ.campos_alterados) {
-        try {
-          camposAlterados = JSON.parse(occ.campos_alterados);
-        } catch (e) {}
-      }
-    }
-    const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
-    const statusClass = this.getStatusClass(occ.status);
-    const statusLabel = this.getStatusLabel(occ.status);
-    const dataCriacao = this.formatarDataHoraLocal(occ.criado_em);
-    const dataInicio = occ.data_hora_inicio
-      ? this.formatarDataHoraLocal(occ.data_hora_inicio)
-      : "Não informado";
-    const dataEncerramento = occ.data_hora_encerramento
-      ? this.formatarDataHoraLocal(occ.data_hora_encerramento)
-      : "Não informado";
-    const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
-    const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
-    const anexosResult = await ocorrenciaManager.listarAnexos(id);
-    const anexos = anexosResult.success ? anexosResult.data : [];
-    const podeEditar = authManager.podeEditar(occ);
-    const podeCancelar = authManager.podeCancelar(occ);
-    const podeFinalizar = authManager.podeFinalizar(occ);
-    const podeRetificar = authManager.podeSolicitarRetificacao(occ);
-    const podeVerHistorico = authManager.podeVerHistorico(occ);
-    const temRetificacoes = await ocorrenciaManager.temRetificacoes(id);
-    const isAtiva = occ.esta_ativa !== false;
-    const versaoInfo = isRetificacao
-      ? `Retificação v${occ.numero_versao || 1}`
-      : temRetificacoes
-        ? "Versão Original (substituída)"
-        : "";
-    const isPending = occ.status === "pending_rectification";
-    let criadorNome = "Desconhecido";
-    let criadorCPF = "";
-    if (occ.criado_por) {
-      try {
-        const client = supabaseClient.getClient();
-        if (client) {
-          const { data: criador } = await client
-            .from("usuarios")
-            .select("nome_completo, cpf")
-            .eq("id", occ.criado_por)
-            .single();
-          if (criador) {
-            criadorNome = criador.nome_completo;
-            criadorCPF = criador.cpf;
-          }
-        }
-      } catch (error) {
-        console.warn("Erro ao buscar dados do criador:", error);
-      }
-    }
-    const cpfExibido = this.formatarCPFSeguro(criadorCPF);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
-          <div>
-            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-              <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-              #${numero}
-            </h2>
-            <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;display:flex;flex-wrap:wrap;gap:12px;">
-              <span><i class="fas fa-user" style="margin-right:4px;"></i>
-                <strong>${criadorNome}</strong>
-              </span>
-              <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
-              ${occ.latitude && occ.longitude ? `<span><i class="fas fa-map-pin" style="margin-right:4px;"></i>📍 ${occ.latitude.toFixed(6)}, ${occ.longitude.toFixed(6)}</span>` : ""}
-            </div>
-            <div style="font-size:11px;color:var(--cinza-medio);margin-top:2px;">
-              <i class="fas fa-calendar" style="margin-right:4px;"></i>
-              Criado em ${dataCriacao}
-            </div>
-          </div>
-          <span class="badge badge-${statusClass}" style="font-size:13px;padding:4px 16px;white-space:nowrap;">
-            ${statusLabel}
-          </span>
-        </div>
-    `;
-    if (isRetificacao && occ.justificativa_retificacao) {
-      html += `
-        <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
-          <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:var(--azul-bandeira);">
-            <i class="fas fa-quote-left" style="margin-right:6px;"></i>
-            Justificativa da Retificação
-          </p>
-          <p style="font-size:14px;color:var(--cinza-escuro);margin:0;">
-            ${occ.justificativa_retificacao}
-          </p>
-        </div>
-      `;
-    }
-    if (
-      occ.status === "pending_rectification" &&
-      occ.solicitacao_retificacao_justificativa
-    ) {
-      html += `
-        <div style="background:#fef3c7;padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:16px;">
-          <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:#92400e;">
-            <i class="fas fa-clock" style="margin-right:6px;"></i>
-            Solicitação de Retificação Pendente
-          </p>
-          <p style="font-size:14px;color:#92400e;margin:0;">
-            ${occ.solicitacao_retificacao_justificativa}
-          </p>
-        </div>
-      `;
-    }
-    if (isRetificacao && original) {
-      html += `
-        <div style="background:var(--verde-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:16px;">
-          <p style="font-size:14px;font-weight:600;margin:0 0 6px 0;color:var(--verde-escuro);">
-            <i class="fas fa-code-branch" style="margin-right:6px;"></i>
-            Esta é uma retificação da ocorrência #${original.numero_ocorrencia || original.numero_temporario || "original"}
-          </p>
-          <p style="font-size:13px;color:var(--cinza-escuro);margin:0;">
-            Status: ${statusLabel} ${occ.status === "pending_rectification" ? "⏳ Aguardando aprovação" : occ.status === "rectified" ? "✅ Aprovada" : ""}
-          </p>
-        </div>
-      `;
-      if (camposAlterados.length > 0) {
-        html += `
-          <div style="margin-bottom:16px;">
-            <h4 style="color:var(--azul-bandeira);"><i class="fas fa-edit"></i> Campos Alterados</h4>
-            <div style="background:var(--branco);border-radius:var(--border-radius);overflow:hidden;box-shadow:var(--sombra-suave);">
-        `;
-        camposAlterados.forEach((campo) => {
-          html += `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px 12px;border-bottom:1px solid var(--cinza-claro);">
-              <div style="font-weight:600;color:var(--cinza-escuro);font-size:13px;">
-                ${campo.label || campo.campo}
-              </div>
-              <div style="display:flex;gap:8px;align-items:center;font-size:13px;flex-wrap:wrap;">
-                <span style="color:var(--cinza-medio);text-decoration:line-through;font-size:12px;">
-                  ${campo.antes || "(vazio)"}
-                </span>
-                <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:10px;"></i>
-                <span style="color:var(--verde-bandeira);font-weight:500;">
-                  ${campo.depois || "(vazio)"}
-                </span>
-              </div>
-            </div>
-          `;
-        });
-        html += `</div></div>`;
-      }
-      html += `
-        <div class="card-revisao" style="margin-bottom:12px;opacity:0.8;">
-          <h4><i class="fas fa-history"></i> Versão Original (para referência)</h4>
-          <div class="campo"><span class="rotulo">Local:</span><span class="valor">${original.local_ocorrencia || "Não informado"}</span></div>
-          <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${this.formatarDataHoraLocal(original.data_hora_inicio)}</span></div>
-          <div class="campo"><span class="rotulo">Observações:</span><span class="valor" style="white-space:pre-wrap;">${original.observacoes || "Nenhuma"}</span></div>
-          <button class="btn-secondary" style="margin-top:6px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;" onclick="app.navigateTo('detalhe-ocorrencia', {id: '${original.id}'})">
-            <i class="fas fa-eye"></i> Ver versão original completa
-          </button>
-        </div>
-      `;
-    }
-    const camposSolicitacao = [
-      { label: "Forma de Solicitação", valor: occ.forma_solicitacao },
-      {
-        label: "Nome do Solicitante",
-        valor: occ.nome_solicitante || "Anônimo",
-      },
-      {
-        label: "CPF do Solicitante",
-        valor: occ.cpf_solicitante || "Não informado",
-      },
-      {
-        label: "RG do Solicitante",
-        valor: occ.rg_solicitante || "Não informado",
-      },
-      {
-        label: "Telefone do Solicitante",
-        valor: occ.telefone_solicitante || "Não informado",
-      },
-      {
-        label: "Endereço do Solicitante",
-        valor: occ.endereco_solicitante || "Não informado",
-      },
-      {
-        label: "Bairro do Solicitante",
-        valor: occ.bairro_solicitante || "Não informado",
-      },
-      { label: "Complemento", valor: occ.complemento || "Não informado" },
-      {
-        label: "Código Municipal",
-        valor: occ.codigo_municipal || "Não informado",
-      },
-      {
-        label: "Identificação Adicional",
-        valor: occ.identificacao_adicional || "Não informado",
-      },
-    ];
-    const camposSolicitacaoPreenchidos = camposSolicitacao.filter(
-      (c) => c.valor && c.valor !== "Não informado" && c.valor !== "Anônimo",
-    );
-    if (camposSolicitacaoPreenchidos.length > 0) {
-      html += `
-        <div class="card-revisao" style="margin-top:12px;">
-          <h4><i class="fas fa-phone-alt"></i> Dados da Solicitação</h4>
-          ${camposSolicitacaoPreenchidos
-            .map(
-              (c) => `
-            <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-          `,
-            )
-            .join("")}
-        </div>
-      `;
-    }
-    const camposOcorrencia = [
-      {
-        label: "Tipo de Ocorrência",
-        valor: occ.tipo_ocorrencia
-          ? this.getTipoLabel(occ.tipo_ocorrencia)
-          : "Não informado",
-      },
-      {
-        label: "Local da Ocorrência",
-        valor: occ.local_ocorrencia || "Não informado",
-      },
-      { label: "Rodovia", valor: occ.rodovia || "Não informado" },
-      {
-        label: "Bairro da Ocorrência",
-        valor: occ.bairro_ocorrencia || "Não informado",
-      },
-      { label: "Referência", valor: occ.referencia || "Não informado" },
-      {
-        label: "Código Operacional",
-        valor: occ.codigo_operacional || "Não informado",
-      },
-      { label: "Data/Hora Início", valor: dataInicio },
-      { label: "Data/Hora Encerramento", valor: dataEncerramento },
-      { label: "Versão", valor: occ.numero_versao || 1 },
-      { label: "Status da Versão", valor: versaoInfo || "Versão atual" },
-    ];
-    html += `
-      <div class="card-revisao">
-        <h4><i class="fas fa-map-marker-alt"></i> Dados da Ocorrência</h4>
-        ${camposOcorrencia
-          .map(
-            (c) => `
-          <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-        `,
-          )
-          .join("")}
-      </div>
-    `;
-    html += `
-      <div class="card-revisao">
-        <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-    `;
-    if (envolvidos.length === 0) {
-      html += `
-        <div style="text-align:center;padding:20px;color:var(--cinza-medio);font-size:14px;">
-          <i class="fas fa-users" style="font-size:24px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
-          Nenhum envolvido cadastrado
-        </div>
-      `;
-    } else {
-      envolvidos.forEach((env) => {
-        html += `
-          <div class="envolvido-item-modern">
-            <div class="header">
-              <span class="badge badge-azul">
-                <i class="fas fa-user" style="margin-right:4px;"></i>
-                ${this.getTipoEnvolvidoLabel(env.tipo)}
-              </span>
-              <span class="nome">${env.nome_completo || "Nome não informado"}</span>
-            </div>
-            <div class="detalhes-grid">
-              ${
-                env.cpf
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-id-card"></i>
-                  <span class="label">CPF:</span>
-                  <span class="valor">${env.cpf}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.rg
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-address-card"></i>
-                  <span class="label">RG:</span>
-                  <span class="valor">${env.rg}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.telefone
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-phone"></i>
-                  <span class="label">Tel:</span>
-                  <span class="valor">${env.telefone}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.data_nascimento
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-calendar-alt"></i>
-                  <span class="label">Nasc:</span>
-                  <span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.endereco
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-map-marker-alt"></i>
-                  <span class="label">End:</span>
-                  <span class="valor">${env.endereco}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.bairro
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-location-dot"></i>
-                  <span class="label">Bairro:</span>
-                  <span class="valor">${env.bairro}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.cidade
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-city"></i>
-                  <span class="label">Cidade:</span>
-                  <span class="valor">${env.cidade}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.observacoes
-                  ? `
-                <div class="campo" style="grid-column: 1 / -1;">
-                  <i class="fas fa-pencil-alt"></i>
-                  <span class="label">Obs:</span>
-                  <span class="valor">${env.observacoes}</span>
-                </div>
-              `
-                  : ""
-              }
-            </div>
-          </div>
-        `;
-      });
-    }
-    html += `
-      </div>
-    `;
-    if (occ.observacoes && occ.observacoes.trim() !== "") {
-      html += `
-        <div class="card-revisao">
-          <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
-          <p style="font-size:14px;white-space:pre-wrap;margin:0;">${occ.observacoes}</p>
-        </div>
-      `;
-    }
-    html += `
-      <div class="card-revisao">
-        <h4><i class="fas fa-paperclip"></i> Anexos (${anexos.length})</h4>
-        ${
-          anexos.length === 0
-            ? '<p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>'
-            : anexos
-                .map(
-                  (anexo) => `
-          <div style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);display:flex;align-items:center;gap:10px;">
-            <i class="fas ${this.getIconAnexo(anexo.tipo_arquivo)}" style="color:var(--azul-bandeira);font-size:18px;"></i>
-            <span style="flex:1;">${anexo.nome_arquivo}</span>
-            <span style="color:var(--cinza-medio);font-size:12px;">${this.formatarTamanho(anexo.tamanho || 0)}</span>
-            ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);"><i class="fas fa-external-link-alt"></i></a>` : ""}
-          </div>
-        `,
-                )
-                .join("")
-        }
-      </div>
-    `;
-    html += `
-      <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
-    `;
-    if (authManager.isSupervisor() && occ.status === "pending_rectification") {
-      html += `
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button class="btn-success" onclick="app.aprovarRetificacao('${occ.id}')" style="flex:1;min-width:120px;">
-            <i class="fas fa-check" style="margin-right:6px;"></i> Aprovar Retificação
-          </button>
-          <button class="btn-danger" onclick="app.rejeitarRetificacao('${occ.id}')" style="flex:1;min-width:120px;">
-            <i class="fas fa-times" style="margin-right:6px;"></i> Rejeitar Retificação
-          </button>
-        </div>
-      `;
-    }
-    if (podeFinalizar) {
-      html += `<button class="btn-success" onclick="app.finalizarOcorrenciaExistente('${occ.id}')"><i class="fas fa-check-circle" style="margin-right:6px;"></i> Finalizar Ocorrência</button>`;
-    }
-    if (podeRetificar && occ.status === "synced") {
-      html += `<button class="btn-primary" onclick="app.solicitarRetificacao('${occ.id}')" style="background:var(--azul-bandeira);"><i class="fas fa-sync-alt" style="margin-right:6px;"></i> Solicitar Retificação</button>`;
-    }
-    if (podeEditar && occ.status === "draft") {
-      html += `<button class="btn-primary" onclick="app.editarOcorrencia('${occ.id}')"><i class="fas fa-edit" style="margin-right:6px;"></i> Editar Ocorrência</button>`;
-    }
-    if (podeCancelar) {
-      html += `<button class="btn-danger" onclick="app.cancelarOcorrencia('${occ.id}')"><i class="fas fa-times-circle" style="margin-right:6px;"></i> Cancelar Ocorrência</button>`;
-    }
-    if (podeVerHistorico) {
-      const temRet = await ocorrenciaManager.temRetificacoes(id);
-      if (temRet || isRetificacao) {
-        html += `<button class="btn-secondary" onclick="app.verHistorico('${occ.id}')" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);"><i class="fas fa-history" style="margin-right:6px;"></i> Ver Histórico</button>`;
-      }
-    }
-    html += `
-        <button class="btn-secondary" onclick="app.navigateTo('dashboard')" style="width:100%;"><i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar</button>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async solicitarRetificacao(id) {
-    const result = await ocorrenciaManager.buscar(id);
-    if (!result.success || !result.data) {
-      this.showToast("Ocorrência não encontrada", "error");
-      return;
-    }
-    const occ = result.data;
-    const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
-    const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
-    const dataInicio = occ.data_hora_inicio
-      ? this.formatarDataHoraLocal(occ.data_hora_inicio)
-      : "Não informado";
-    const dataEncerramento = occ.data_hora_encerramento
-      ? this.formatarDataHoraLocal(occ.data_hora_encerramento)
-      : "Não informado";
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:650px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-sync-alt" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Solicitar Retificação
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-          <p style="color:var(--cinza-medio);font-size:14px;margin-bottom:16px;">
-            Preencha apenas os campos que precisam ser corrigidos.
-            <strong>Campos imutáveis</strong> (data/hora, número, forma de solicitação) não podem ser alterados.
-          </p>
-          <div style="background:var(--verde-muito-claro);padding:12px;border-radius:var(--border-radius);margin-bottom:16px;border-left:4px solid var(--verde-bandeira);">
-            <p style="font-size:13px;color:var(--verde-escuro);margin:0;">
-              <i class="fas fa-info-circle" style="margin-right:6px;"></i>
-              A retificação criará uma nova versão da ocorrência. A versão original será mantida como histórico.
-              <br><strong>Data/Hora do fato não podem ser alteradas</strong> - são registros históricos.
-            </p>
-          </div>
-          <div style="background:var(--cinza-claro);padding:12px;border-radius:var(--border-radius);margin-bottom:16px;opacity:0.7;">
-            <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
-              <i class="fas fa-lock" style="margin-right:6px;"></i>
-              Dados Imutáveis (apenas para referência)
-            </p>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">
-              <div><strong>Número:</strong> ${occ.numero_ocorrencia || occ.numero_temporario || "Rascunho"}</div>
-              <div><strong>Forma de Solicitação:</strong> ${occ.forma_solicitacao || "Não informado"}</div>
-              <div><strong>Data/Hora Início:</strong> ${dataInicio}</div>
-              <div><strong>Data/Hora Encerramento:</strong> ${dataEncerramento}</div>
-              <div><strong>Criado por:</strong> ${occ.criado_por || "Não informado"}</div>
-              <div><strong>Criado em:</strong> ${this.formatarDataHoraLocal(occ.criado_em)}</div>
-            </div>
-          </div>
-          <form id="formRetificacao">
-            <div class="form-group">
-              <label for="ret_justificativa">
-                <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                Justificativa da Retificação <span class="required">*</span>
-              </label>
-              <textarea id="ret_justificativa" class="form-control" rows="3" placeholder="Explique o motivo da correção..." required></textarea>
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Mínimo 10 caracteres
-              </div>
-            </div>
-            <div style="border-top:1px solid var(--cinza-claro);padding-top:16px;margin-top:8px;">
-              <p style="font-weight:600;font-size:14px;color:var(--cinza-escuro);margin-bottom:12px;">
-                <i class="fas fa-edit" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                Dados que podem ser corrigidos
-              </p>
-              <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
-                Deixe em branco os campos que NÃO precisam ser alterados
-              </p>
-              <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-                <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                  <i class="fas fa-user" style="margin-right:6px;"></i>
-                  Dados do Solicitante
-                </p>
-                <div class="form-group">
-                  <label for="ret_nome_solicitante">Nome do Solicitante</label>
-                  <input type="text" id="ret_nome_solicitante" class="form-control" value="${occ.nome_solicitante || ""}" placeholder="Nome completo">
-                </div>
-                <div class="form-group">
-                  <label for="ret_cpf_solicitante">CPF do Solicitante</label>
-                  <input type="text" id="ret_cpf_solicitante" class="form-control" value="${occ.cpf_solicitante || ""}" placeholder="123.456.789-00">
-                </div>
-                <div class="form-group">
-                  <label for="ret_rg_solicitante">RG do Solicitante</label>
-                  <input type="text" id="ret_rg_solicitante" class="form-control" value="${occ.rg_solicitante || ""}" placeholder="RG do solicitante">
-                </div>
-                <div class="form-group">
-                  <label for="ret_telefone_solicitante">Telefone do Solicitante</label>
-                  <input type="text" id="ret_telefone_solicitante" class="form-control" value="${occ.telefone_solicitante || ""}" placeholder="(44) 99999-9999">
-                </div>
-                <div class="form-group">
-                  <label for="ret_endereco_solicitante">Endereço do Solicitante</label>
-                  <input type="text" id="ret_endereco_solicitante" class="form-control" value="${occ.endereco_solicitante || ""}" placeholder="Rua, número, bairro">
-                </div>
-                <div class="form-group">
-                  <label for="ret_bairro_solicitante">Bairro do Solicitante</label>
-                  <input type="text" id="ret_bairro_solicitante" class="form-control" value="${occ.bairro_solicitante || ""}" placeholder="Bairro">
-                </div>
-                <div class="form-group">
-                  <label for="ret_complemento">Complemento</label>
-                  <input type="text" id="ret_complemento" class="form-control" value="${occ.complemento || ""}" placeholder="Apto, bloco, ponto de referência">
-                </div>
-                <div class="form-group">
-                  <label for="ret_identificacao_adicional">Identificação Adicional</label>
-                  <input type="text" id="ret_identificacao_adicional" class="form-control" value="${occ.identificacao_adicional || ""}" placeholder="Informações adicionais">
-                </div>
-                <div class="form-group">
-                  <label for="ret_codigo_municipal">Código Municipal</label>
-                  <input type="text" id="ret_codigo_municipal" class="form-control" value="${occ.codigo_municipal || ""}" placeholder="Código do imóvel">
-                </div>
-              </div>
-              <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-                <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                  <i class="fas fa-map-marker-alt" style="margin-right:6px;"></i>
-                  Dados do Local
-                </p>
-                <div class="form-group">
-                  <label for="ret_local_ocorrencia">Local da Ocorrência</label>
-                  <input type="text" id="ret_local_ocorrencia" class="form-control" value="${occ.local_ocorrencia || ""}" placeholder="Endereço completo">
-                </div>
-                <div class="form-group">
-                  <label for="ret_rodovia">Rodovia</label>
-                  <input type="text" id="ret_rodovia" class="form-control" value="${occ.rodovia || ""}" placeholder="BR-123, km 45">
-                </div>
-                <div class="form-group">
-                  <label for="ret_bairro_ocorrencia">Bairro da Ocorrência</label>
-                  <input type="text" id="ret_bairro_ocorrencia" class="form-control" value="${occ.bairro_ocorrencia || ""}" placeholder="Bairro">
-                </div>
-                <div class="form-group">
-                  <label for="ret_referencia">Referência</label>
-                  <input type="text" id="ret_referencia" class="form-control" value="${occ.referencia || ""}" placeholder="Ponto de referência próximo">
-                </div>
-              </div>
-              <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-                <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                  <i class="fas fa-pencil-alt" style="margin-right:6px;"></i>
-                  Observações
-                </p>
-                <div class="form-group">
-                  <label for="ret_observacoes">Observações</label>
-                  <textarea id="ret_observacoes" class="form-control" rows="4" placeholder="Complemente as informações da ocorrência">${occ.observacoes || ""}</textarea>
-                </div>
-              </div>
-              <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-                <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                  <i class="fas fa-barcode" style="margin-right:6px;"></i>
-                  Dados Operacionais
-                </p>
-                <div class="form-group">
-                  <label for="ret_codigo_operacional">Código Operacional</label>
-                  <input type="text" id="ret_codigo_operacional" class="form-control" value="${occ.codigo_operacional || ""}" placeholder="Código da ocorrência">
-                </div>
-              </div>
-              <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-                <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                  <i class="fas fa-tag" style="margin-right:6px;"></i>
-                  Tipo de Ocorrência
-                </p>
-                <div class="form-group">
-                  <label for="ret_tipo_ocorrencia">Tipo de Ocorrência</label>
-                  <select id="ret_tipo_ocorrencia" class="form-control">
-                    <option value="">Selecione o tipo...</option>
-                    ${this.TIPOS_OCORRENCIA.map(
-                      (op) =>
-                        `<option value="${op.value}" ${occ.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`,
-                    ).join("")}
-                  </select>
-                </div>
-              </div>
-              <div style="background:var(--cinza-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;opacity:0.7;">
-                <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
-                  <i class="fas fa-users" style="margin-right:6px;"></i>
-                  Envolvidos (${envolvidos.length}) - Não podem ser alterados na retificação
-                </p>
-                ${
-                  envolvidos.length === 0
-                    ? `
-                  <p style="font-size:13px;color:var(--cinza-medio);">Nenhum envolvido cadastrado</p>
-                `
-                    : `
-                  ${envolvidos
-                    .map(
-                      (env) => `
-                    <div style="font-size:13px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
-                      <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
-                      <strong>${env.nome_completo}</strong>
-                      ${env.cpf ? ` - ${env.cpf}` : ""}
-                    </div>
-                  `,
-                    )
-                    .join("")}
-                `
-                }
-                <p style="font-size:12px;color:var(--cinza-medio);margin-top:6px;">
-                  <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-                  Para alterar envolvidos, crie uma nova ocorrência
-                </p>
-              </div>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">
-            Cancelar
-          </button>
-          <button type="button" class="btn-primary" onclick="app.confirmarRetificacao('${id}')">
-            <i class="fas fa-check-circle" style="margin-right:6px;"></i> Solicitar Retificação
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  async confirmarRetificacao(id) {
-    const justificativa = document.getElementById("ret_justificativa")?.value;
-    if (!justificativa || justificativa.trim().length < 10) {
-      this.showToast(
-        "Justificativa deve ter pelo menos 10 caracteres",
-        "warning",
-      );
-      return;
-    }
-    const dadosCorrigidos = {};
-    const nome_solicitante = document.getElementById(
-      "ret_nome_solicitante",
-    )?.value;
-    if (nome_solicitante && nome_solicitante.trim() !== "") {
-      dadosCorrigidos.nome_solicitante = nome_solicitante.trim();
-    }
-    const cpf_solicitante = document.getElementById(
-      "ret_cpf_solicitante",
-    )?.value;
-    if (cpf_solicitante && cpf_solicitante.trim() !== "") {
-      dadosCorrigidos.cpf_solicitante = cpf_solicitante.trim();
-    }
-    const rg_solicitante = document.getElementById("ret_rg_solicitante")?.value;
-    if (rg_solicitante && rg_solicitante.trim() !== "") {
-      dadosCorrigidos.rg_solicitante = rg_solicitante.trim();
-    }
-    const telefone_solicitante = document.getElementById(
-      "ret_telefone_solicitante",
-    )?.value;
-    if (telefone_solicitante && telefone_solicitante.trim() !== "") {
-      dadosCorrigidos.telefone_solicitante = telefone_solicitante.trim();
-    }
-    const endereco_solicitante = document.getElementById(
-      "ret_endereco_solicitante",
-    )?.value;
-    if (endereco_solicitante && endereco_solicitante.trim() !== "") {
-      dadosCorrigidos.endereco_solicitante = endereco_solicitante.trim();
-    }
-    const bairro_solicitante = document.getElementById(
-      "ret_bairro_solicitante",
-    )?.value;
-    if (bairro_solicitante && bairro_solicitante.trim() !== "") {
-      dadosCorrigidos.bairro_solicitante = bairro_solicitante.trim();
-    }
-    const complemento = document.getElementById("ret_complemento")?.value;
-    if (complemento && complemento.trim() !== "") {
-      dadosCorrigidos.complemento = complemento.trim();
-    }
-    const identificacao_adicional = document.getElementById(
-      "ret_identificacao_adicional",
-    )?.value;
-    if (identificacao_adicional && identificacao_adicional.trim() !== "") {
-      dadosCorrigidos.identificacao_adicional = identificacao_adicional.trim();
-    }
-    const codigo_municipal = document.getElementById(
-      "ret_codigo_municipal",
-    )?.value;
-    if (codigo_municipal && codigo_municipal.trim() !== "") {
-      dadosCorrigidos.codigo_municipal = codigo_municipal.trim();
-    }
-    const local_ocorrencia = document.getElementById(
-      "ret_local_ocorrencia",
-    )?.value;
-    if (local_ocorrencia && local_ocorrencia.trim() !== "") {
-      dadosCorrigidos.local_ocorrencia = local_ocorrencia.trim();
-    }
-    const rodovia = document.getElementById("ret_rodovia")?.value;
-    if (rodovia && rodovia.trim() !== "") {
-      dadosCorrigidos.rodovia = rodovia.trim();
-    }
-    const bairro_ocorrencia = document.getElementById(
-      "ret_bairro_ocorrencia",
-    )?.value;
-    if (bairro_ocorrencia && bairro_ocorrencia.trim() !== "") {
-      dadosCorrigidos.bairro_ocorrencia = bairro_ocorrencia.trim();
-    }
-    const referencia = document.getElementById("ret_referencia")?.value;
-    if (referencia && referencia.trim() !== "") {
-      dadosCorrigidos.referencia = referencia.trim();
-    }
-    const observacoes = document.getElementById("ret_observacoes")?.value;
-    if (observacoes && observacoes.trim() !== "") {
-      dadosCorrigidos.observacoes = observacoes.trim();
-    }
-    const codigo_operacional = document.getElementById(
-      "ret_codigo_operacional",
-    )?.value;
-    if (codigo_operacional && codigo_operacional.trim() !== "") {
-      dadosCorrigidos.codigo_operacional = codigo_operacional.trim();
-    }
-    const tipo_ocorrencia = document.getElementById(
-      "ret_tipo_ocorrencia",
-    )?.value;
-    if (tipo_ocorrencia && tipo_ocorrencia.trim() !== "") {
-      dadosCorrigidos.tipo_ocorrencia = tipo_ocorrencia.trim();
-    }
-    if (Object.keys(dadosCorrigidos).length === 0) {
-      this.showToast("Nenhum campo foi preenchido para retificação", "warning");
-      return;
-    }
-    const confirmado = await this.confirmar(
-      "Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor.",
-    );
-    if (!confirmado) return;
-    const result = await ocorrenciaManager.solicitarRetificacao(
-      id,
-      dadosCorrigidos,
-      justificativa,
-    );
-    if (!result.success) {
-      this.showToast("Erro ao solicitar retificação: " + result.error, "error");
-      return;
-    }
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-    if (result.is_pending) {
-      this.showToast(
-        "Retificação solicitada com sucesso! Aguarde aprovação do supervisor.",
-        "success",
-      );
-    } else {
-      this.showToast("Retificação criada com sucesso!", "success");
-    }
-    await authManager.logSolicitarRetificacao(authManager.getUserId(), id);
-    setTimeout(
-      () => this.navigateTo("detalhe-ocorrencia", { id: result.data.id }),
-      1500,
-    );
-  }
-
-  async aprovarRetificacao(id) {
-    const confirmado = await this.confirmar(
-      "Confirma a aprovação desta retificação? A versão original será substituída.",
-    );
-    if (!confirmado) return;
-    const result = await ocorrenciaManager.aprovarRetificacao(id);
-    if (result.success) {
-      this.showToast("Retificação aprovada com sucesso!", "success");
-      await authManager.logAprovarRetificacao(authManager.getUserId(), id);
-      const paginaAtual = this.currentPage;
-      if (paginaAtual === "detalhe-ocorrencia") {
-        this.loadPageContent("detalhe-ocorrencia");
-      }
-      if (paginaAtual === "retificacoes") {
-        this.loadPageContent("retificacoes");
-      }
-      if (paginaAtual === "dashboard") {
-        this.loadPageContent("dashboard");
-      }
-      if (paginaAtual === "ocorrencias") {
-        this.loadPageContent("ocorrencias");
-      }
-    } else {
-      this.showToast("Erro ao aprovar retificação: " + result.error, "error");
-    }
-  }
-
-  async rejeitarRetificacao(id) {
-    const motivo = await this.inputModal(
-      "Informe o motivo da rejeição da retificação:",
-      "Rejeitar Retificação",
-      "Digite o motivo da rejeição...",
-    );
-    if (!motivo) {
-      this.showToast("Operação cancelada", "info");
-      return;
-    }
-    const confirmado = await this.confirmar(
-      `Confirma a rejeição desta retificação?\n\nMotivo: ${motivo}`,
-    );
-    if (!confirmado) return;
-    const result = await ocorrenciaManager.rejeitarRetificacao(id, motivo);
-    if (result.success) {
-      this.showToast("Retificação rejeitada", "info");
-      await authManager.logRejeitarRetificacao(authManager.getUserId(), id);
-      const paginaAtual = this.currentPage;
-      if (paginaAtual === "detalhe-ocorrencia") {
-        this.loadPageContent("detalhe-ocorrencia");
-      }
-      if (paginaAtual === "retificacoes") {
-        this.loadPageContent("retificacoes");
-      }
-      if (paginaAtual === "dashboard") {
-        this.loadPageContent("dashboard");
-      }
-      if (paginaAtual === "ocorrencias") {
-        this.loadPageContent("ocorrencias");
-      }
-    } else {
-      this.showToast("Erro ao rejeitar retificação: " + result.error, "error");
-    }
-  }
-
-  async verHistorico(id) {
-    const result = await ocorrenciaManager.buscarHistorico(id);
-    if (!result.success) {
-      this.showToast("Erro ao carregar histórico", "error");
-      return;
-    }
-    const historico = result.data;
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    let html = `
-      <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-history" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Histórico da Ocorrência
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-    `;
-    historico.forEach((item) => {
-      const isOriginal = item.is_original;
-      const isAtiva = item.esta_ativa !== false;
-      const statusClass = this.getStatusClass(item.status);
-      const statusLabel = this.getStatusLabel(item.status);
-      const data = this.formatarDataHoraLocal(item.criado_em);
-      const numero =
-        item.numero_ocorrencia || item.numero_temporario || "Rascunho";
-      let camposAlterados = [];
-      if (item.campos_alterados) {
-        try {
-          camposAlterados = JSON.parse(item.campos_alterados);
-        } catch (e) {}
-      }
-      html += `
-        <div style="border-left:4px solid ${isAtiva ? "var(--verde-bandeira)" : "var(--cinza-medio)"};padding-left:12px;margin-bottom:16px;background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-            <div>
-              <span style="font-weight:700;color:var(--azul-bandeira);">
-                ${isOriginal ? "📄 Versão Original" : `🔄 Retificação v${item.numero_versao || 1}`}
-              </span>
-              ${isAtiva ? ' <span class="badge badge-synced" style="font-size:10px;">✅ Ativa</span>' : ' <span class="badge badge-draft" style="font-size:10px;">📜 Substituída</span>'}
-              ${item.status === "pending_rectification" ? ' <span class="badge badge-pending" style="font-size:10px;">⏳ Pendente</span>' : ""}
-              ${item.status === "rectification_rejected" ? ' <span class="badge badge-cancelled" style="font-size:10px;">❌ Rejeitada</span>' : ""}
-            </div>
-            <span class="badge badge-${statusClass}" style="font-size:10px;">${statusLabel}</span>
-          </div>
-          <div style="font-size:13px;color:var(--cinza-medio);margin-top:4px;">
-            <i class="fas fa-calendar" style="margin-right:4px;"></i> ${data}
-            <span style="margin-left:12px;"><i class="fas fa-hashtag" style="margin-right:4px;"></i>#${numero}</span>
-            ${
-              item.justificativa_retificacao
-                ? `
-              <div style="margin-top:6px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
-                <i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-                ${item.justificativa_retificacao}
-              </div>
-            `
-                : ""
-            }
-            ${
-              item.solicitacao_retificacao_justificativa &&
-              item.status === "pending_rectification"
-                ? `
-              <div style="margin-top:6px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
-                <i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i>
-                Solicitação: ${item.solicitacao_retificacao_justificativa}
-              </div>
-            `
-                : ""
-            }
-            ${
-              item.motivo_rejeicao
-                ? `
-              <div style="margin-top:6px;padding:8px 12px;background:#fee2e2;border-radius:var(--border-radius);font-size:13px;color:#991b1b;border-left:3px solid var(--erro);">
-                <i class="fas fa-times-circle" style="color:var(--erro);margin-right:4px;"></i>
-                Motivo da rejeição: ${item.motivo_rejeicao}
-              </div>
-            `
-                : ""
-            }
-            ${
-              camposAlterados.length > 0
-                ? `
-              <div style="margin-top:6px;padding:8px 12px;background:var(--verde-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--verde-escuro);border-left:3px solid var(--verde-bandeira);">
-                <strong><i class="fas fa-edit" style="margin-right:4px;"></i> Campos Alterados:</strong>
-                ${camposAlterados
-                  .map(
-                    (c) => `
-                  <div style="margin-top:4px;font-size:12px;padding:4px 8px;background:var(--branco);border-radius:4px;">
-                    <strong>${c.label || c.campo}:</strong>
-                    <span style="color:var(--cinza-medio);text-decoration:line-through;">${c.antes || "(vazio)"}</span>
-                    →
-                    <span style="color:var(--verde-bandeira);">${c.depois || "(vazio)"}</span>
-                  </div>
-                `,
-                  )
-                  .join("")}
-              </div>
-            `
-                : ""
-            }
-          </div>
-          <div style="margin-top:6px;font-size:13px;">
-            <strong>Local:</strong> ${item.local_ocorrencia || "Não informado"}
-          </div>
-          ${
-            !isOriginal && item.retificado_por
-              ? `
-            <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
-              <i class="fas fa-user" style="margin-right:4px;"></i>
-              Retificado por: Supervisor
-            </div>
-          `
-              : ""
-          }
-          ${
-            !isOriginal && item.solicitada_por
-              ? `
-            <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
-              <i class="fas fa-user" style="margin-right:4px;"></i>
-              Solicitado por: Guarda
-            </div>
-          `
-              : ""
-          }
-          <button onclick="app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })" class="btn-secondary" style="margin-top:8px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
-            <i class="fas fa-eye" style="margin-right:4px;"></i> Ver Versão
-          </button>
-        </div>
-      `;
-    });
-    html += `
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">
-            Fechar
-          </button>
-        </div>
-      </div>
-    `;
-    overlay.innerHTML = html;
-    document.body.appendChild(overlay);
-  }
-
-  async finalizarOcorrenciaExistente(id) {
-    const confirmado = await this.confirmar(
-      "Deseja finalizar esta ocorrência?",
-    );
-    if (!confirmado) return;
-    const agora = new Date();
-    const timezoneOffset = agora.getTimezoneOffset();
-    const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
-    const dataEncerramento = adjustedDate.toISOString();
-    const result = await ocorrenciaManager.atualizar(id, {
-      status: "synced",
-      data_hora_encerramento: dataEncerramento,
-    });
-    if (result.success) {
-      this.showToast("Ocorrência finalizada com sucesso!", "success");
-      await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
-      if (this.filtroStatusAtual) {
-        this.loadPageContent("dashboard");
-      }
-      setTimeout(() => this.navigateTo("detalhe-ocorrencia", { id }), 1000);
-    } else {
-      this.showToast("Erro ao finalizar: " + result.error, "error");
-    }
-  }
-
-  async cancelarOcorrencia(id) {
-    const motivo = await this.inputModal(
-      "Informe o motivo do cancelamento:",
-      "Cancelar Ocorrência",
-      "Digite o motivo do cancelamento...",
-    );
-    if (!motivo) {
-      this.showToast("Operação cancelada", "info");
-      return;
-    }
-    const confirmado = await this.confirmar(
-      `Deseja realmente cancelar esta ocorrência?\n\nMotivo: ${motivo}`,
-    );
-    if (!confirmado) return;
-    const result = await ocorrenciaManager.cancelar(id, motivo);
-    if (result.success) {
-      this.showToast("Ocorrência cancelada com sucesso!", "success");
-      await authManager.logCancelarOcorrencia(
-        authManager.getUserId(),
-        id,
-        motivo,
-      );
-      if (this.filtroStatusAtual) {
-        this.loadPageContent("dashboard");
-      }
-      setTimeout(() => this.navigateTo("detalhe-ocorrencia", { id }), 1000);
-    } else {
-      this.showToast("Erro ao cancelar: " + result.error, "error");
-    }
-  }
-
-  async editarOcorrencia(id) {
-    this.showToast("Funcionalidade de edição em desenvolvimento", "info");
-  }
-
-  getStatusClass(status) {
-    const map = {
-      draft: "draft",
-      pending_sync: "pending",
-      synced: "synced",
-      cancelled: "cancelled",
-      rectified: "rectified",
-      pending_rectification: "pending_rectification",
-      rectification_rejected: "rectification_rejected",
-      sync_error: "error",
-    };
-    return map[status] || "draft";
-  }
-
-  getStatusLabel(status) {
-    const map = {
-      draft: "Rascunho",
-      pending_sync: "Pendente",
-      syncing: "Sincronizando",
-      synced: "Finalizada",
-      cancelled: "Cancelada",
-      rectified: "Retificada",
-      pending_rectification: "Retificação Pendente",
-      rectification_rejected: "Retificação Rejeitada",
-      sync_error: "Erro",
-    };
-    return map[status] || status;
-  }
-
-  getTipoEnvolvidoLabel(tipo) {
-    const tipos = {
-      autor: "Autor",
-      vitima: "Vítima",
-      testemunha: "Testemunha",
-      solicitante: "Solicitante",
-      outro: "Outro",
-    };
-    return tipos[tipo] || tipo;
-  }
-
-  getIconAnexo(tipo) {
-    const icons = {
-      image: "fa-image",
-      video: "fa-video",
-      document: "fa-file-pdf",
-      audio: "fa-music",
-    };
-    return icons[tipo] || "fa-file";
-  }
-
-  formatarTamanho(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / 1048576).toFixed(1) + " MB";
-  }
-
-  getTipoLabel(value) {
-    const tipo = this.TIPOS_OCORRENCIA.find((t) => t.value === value);
-    return tipo ? tipo.label : value || "Não informado";
-  }
-
-  async renderRetificacoes(container) {
-    console.log("🔍 renderRetificacoes CHAMADO!");
-    if (!authManager.isSupervisor()) {
-      container.innerHTML = `
-        <div class="container">
-          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-              <i class="fas fa-lock"></i>
-            </div>
-            <p style="font-weight:500;">Acesso restrito a supervisores</p>
-            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-              Voltar
-            </button>
-          </div>
-        </div>
-      `;
-      return;
-    }
-    console.log("📋 Renderizando página de retificações pendentes...");
-    const result = await ocorrenciaManager.buscarRetificacoesPendentes();
-    console.log("📋 Resultado da busca:", result);
-    console.log("📋 Data recebida:", result.data);
-    if (!result.success) {
-      container.innerHTML = `
-        <div class="container">
-          <h2 style="color:var(--azul-bandeira);">
-            <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
-            Solicitações de Retificação
-          </h2>
-          <p style="color:var(--erro);">Erro ao carregar: ${result.error}</p>
-          <button onclick="app.loadPageContent('retificacoes')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-            Tentar novamente
-          </button>
-        </div>
-      `;
-      return;
-    }
-    const pendentes = result.data || [];
-    console.log(`📋 Total de pendentes para renderizar: ${pendentes.length}`);
-    let html = `
-      <div class="container">
-        <h2 style="color:var(--azul-bandeira);">
-          <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
-          Solicitações de Retificação Pendentes
-        </h2>
-        <p style="color:var(--cinza-medio);margin-bottom:16px;">
-          ${pendentes.length} solicitação(ões) aguardando sua análise
-        </p>
-    `;
-    if (pendentes.length === 0) {
-      html += `
-        <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
-          </div>
-          <p style="font-weight:500;">Nenhuma solicitação pendente</p>
-          <p style="font-size:13px;">Todas as retificações foram analisadas</p>
-          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-            Voltar ao início
-          </button>
-        </div>
-      `;
-    } else {
-      const sorted = [...pendentes].sort((a, b) => {
-        const dateA = a.solicitada_em || a.criado_em || "";
-        const dateB = b.solicitada_em || b.criado_em || "";
-        return dateB.localeCompare(dateA);
-      });
-      sorted.forEach((ret) => {
-        const dataSolicitacao = ret.solicitada_em
-          ? this.formatarDataHoraLocal(ret.solicitada_em)
-          : ret.criado_em
-            ? this.formatarDataHoraLocal(ret.criado_em)
-            : "Data desconhecida";
-        const numeroOriginal =
-          ret.numero_ocorrencia || ret.numero_temporario || "Sem número";
-        const tipoLabel = this.getTipoLabel(ret.tipo_ocorrencia);
-        const tipoBadge = ret.tipo_ocorrencia
-          ? `<span class="badge badge-tipo badge-tipo-${ret.tipo_ocorrencia}" style="font-size:10px;">${tipoLabel}</span>`
-          : "";
-        html += `
-          <div class="card-revisao" style="margin-bottom:12px;border-left:4px solid var(--aviso);">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-              <div>
-                <strong style="font-size:15px;color:var(--azul-bandeira);">
-                  <i class="fas fa-file-alt"></i> #${numeroOriginal} ${tipoBadge}
-                </strong>
-                <span style="font-size:13px;color:var(--cinza-medio);margin-left:8px;">
-                  <i class="fas fa-calendar"></i> ${dataSolicitacao}
-                </span>
-              </div>
-              <span class="badge badge-pending" style="font-size:12px;">Pendente</span>
-            </div>
-            <div style="margin-top:6px;font-size:14px;">
-              <strong>Justificativa:</strong> ${ret.solicitacao_retificacao_justificativa || "Não informada"}
-            </div>
-            <div style="margin-top:4px;font-size:13px;color:var(--cinza-medio);">
-              <i class="fas fa-map-marker-alt"></i> ${ret.local_ocorrencia || "Local não informado"}
-            </div>
-            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn-primary" style="padding:6px 14px;font-size:13px;min-height:auto;width:auto;background:var(--verde-bandeira);" onclick="app.aprovarRetificacao('${ret.id}')">
-                <i class="fas fa-check"></i> Aprovar
-              </button>
-              <button class="btn-danger" style="padding:6px 14px;font-size:13px;min-height:auto;width:auto;" onclick="app.rejeitarRetificacao('${ret.id}')">
-                <i class="fas fa-times"></i> Rejeitar
-              </button>
-              <button class="btn-secondary" style="padding:6px 14px;font-size:13px;min-height:auto;width:auto;background:var(--azul-muito-claro);" onclick="app.navigateTo('detalhe-ocorrencia', {id: '${ret.id}'})">
-                <i class="fas fa-eye"></i> Ver detalhes
-              </button>
-            </div>
-          </div>
-        `;
-      });
-    }
-    html += `</div>`;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorios(container) {
-    if (!authManager.isSupervisor()) {
-      container.innerHTML = `
-        <div class="container">
-          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-              <i class="fas fa-lock"></i>
-            </div>
-            <p style="font-weight:500;">Acesso restrito a supervisores</p>
-            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-              Voltar
-            </button>
-          </div>
-        </div>
-      `;
-      return;
-    }
-    if (this.relatorioAtivo) {
-      await this.renderRelatorioDetalhado(container, this.relatorioAtivo);
-      return;
-    }
-    const relatorios = [
-      {
-        id: "executivo",
-        nome: "Relatório Executivo",
-        descricao: "Visão geral das ocorrências",
-        icon: "fa-chart-pie",
-        cor: "azul",
-      },
-      {
-        id: "por-tipo",
-        nome: "Ocorrências por Tipo",
-        descricao: "Análise detalhada por natureza da ocorrência",
-        icon: "fa-tag",
-        cor: "verde",
-      },
-      {
-        id: "por-local",
-        nome: "Ocorrências por Localidade",
-        descricao: "Distribuição geográfica das ocorrências",
-        icon: "fa-map-marker-alt",
-        cor: "vermelho",
-      },
-      {
-        id: "atendimento",
-        nome: "Tempo Médio de Atendimento",
-        descricao: "Análise de eficiência operacional",
-        icon: "fa-clock",
-        cor: "amarelo",
-      },
-      {
-        id: "desempenho",
-        nome: "Desempenho por Guarda",
-        descricao: "Avaliação individual dos agentes",
-        icon: "fa-user-tie",
-        cor: "roxo",
-      },
-      {
-        id: "retificacoes",
-        nome: "Relatório de Retificações",
-        descricao: "Acompanhamento de correções de ocorrências",
-        icon: "fa-sync-alt",
-        cor: "azul",
-      },
-      {
-        id: "cancelamentos",
-        nome: "Relatório de Cancelamentos",
-        descricao: "Análise de ocorrências canceladas",
-        icon: "fa-times-circle",
-        cor: "vermelho",
-      },
-      {
-        id: "tendencias",
-        nome: "Tendências e Sazonalidade",
-        descricao: "Padrões temporais das ocorrências",
-        icon: "fa-chart-line",
-        cor: "verde",
-      },
-      {
-        id: "produtividade",
-        nome: "Produtividade do Setor",
-        descricao: "Eficiência e capacidade de atendimento",
-        icon: "fa-rocket",
-        cor: "azul",
-      },
-      {
-        id: "detalhado",
-        nome: "Ocorrências Detalhado",
-        descricao: "Listagem completa com todos os campos",
-        icon: "fa-list-ul",
-        cor: "cinza",
-      },
-      {
-        id: "mapa",
-        nome: "Mapa de Ocorrências",
-        descricao: "Visualização geográfica das ocorrências",
-        icon: "fa-map-marked-alt",
-        cor: "azul",
-      },
-      {
-        id: "por-guarda",
-        nome: "Ocorrências por Guarda",
-        descricao: "Produtividade individual por agente",
-        icon: "fa-user-shield",
-        cor: "roxo",
-      },
-    ];
-    const dataInicio =
-      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
-    const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;">
-            <i class="fas fa-chart-bar" style="margin-right:8px;"></i>
-            Relatórios
-          </h2>
-          <button onclick="app.navigateTo('dashboard')" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i> Voltar
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:13px;">
-          Selecione um relatório para visualizar
-        </p>
-        <div class="filtros-container" style="margin-bottom:16px;">
-          <div class="filtros-row">
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
-              <input type="date" id="relatorioDataInicio" value="${dataInicio}">
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
-              <input type="date" id="relatorioDataFim" value="${dataFim}">
-            </div>
-            <div class="filtros-actions">
-              <button onclick="app.aplicarFiltrosRelatorios()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
-                <i class="fas fa-search"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-    `;
-    relatorios.forEach((rel) => {
-      const corMap = {
-        azul: "var(--azul-bandeira)",
-        verde: "var(--verde-bandeira)",
-        vermelho: "var(--erro)",
-        amarelo: "var(--aviso)",
-        roxo: "#8b5cf6",
-        cinza: "var(--cinza-medio)",
-      };
-      const bgMap = {
-        azul: "var(--azul-muito-claro)",
-        verde: "var(--verde-muito-claro)",
-        vermelho: "var(--erro-claro)",
-        amarelo: "#fef3c7",
-        roxo: "#ede9fe",
-        cinza: "var(--cinza-claro)",
-      };
-      html += `
-        <div class="relatorio-card" onclick="app.abrirRelatorio('${rel.id}')" style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);cursor:pointer;transition:all 0.15s ease;border-left:3px solid ${corMap[rel.cor]};display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='var(--sombra-media)'" onmouseout="this.style.transform='none';this.style.boxShadow='var(--sombra-suave)'">
-          <div style="width:40px;height:40px;border-radius:50%;background:${bgMap[rel.cor]};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <i class="fas ${rel.icon}" style="color:${corMap[rel.cor]};font-size:18px;"></i>
-          </div>
-          <div style="font-weight:600;font-size:12px;line-height:1.2;">${rel.nome}</div>
-          <div style="font-size:10px;color:var(--cinza-medio);line-height:1.2;">${rel.descricao}</div>
-        </div>
-      `;
-    });
-    html += `
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async abrirRelatorio(tipo) {
-    this.relatorioAtivo = tipo;
-    const dataInicio =
-      document.getElementById("relatorioDataInicio")?.value ||
-      this.obterPrimeiroDiaMes();
-    const dataFim =
-      document.getElementById("relatorioDataFim")?.value ||
-      this.obterDataAtual();
-    this.relatorioFiltros = {
-      dataInicio: dataInicio,
-      dataFim: dataFim,
-    };
-    this.loadPageContent("relatorios");
-  }
-
-  voltarRelatorios() {
-    this.relatorioAtivo = null;
-    this.loadPageContent("relatorios");
-  }
-
-  aplicarFiltrosRelatorios() {
-    const dataInicio = document.getElementById("relatorioDataInicio")?.value;
-    const dataFim = document.getElementById("relatorioDataFim")?.value;
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
-      return;
-    }
-    this.relatorioFiltros = {
-      dataInicio: dataInicio || this.obterPrimeiroDiaMes(),
-      dataFim: dataFim || this.obterDataAtual(),
-    };
-    if (this.relatorioAtivo) {
-      this.loadPageContent("relatorios");
-    }
-  }
-
-  obterPrimeiroDiaMes() {
-    const data = new Date();
-    data.setDate(1);
-    return data.toISOString().slice(0, 10);
-  }
-
-  obterDataAtual() {
-    return new Date().toISOString().slice(0, 10);
-  }
-
-  async renderRelatorioDetalhado(container, tipo) {
-    const dataInicio =
-      this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
-    const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
-    container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div class="spinner-azul" style="margin:0 auto;"></div>
-        <p style="margin-top:12px;color:var(--cinza-medio);">Carregando relatório...</p>
-      </div>
-    `;
-    const ocorrencias = await this.buscarOcorrenciasPeriodo(
-      dataInicio,
-      dataFim,
-    );
-    switch (tipo) {
-      case "executivo":
-        await this.renderRelatorioExecutivo(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "por-tipo":
-        await this.renderRelatorioPorTipo(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "por-local":
-        await this.renderRelatorioPorLocal(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "atendimento":
-        await this.renderRelatorioAtendimento(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "desempenho":
-        await this.renderRelatorioDesempenho(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "retificacoes":
-        await this.renderRelatorioRetificacoes(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "cancelamentos":
-        await this.renderRelatorioCancelamentos(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "tendencias":
-        await this.renderRelatorioTendencias(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "produtividade":
-        await this.renderRelatorioProdutividade(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "detalhado":
-        await this.renderRelatorioDetalhadoLista(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      case "mapa":
-        await this.renderRelatorioMapa(container, dataInicio, dataFim);
-        break;
-      case "por-guarda":
-        await this.renderRelatorioPorGuarda(
-          container,
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
-        break;
-      default:
-        container.innerHTML = `<p>Relatório não encontrado</p>`;
-    }
-  }
-
-  async buscarOcorrenciasPeriodo(dataInicio, dataFim) {
-    const client = supabaseClient.getClient();
-    if (!client) return [];
-    try {
-      const { data, error } = await client
-        .from("ocorrencias")
-        .select("*")
-        .gte("criado_em", dataInicio)
-        .lte("criado_em", dataFim + "T23:59:59");
-      if (error) throw error;
-      console.log(`📊 Buscou ${data?.length || 0} ocorrências no período`);
-      return data || [];
-    } catch (error) {
-      console.error("❌ Erro ao buscar ocorrências:", error);
-      return [];
-    }
-  }
-
-  async renderRelatorioMapa(container, dataInicio, dataFim) {
-    const filtros = {
-      data_inicio: dataInicio,
-      data_fim: dataFim,
-      limit: 500,
-    };
-    const tipoSelect = document.getElementById("filtroMapaTipo");
-    const statusSelect = document.getElementById("filtroMapaStatus");
-    if (tipoSelect && tipoSelect.value) {
-      filtros.tipo_ocorrencia = tipoSelect.value;
-    }
-    if (statusSelect && statusSelect.value) {
-      filtros.status = statusSelect.value;
-    }
-    const result =
-      await ocorrenciaManager.buscarOcorrenciasComLocalizacao(filtros);
-    const html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
-          <div>
-            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-              <i class="fas fa-map-marked-alt" style="margin-right:8px;"></i>
-              Mapa de Ocorrências
-            </h2>
-            <p style="color:var(--cinza-medio);margin-top:2px;font-size:12px;">
-              <i class="fas fa-calendar" style="margin-right:4px;"></i>
-              ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-              <span style="margin-left:8px;font-weight:600;">${result.success ? result.total : 0} ocorrências com localização</span>
-            </p>
-          </div>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i> Voltar
-          </button>
-        </div>
-        <div class="filtros-container" style="margin-bottom:12px;">
-          <div class="filtros-row">
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-tag"></i> Tipo</label>
-              <select id="filtroMapaTipo" onchange="app.renderRelatorioMapa(this.closest('.container'), '${dataInicio}', '${dataFim}')">
-                <option value="">Todos</option>
-                ${this.TIPOS_OCORRENCIA.map(
-                  (t) => `
-                  <option value="${t.value}">${t.label}</option>
-                `,
-                ).join("")}
-              </select>
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-circle"></i> Status</label>
-              <select id="filtroMapaStatus" onchange="app.renderRelatorioMapa(this.closest('.container'), '${dataInicio}', '${dataFim}')">
-                <option value="">Todos</option>
-                <option value="synced">Finalizada</option>
-                <option value="pending_sync">Pendente</option>
-                <option value="rectified">Retificada</option>
-                <option value="cancelled">Cancelada</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div id="mapaContainer" class="mapa-container">
-          ${
-            !result.success
-              ? `
-            <div class="mapa-sem-dados">
-              <i class="fas fa-exclamation-triangle"></i>
-              <p>Erro ao carregar dados: ${result.error}</p>
-            </div>
-          `
-              : result.total === 0
-                ? `
-            <div class="mapa-sem-dados">
-              <i class="fas fa-map"></i>
-              <p>Nenhuma ocorrência com localização encontrada no período</p>
-              <p style="font-size:12px;margin-top:4px;">Verifique se as ocorrências têm coordenadas de GPS</p>
-            </div>
-          `
-                : `
-            <div class="mapa-loading" id="mapaLoading">
-              <div class="spinner"></div>
-              <span>Carregando mapa...</span>
-            </div>
-          `
-          }
-        </div>
-        ${
-          result.success && result.total > 0
-            ? `
-          <div class="mapa-heatmap-legend">
-            <span><i class="fas fa-circle" style="color:#00ff00;"></i> Baixa</span>
-            <span><i class="fas fa-circle" style="color:#ffff00;"></i> Média</span>
-            <span><i class="fas fa-circle" style="color:#ff0000;"></i> Alta</span>
-            <span class="gradiente"></span>
-            <span style="margin-left:auto;font-size:10px;color:var(--cinza-medio);">
-              ${result.total} ocorrências
-            </span>
-          </div>
-        `
-            : ""
-        }
-        ${
-          result.success && result.total > 0
-            ? `
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px 12px;box-shadow:var(--sombra-suave);flex:1;text-align:center;min-width:80px;">
-              <div style="font-size:18px;font-weight:800;color:var(--azul-bandeira);">${result.total}</div>
-              <div style="font-size:10px;color:var(--cinza-medio);">Com localização</div>
-            </div>
-            ${
-              result.data
-                ? `
-              <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px 12px;box-shadow:var(--sombra-suave);flex:1;text-align:center;min-width:80px;">
-                <div style="font-size:18px;font-weight:800;color:var(--verde-bandeira);">
-                  ${new Set(result.data.map((o) => o.tipo)).size}
-                </div>
-                <div style="font-size:10px;color:var(--cinza-medio);">Tipos diferentes</div>
-              </div>
-            `
-                : ""
-            }
-          </div>
-        `
-            : ""
-        }
-      </div>
-    `;
-    container.innerHTML = html;
-    if (result.success && result.total > 0) {
-      setTimeout(() => {
-        this.inicializarMapaOcorrencias(result.data);
-      }, 100);
-    }
-  }
-
-  inicializarMapaOcorrencias(dados) {
-    const container = document.getElementById("mapaContainer");
-    if (!container) {
-      console.error("❌ Container do mapa não encontrado!");
-      return;
-    }
-    const loading = document.getElementById("mapaLoading");
-    if (loading) {
-      loading.style.display = "none";
-    }
-    if (this.mapaInstance) {
-      try {
-        this.mapaInstance.remove();
-      } catch (e) {
-        console.warn("⚠️ Erro ao remover mapa anterior:", e);
-      }
-      this.mapaInstance = null;
-    }
-    const rect = container.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
-      console.warn("⚠️ Container do mapa não está visível, aguardando...");
-      setTimeout(() => {
-        if (document.getElementById("mapaContainer")) {
-          this.inicializarMapaOcorrencias(dados);
-        }
-      }, 500);
-      return;
-    }
-    const dadosValidos = dados.filter(
-      (p) =>
-        p.latitude &&
-        p.longitude &&
-        !isNaN(parseFloat(p.latitude)) &&
-        !isNaN(parseFloat(p.longitude)),
-    );
-    if (dadosValidos.length === 0) {
-      console.warn("⚠️ Nenhum dado válido para o mapa");
-      container.innerHTML = `
-        <div class="mapa-sem-dados" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);text-align:center;padding:20px;">
-          <i class="fas fa-map" style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;"></i>
-          <p>Nenhuma coordenada válida encontrada</p>
-        </div>
-      `;
-      return;
-    }
-    try {
-      const centro = this.calcularCentroMapa(dadosValidos);
-      console.log("🗺️ Centro do mapa:", centro);
-      const map = L.map(container, {
-        zoomControl: true,
-        attributionControl: true,
-        fadeAnimation: true,
-        zoomAnimation: true,
-        center: centro,
-        zoom: 13,
-      });
-      try {
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-          maxZoom: 19,
-          minZoom: 10,
-          errorTileUrl:
-            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-        }).addTo(map);
-      } catch (e) {
-        console.warn("⚠️ Erro ao carregar tiles do mapa:", e);
-      }
-      const bounds = this.calcularBoundsMapa(dadosValidos);
-      if (bounds) {
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-      }
-      this.adicionarMarcadoresMapa(map, dadosValidos);
-      this.adicionarHeatmapMapa(map, dadosValidos);
-      this.mapaInstance = map;
-      setTimeout(() => {
-        try {
-          map.invalidateSize();
-          console.log("🗺️ Mapa redimensionado com sucesso");
-        } catch (e) {
-          console.warn("⚠️ Erro ao redimensionar mapa:", e);
-        }
-      }, 500);
-      setTimeout(() => {
-        try {
-          map.invalidateSize();
-        } catch (e) {}
-      }, 1500);
-      console.log(
-        "🗺️ Mapa inicializado com sucesso!",
-        dadosValidos.length,
-        "pontos",
-      );
-    } catch (error) {
-      console.error("❌ Erro ao inicializar mapa:", error);
-      container.innerHTML = `
-        <div class="mapa-sem-dados" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);text-align:center;padding:20px;">
-          <i class="fas fa-exclamation-triangle" style="font-size:48px;color:var(--erro);margin-bottom:12px;"></i>
-          <p>Erro ao carregar mapa: ${error.message}</p>
-          <button onclick="app.voltarRelatorios()" class="btn-secondary" style="margin-top:12px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i> Voltar
-          </button>
-        </div>
-      `;
-    }
-  }
-
-  calcularCentroMapa(dados) {
-    if (!dados || dados.length === 0) {
-      return [-23.456, -47.123];
-    }
-    let lat = 0,
-      lng = 0;
-    let count = 0;
-    dados.forEach((p) => {
-      if (p.latitude && p.longitude) {
-        lat += parseFloat(p.latitude);
-        lng += parseFloat(p.longitude);
-        count++;
-      }
-    });
-    if (count === 0) return [-23.456, -47.123];
-    return [lat / count, lng / count];
-  }
-
-  calcularBoundsMapa(dados) {
-    if (!dados || dados.length === 0) return null;
-    let minLat = Infinity,
-      maxLat = -Infinity;
-    let minLng = Infinity,
-      maxLng = -Infinity;
-    let hasValid = false;
-    dados.forEach((p) => {
-      if (p.latitude && p.longitude) {
-        const lat = parseFloat(p.latitude);
-        const lng = parseFloat(p.longitude);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          if (lat < minLat) minLat = lat;
-          if (lat > maxLat) maxLat = lat;
-          if (lng < minLng) minLng = lng;
-          if (lng > maxLng) maxLng = lng;
-          hasValid = true;
-        }
-      }
-    });
-    if (!hasValid) return null;
-    const latMargin = (maxLat - minLat) * 0.1 || 0.01;
-    const lngMargin = (maxLng - minLng) * 0.1 || 0.01;
-    return [
-      [minLat - latMargin, minLng - lngMargin],
-      [maxLat + latMargin, maxLng + lngMargin],
-    ];
-  }
-
-  adicionarMarcadoresMapa(map, dados) {
-    if (!dados || dados.length === 0) return;
-    const cores = {
-      furto: "#f97316",
-      roubo: "#dc2626",
-      vandalismo: "#f97316",
-      dano_ao_patrimonio: "#f97316",
-      ameaca: "#dc2626",
-      lesao_corporal: "#dc2626",
-      perturbacao: "#f97316",
-      acidente: "#eab308",
-      incendio: "#dc2626",
-      desaparecimento: "#8b5cf6",
-      atendimento_social: "#06b6d4",
-      outro: "#6b7280",
-    };
-    const marcadorCores = {
-      furto: "vermelho",
-      roubo: "vermelho",
-      vandalismo: "amarelo",
-      dano_ao_patrimonio: "amarelo",
-      ameaca: "vermelho",
-      lesao_corporal: "vermelho",
-      perturbacao: "amarelo",
-      acidente: "amarelo",
-      incendio: "vermelho",
-      desaparecimento: "roxo",
-      atendimento_social: "azul",
-      outro: "cinza",
-    };
-    const icones = {
-      furto: "fa-bolt",
-      roubo: "fa-hand-lizard",
-      vandalismo: "fa-brush",
-      dano_ao_patrimonio: "fa-building",
-      ameaca: "fa-exclamation-triangle",
-      lesao_corporal: "fa-heartbeat",
-      perturbacao: "fa-volume-up",
-      acidente: "fa-car-crash",
-      incendio: "fa-fire",
-      desaparecimento: "fa-user-slash",
-      atendimento_social: "fa-hands-helping",
-      outro: "fa-circle",
-    };
-    const coordenadasUsadas = {};
-    dados.forEach((p) => {
-      if (!p.latitude || !p.longitude) return;
-      let lat = parseFloat(p.latitude);
-      let lng = parseFloat(p.longitude);
-      if (isNaN(lat) || isNaN(lng)) return;
-      const chaveCoord = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-      if (coordenadasUsadas[chaveCoord]) {
-        const jitter = 0.00015 * coordenadasUsadas[chaveCoord];
-        lat += (Math.random() - 0.5) * jitter;
-        lng += (Math.random() - 0.5) * jitter;
-        coordenadasUsadas[chaveCoord]++;
-      } else {
-        coordenadasUsadas[chaveCoord] = 1;
-      }
-      const tipo = p.tipo || "outro";
-      const cor = cores[tipo] || "#6b7280";
-      const marcadorCor = marcadorCores[tipo] || "cinza";
-      const icone = icones[tipo] || "fa-circle";
-      const icon = L.divIcon({
-        className: `marcador-ocorrencia ${marcadorCor}`,
-        html: `<i class="fas ${icone}"></i>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 28],
-        popupAnchor: [0, -28],
-      });
-      const popupContent = `
-        <div class="popup-titulo">#${p.numero || "Sem número"}</div>
-        <span class="popup-tipo popup-tipo-${tipo}">${this.getTipoLabel(tipo)}</span>
-        <div class="popup-local"><i class="fas fa-map-pin"></i> ${p.local || "Local não informado"}</div>
-        <div class="popup-guarda"><i class="fas fa-user"></i> ${p.criador?.nome_completo || "Desconhecido"}</div>
-        <div style="font-size:11px;color:var(--cinza-medio);margin-top:4px;">
-          ${p.data ? new Date(p.data).toLocaleDateString("pt-BR") : ""}
-          ${p.status ? ` • <span class="badge badge-${this.getStatusClass(p.status)}" style="font-size:9px;">${this.getStatusLabel(p.status)}</span>` : ""}
-        </div>
-        <div style="margin-top:6px;">
-          <button onclick="app.verDetalhes('${p.id}')" class="btn-secondary" style="padding:2px 10px;font-size:11px;min-height:auto;width:auto;">
-            <i class="fas fa-eye"></i> Ver detalhes
-          </button>
-        </div>
-      `;
-      L.marker([lat, lng], { icon })
-        .addTo(map)
-        .bindPopup(popupContent, { maxWidth: 280, className: "mapa-popup" });
-    });
-  }
-
-  adicionarHeatmapMapa(map, dados) {
-    if (!dados || dados.length === 0) return;
-    dados.forEach((p) => {
-      if (!p.latitude || !p.longitude) return;
-      const lat = parseFloat(p.latitude);
-      const lng = parseFloat(p.longitude);
-      if (isNaN(lat) || isNaN(lng)) return;
-      L.circle([lat, lng], {
-        color: "transparent",
-        fillColor: "#ff4400",
-        fillOpacity: 0.1,
-        radius: 200,
-        interactive: false,
-        pane: "shadowPane",
-      }).addTo(map);
-      L.circle([lat, lng], {
-        color: "transparent",
-        fillColor: "#ff0000",
-        fillOpacity: 0.2,
-        radius: 80,
-        interactive: false,
-        pane: "shadowPane",
-      }).addTo(map);
-    });
-    console.log("✅ Camada de densidade nativa aplicada");
-  }
-
-  async exportarRelatorioGuardaPDF(guardaId = null) {
-    try {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF();
-      const dataInicio =
-        this.relatorioFiltros?.dataInicio || this.obterPrimeiroDiaMes();
-      const dataFim = this.relatorioFiltros?.dataFim || this.obterDataAtual();
-      const periodoStr = `${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}`;
-      const ocorrencias = await this.buscarOcorrenciasPeriodo(
-        dataInicio,
-        dataFim,
-      );
-      const criadoresIds = [...new Set(ocorrencias.map((o) => o.criado_por))];
-      const dadosUsuarios =
-        await ocorrenciaManager.buscarDadosUsuariosEmLote(criadoresIds);
-      const agrupado = {};
-      ocorrencias.forEach((o) => {
-        const id = o.criado_por;
-        if (guardaId && id !== guardaId) return;
-        const nome =
-          dadosUsuarios[id]?.nome_completo || "Usuário não identificado";
-        if (!agrupado[id]) {
-          agrupado[id] = { nome, total: 0, tipos: {} };
-        }
-        agrupado[id].total++;
-        const tipo = this.getTipoLabel(o.tipo_ocorrencia);
-        agrupado[id].tipos[tipo] = (agrupado[id].tipos[tipo] || 0) + 1;
-      });
-      const ranking = Object.values(agrupado).sort((a, b) => b.total - a.total);
-      doc.setFontSize(18);
-      doc.setTextColor(0, 63, 135);
-      doc.text("Guarda Municipal de Pitangueiras - PR", 105, 20, {
-        align: "center",
-      });
-      doc.setFontSize(14);
-      doc.setTextColor(100);
-      const titulo = guardaId
-        ? `Relatório Individual de Produtividade`
-        : `Relatório Geral de Produtividade por Agente`;
-      doc.text(titulo, 105, 30, { align: "center" });
-      doc.setFontSize(10);
-      doc.text(`Período: ${periodoStr}`, 105, 38, { align: "center" });
-      doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 44, {
-        align: "center",
-      });
-      const tableRows = [];
-      ranking.forEach((item, index) => {
-        const tiposStr = Object.entries(item.tipos)
-          .map(([t, q]) => `${t}: ${q}`)
-          .join(", ");
-        tableRows.push([index + 1, item.nome, item.total, tiposStr]);
-      });
-      doc.autoTable({
-        startY: 55,
-        head: [["Pos.", "Agente", "Total", "Detalhamento por Tipo"]],
-        body: tableRows,
-        headStyles: { fillColor: [0, 63, 135], halign: "center" },
-        columnStyles: {
-          0: { cellWidth: 15, halign: "center" },
-          1: { cellWidth: 60 },
-          2: { cellWidth: 20, halign: "center" },
-          3: { cellWidth: "auto" },
-        },
-        styles: { fontSize: 9, cellPadding: 4 },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-      });
-      const pageCount = doc.internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text(
-          `Página ${i} de ${pageCount} - Sistema de Gestão G.M. Pitangueiras`,
-          105,
-          285,
-          { align: "center" },
-        );
-      }
-      const nomeArquivo = guardaId
-        ? `Produtividade_${ranking[0]?.nome.replace(/ /g, "_")}.pdf`
-        : `Produtividade_Geral_${dataInicio}.pdf`;
-      doc.save(nomeArquivo);
-      this.showToast("PDF gerado com sucesso!", "success");
-    } catch (error) {
-      console.error("Erro ao gerar PDF:", error);
-      this.showToast("Erro ao gerar arquivo PDF", "error");
-    }
-  }
-
-  async renderRelatorioPorGuarda(container, ocorrencias, dataInicio, dataFim) {
-    const criadoresIds = [...new Set(ocorrencias.map((o) => o.criado_por))];
-    const dadosUsuarios =
-      await ocorrenciaManager.buscarDadosUsuariosEmLote(criadoresIds);
-    const agrupado = {};
-    ocorrencias.forEach((o) => {
-      const id = o.criado_por;
-      const nome =
-        dadosUsuarios[id]?.nome_completo || "Usuário não identificado";
-      if (!agrupado[id]) {
-        agrupado[id] = { nome: nome, total: 0, tipos: {} };
-      }
-      agrupado[id].total++;
-      const tipo = this.getTipoLabel(o.tipo_ocorrencia);
-      agrupado[id].tipos[tipo] = (agrupado[id].tipos[tipo] || 0) + 1;
-    });
-    const ranking = Object.values(agrupado).sort((a, b) => b.total - a.total);
-    let html = `
-      <div class="container" style="padding-bottom:100px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-user-shield" style="margin-right:8px;"></i>
-            Por Guarda
-          </h2>
-          <div style="display:flex;gap:8px;">
-            <button onclick="app.exportarRelatorioGuardaPDF()" class="btn-primary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;background:var(--erro);">
-              <i class="fas fa-file-pdf"></i> PDF Geral
-            </button>
-            <button onclick="app.voltarRelatorios()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
-              <i class="fas fa-arrow-left"></i> Voltar
-            </button>
-          </div>
-        </div>
-        <div class="stats-card" style="margin-bottom:16px;background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-          <div style="font-size:12px;color:var(--cinza-medio);margin-bottom:4px;">Período</div>
-          <div style="font-weight:600;color:var(--azul-bandeira);font-size:14px;">
-            ${dataInicio.split("-").reverse().join("/")} até ${dataFim.split("-").reverse().join("/")}
-          </div>
-          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cinza-claro);display:flex;justify-content:space-between;">
-            <div>
-              <div style="font-size:11px;color:var(--cinza-medio);">Total de Ocorrências</div>
-              <div style="font-size:20px;font-weight:700;color:var(--azul-bandeira);">${ocorrencias.length}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-size:11px;color:var(--cinza-medio);">Agentes Ativos</div>
-              <div style="font-size:20px;font-weight:700;color:var(--roxo);">${ranking.length}</div>
-            </div>
-          </div>
-        </div>
-        <div class="ranking-lista" style="display:flex;flex-direction:column;gap:12px;">
-    `;
-    if (ranking.length === 0) {
-      html += `
-        <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-          <i class="fas fa-info-circle" style="font-size:32px;margin-bottom:12px;opacity:0.3;"></i>
-          <p>Nenhuma ocorrência encontrada neste período.</p>
-        </div>
-      `;
-    }
-    ranking.forEach((item, index) => {
-      const medalha =
-        index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "";
-      html += `
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);border-left:4px solid var(--roxo);">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div style="width:32px;height:32px;border-radius:50%;background:var(--roxo);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">
-                ${index + 1}
-              </div>
-              <div>
-                <div style="font-weight:700;color:var(--azul-bandeira);font-size:14px;">${medalha} ${item.nome}</div>
-                <div style="font-size:11px;color:var(--cinza-medio);">Agente da Guarda Municipal</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <div style="text-align:right;">
-                <div style="font-size:18px;font-weight:800;color:var(--roxo);">${item.total}</div>
-                <div style="font-size:10px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Ocorrências</div>
-              </div>
-              <button onclick="app.exportarRelatorioGuardaPDF('${Object.keys(agrupado).find((key) => agrupado[key] === item)}')" class="btn-secondary" style="padding:6px;min-height:auto;width:auto;border-radius:50%;" title="Exportar PDF Individual">
-                <i class="fas fa-file-pdf" style="color:var(--erro);"></i>
-              </button>
-            </div>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--cinza-claro);">
-            ${Object.entries(item.tipos)
-              .map(
-                ([tipo, qtd]) => `
-              <span style="background:var(--cinza-claro);color:var(--cinza-escuro);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;">
-                ${tipo}: ${qtd}
-              </span>
-            `,
-              )
-              .join("")}
-          </div>
-        </div>
-      `;
-    });
-    html += `
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
   // ============================================
-  // CONSULTA OPERACIONAL - VERSÃO MELHORADA
+  // LOGIN
   // ============================================
 
-  async renderConsultaOperacional(container) {
-    await this.carregarListaGuardas();
-    let html = `
-      <div class="container" style="padding-bottom:100px;">
-        <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">
-          <i class="fas fa-search" style="margin-right:8px;"></i>
-          Consulta Operacional
-        </h2>
-        <div class="tabs-container" style="display:flex;gap:4px;margin-bottom:16px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
-          <button onclick="app.mudarAbaConsulta('veiculos')" id="tabVeiculos" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;">
-            <i class="fas fa-motorcycle"></i> Veículos
-          </button>
-          <button onclick="app.mudarAbaConsulta('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;">
-            <i class="fas fa-user-friends"></i> Pessoas/Andarilhos
-          </button>
-        </div>
-        <div class="filtros-consulta">
-          <div class="filtros-row">
-            <div class="filtro-group" style="flex:1;min-width:60px;">
-              <label style="font-size:10px;font-weight:600;color:var(--cinza-medio);display:block;margin-bottom:2px;"><i class="fas fa-calendar-alt"></i> Início</label>
-              <input type="date" id="consultaDataInicio" value="${this.filtrosConsulta.dataInicio}" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);">
-            </div>
-            <div class="filtro-group" style="flex:1;min-width:60px;">
-              <label style="font-size:10px;font-weight:600;color:var(--cinza-medio);display:block;margin-bottom:2px;"><i class="fas fa-calendar-alt"></i> Fim</label>
-              <input type="date" id="consultaDataFim" value="${this.filtrosConsulta.dataFim}" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);">
-            </div>
-            <div class="filtro-group" style="flex:1.2;min-width:80px;">
-              <label style="font-size:10px;font-weight:600;color:var(--cinza-medio);display:block;margin-bottom:2px;"><i class="fas fa-user-shield"></i> Guarda</label>
-              <select id="consultaGuarda" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);">
-                <option value="">Todos</option>
-                ${this.listaGuardas
-                  .map(
-                    (g) => `
-                  <option value="${g.id}" ${this.filtrosConsulta.guarda === g.id ? "selected" : ""}>${g.nome_completo}</option>
-                `,
-                  )
-                  .join("")}
-              </select>
-            </div>
-            <div class="filtros-actions" style="display:flex;gap:4px;align-self:flex-end;padding-bottom:2px;">
-              <button onclick="app.aplicarFiltrosConsulta()" class="btn-primary" style="padding:4px 8px;font-size:12px;min-height:28px;width:auto;border-radius:8px;" title="Filtrar">
-                <i class="fas fa-search"></i>
-              </button>
-              <button onclick="app.limparFiltrosConsulta()" class="btn-secondary" style="padding:4px 8px;font-size:12px;min-height:28px;width:auto;border-radius:8px;" title="Limpar filtros">
-                <i class="fas fa-undo"></i>
-              </button>
-            </div>
-          </div>
-          <div id="consultaFiltrosInfo" style="margin-top:4px;font-size:10px;color:var(--cinza-medio);display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
-            <span id="consultaTotalRegistros">Carregando...</span>
-            <span id="consultaFiltrosAtivos" style="display:none;color:var(--azul-bandeira);"><i class="fas fa-filter"></i> Filtros ativos</span>
-          </div>
-        </div>
-        <div id="consultaBuscaArea"></div>
-        <div id="consultaResultadosArea" style="margin-top:12px;"></div>
-      </div>
-    `;
-    container.innerHTML = html;
-    this.abaConsultaAtiva = "veiculos";
-    this.renderAbaConsulta();
-    setTimeout(() => {
-      this.mudarAbaConsulta("veiculos");
-    }, 50);
-    await this.carregarFeedConsultas();
-  }
-
-  async carregarListaGuardas() {
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) return;
-      const { data, error } = await client
-        .from("usuarios")
-        .select("id, nome_completo")
-        .eq("status", "ativo")
-        .order("nome_completo");
-      if (error) throw error;
-      this.listaGuardas = data || [];
-    } catch (error) {
-      console.error("Erro ao carregar lista de guardas:", error);
-      this.listaGuardas = [];
-    }
-  }
-
-  async contarReincidencias(registro, isVeiculo) {
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) return 0;
-      const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
-      let campo, valor;
-      if (isVeiculo) {
-        campo = "placa";
-        valor = registro.placa;
-      } else {
-        if (registro.cpf && registro.cpf.trim() !== "") {
-          campo = "cpf";
-          valor = registro.cpf.replace(/\D/g, "");
-        } else if (registro.nome) {
-          campo = "nome";
-          valor = registro.nome;
-          if (registro.data_nascimento) {
-            // Podemos adicionar filtro por data de nascimento se existir
-          }
-        } else {
-          return 0;
-        }
-      }
-      if (!valor || valor.trim() === "") return 0;
-      let query = client
-        .from(tabela)
-        .select("*", { count: "exact", head: true })
-        .eq(campo, valor);
-      if (registro.id) {
-        query = query.neq("id", registro.id);
-      }
-      const { count, error } = await query;
-      if (error) {
-        console.error("Erro ao contar reincidências:", error);
-        return 0;
-      }
-      return count || 0;
-    } catch (error) {
-      console.error("Erro ao contar reincidências:", error);
-      return 0;
-    }
-  }
-
-  async carregarFeedConsultas() {
-    const areaResultados = document.getElementById("consultaResultadosArea");
-    if (!areaResultados) return;
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) {
-        areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor.</p>`;
-        return;
-      }
-      const dataInicio =
-        document.getElementById("consultaDataInicio")?.value || "";
-      const dataFim = document.getElementById("consultaDataFim")?.value || "";
-      const guardaId = document.getElementById("consultaGuarda")?.value || "";
-      const tipo = this.abaConsultaAtiva || "todos";
-      let queryVeiculos = client
-        .from("abordagens_veiculos")
-        .select("*, usuarios(nome_completo)");
-      let queryPessoas = client
-        .from("abordagens_pessoas")
-        .select("*, usuarios(nome_completo)");
-      if (dataInicio) {
-        queryVeiculos = queryVeiculos.gte("criado_em", dataInicio);
-        queryPessoas = queryPessoas.gte("criado_em", dataInicio);
-      }
-      if (dataFim) {
-        queryVeiculos = queryVeiculos.lte("criado_em", dataFim + "T23:59:59");
-        queryPessoas = queryPessoas.lte("criado_em", dataFim + "T23:59:59");
-      }
-      if (guardaId) {
-        queryVeiculos = queryVeiculos.eq("criado_por", guardaId);
-        queryPessoas = queryPessoas.eq("criado_por", guardaId);
-      }
-      queryVeiculos = queryVeiculos
-        .order("criado_em", { ascending: false })
-        .limit(50);
-      queryPessoas = queryPessoas
-        .order("criado_em", { ascending: false })
-        .limit(50);
-      const [veiculosResult, pessoasResult] = await Promise.all([
-        queryVeiculos,
-        queryPessoas,
-      ]);
-      const veiculos = veiculosResult.data || [];
-      const pessoas = pessoasResult.data || [];
-      let todasAbordagens = [];
-      if (tipo === "todos" || tipo === "veiculos") {
-        todasAbordagens = [
-          ...todasAbordagens,
-          ...veiculos.map((v) => ({ ...v, tipo_abordagem: "veiculo" })),
-        ];
-      }
-      if (tipo === "todos" || tipo === "pessoas") {
-        todasAbordagens = [
-          ...todasAbordagens,
-          ...pessoas.map((p) => ({ ...p, tipo_abordagem: "pessoa" })),
-        ];
-      }
-      todasAbordagens.sort(
-        (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
-      );
-      const totalRegistros = todasAbordagens.length;
-      const totalSpan = document.getElementById("consultaTotalRegistros");
-      if (totalSpan) {
-        totalSpan.textContent = `${totalRegistros} registro(s) encontrado(s)`;
-      }
-      const filtrosAtivos = document.getElementById("consultaFiltrosAtivos");
-      if (filtrosAtivos) {
-        const hasFilters = dataInicio || dataFim || guardaId;
-        filtrosAtivos.style.display = hasFilters ? "inline" : "none";
-      }
-      if (todasAbordagens.length === 0) {
-        areaResultados.innerHTML = `
-          <div style="text-align:center;padding:40px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-            <i class="fas fa-info-circle" style="font-size:32px;color:var(--cinza-medio);margin-bottom:12px;opacity:0.3;"></i>
-            <p>Nenhuma consulta/abordagem registrada com os filtros atuais.</p>
-            <button onclick="app.abrirFormularioAbordagem()" class="btn-primary" style="margin-top:16px;">
-              <i class="fas fa-plus"></i> Registrar Abordagem
-            </button>
-          </div>
-        `;
-        return;
-      }
-      const ultimasAbordagens = todasAbordagens.slice(0, 20);
-      let html = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;">
-            <i class="fas fa-clock" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Últimas Orientações
-          </h3>
-          <span class="badge" style="background:var(--azul-bandeira);color:white;padding:2px 8px;border-radius:10px;font-size:10px;">${ultimasAbordagens.length} registros</span>
-        </div>
-        <div class="timeline" style="position:relative;padding-left:20px;border-left:2px solid var(--cinza-claro);margin-left:10px;">
-      `;
-      for (const h of ultimasAbordagens) {
-        const isVeiculo = h.tipo_abordagem === "veiculo";
-        const reincidencias = await this.contarReincidencias(h, isVeiculo);
-        const data = new Date(h.criado_em).toLocaleString("pt-BR");
-        const guardaNome = h.usuarios?.nome_completo || "Desconhecido";
-        let icone, identificador, detalhes, badgeColor, badgeIcon;
-        if (isVeiculo) {
-          icone = "fa-motorcycle";
-          identificador = h.placa || "Placa não informada";
-          detalhes =
-            `${h.marca_modelo || ""} (${h.cor || "cor não informada"})`.trim() ||
-            "Detalhes não informados";
-          badgeColor = "badge-veiculo";
-          badgeIcon = "🚗";
-        } else {
-          icone = "fa-user";
-          identificador = h.nome || "Nome não informado";
-          detalhes = h.alcunha ? `(${h.alcunha})` : "";
-          if (h.cpf) detalhes += ` - CPF: ${h.cpf}`;
-          if (h.rg) detalhes += ` - RG: ${h.rg}`;
-          badgeColor = "badge-pessoa";
-          badgeIcon = "👤";
-        }
-        let reincidenciaHTML = "";
-        if (reincidencias > 0) {
-          const classe =
-            reincidencias >= 2 ? "reincidencia-alta" : "reincidencia-media";
-          const emoji = reincidencias >= 2 ? "🔴" : "🟡";
-          reincidenciaHTML = `
-            <div style="margin-top:4px;">
-              <span class="badge ${classe}" style="font-size:9px;padding:2px 10px;">
-                ${emoji} Reincidente (${reincidencias + 1}x)
-              </span>
-            </div>
-          `;
-        } else {
-          reincidenciaHTML = `
-            <div style="margin-top:4px;">
-              <span class="badge badge-primeira" style="font-size:9px;padding:2px 10px;background:var(--verde-muito-claro);color:var(--verde-escuro);">
-                ✅ Primeira orientação
-              </span>
-            </div>
-          `;
-        }
-        html += `
-          <div class="timeline-item" style="margin-bottom:20px;position:relative;">
-            <div style="position:absolute;left:-26px;top:0;width:10px;height:10px;border-radius:50%;background:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};border:2px solid var(--branco);"></div>
-            <div style="background:var(--branco);padding:12px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
-              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--cinza-medio);margin-bottom:4px;">
-                <span><i class="fas fa-calendar-alt"></i> ${data}</span>
-                <span><i class="fas fa-map-marker-alt"></i> ${h.local_abordagem || "Local não informado"}</span>
-              </div>
-              <div style="font-weight:700;color:var(--azul-bandeira);font-size:13px;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span class="badge ${badgeColor}" style="font-size:10px;padding:2px 10px;">
-                  ${badgeIcon} ${isVeiculo ? "Veículo" : "Pessoa"}
-                </span>
-                <i class="fas ${icone}"></i> ${identificador}
-                <span style="font-size:10px;font-weight:400;color:var(--cinza-medio);">${detalhes}</span>
-              </div>
-              ${reincidenciaHTML}
-              <div style="font-size:12px;color:var(--cinza-escuro);line-height:1.4;background:var(--cinza-muito-claro);padding:8px;border-radius:4px;margin-top:4px;">
-                <strong>Motivo:</strong> ${h.motivo || "Não informado"}
-              </div>
-              <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
-                <span style="font-size:10px;color:var(--cinza-medio);">
-                  <i class="fas fa-user-shield"></i> ${guardaNome}
-                </span>
-                <button onclick="app.converterEmBO('${h.tipo_abordagem}', '${btoa(JSON.stringify(h))}')" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 8px;width:auto;border-radius:8px;">
-                  <i class="fas fa-file-export"></i> Converter em BO
-                </button>
-              </div>
-            </div>
-          </div>
-        `;
-      }
-      html += `</div>`;
-      areaResultados.innerHTML = html;
-    } catch (error) {
-      console.error("Erro ao carregar feed de consultas:", error);
-      areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao carregar histórico: ${error.message}</p>`;
-    }
-  }
-
-  aplicarFiltrosConsulta() {
-    const dataInicio =
-      document.getElementById("consultaDataInicio")?.value || "";
-    const dataFim = document.getElementById("consultaDataFim")?.value || "";
-    const guarda = document.getElementById("consultaGuarda")?.value || "";
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
-      return;
-    }
-    this.filtrosConsulta = {
-      dataInicio,
-      dataFim,
-      guarda,
-      tipo: this.abaConsultaAtiva,
-    };
-    this.carregarFeedConsultas();
-    this.showToast("Filtros aplicados", "success");
-  }
-
-  limparFiltrosConsulta() {
-    document.getElementById("consultaDataInicio").value = "";
-    document.getElementById("consultaDataFim").value = "";
-    document.getElementById("consultaGuarda").value = "";
-    this.filtrosConsulta = {
-      dataInicio: "",
-      dataFim: "",
-      guarda: "",
-      tipo: this.abaConsultaAtiva,
-    };
-    this.carregarFeedConsultas();
-    this.showToast("Filtros removidos", "info");
-  }
-
-  renderAbaConsulta() {
-    const area = document.getElementById("consultaBuscaArea");
-    const placeholder =
-      this.abaConsultaAtiva === "veiculos"
-        ? "Digite a Placa (ex: ABC1D23)"
-        : "Nome, CPF, RG ou Apelido";
-    const icone =
-      this.abaConsultaAtiva === "veiculos" ? "fa-motorcycle" : "fa-user";
-    area.innerHTML = `
-      <div class="search-card" style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-        <div class="input-wrapper" style="margin-bottom:12px;display:flex;gap:8px;">
-          <div style="position:relative;flex:1;">
-            <i class="fas ${icone}" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);"></i>
-            <input type="text" id="inputBuscaConsulta" placeholder="${placeholder}" style="width:100%;padding:10px 10px 10px 35px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);text-transform:uppercase;font-size:14px;">
-          </div>
-          <button onclick="app.executarBuscaConsulta()" class="btn-primary" style="width:auto;min-height:auto;padding:0 16px;border-radius:var(--border-radius);">
-            <i class="fas fa-search"></i>
-          </button>
-        </div>
-        <button onclick="app.abrirFormularioAbordagem()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:var(--border-radius);">
-          <i class="fas fa-plus-circle"></i> Registrar Nova Abordagem
-        </button>
-      </div>
-    `;
-    this.carregarFeedConsultas();
-  }
-
-  async executarBuscaConsulta() {
-    const termo = document
-      .getElementById("inputBuscaConsulta")
-      .value.trim()
-      .toUpperCase();
-    if (!termo) {
-      this.carregarFeedConsultas();
-      return;
-    }
-    const areaResultados = document.getElementById("consultaResultadosArea");
-    areaResultados.innerHTML = `<div style="text-align:center;padding:20px;"><div class="spinner-azul" style="margin:0 auto;"></div><p>Buscando histórico...</p></div>`;
-    try {
-      const client = supabaseClient.getClient();
-      let data = [];
-      const dataInicio =
-        document.getElementById("consultaDataInicio")?.value || "";
-      const dataFim = document.getElementById("consultaDataFim")?.value || "";
-      const guardaId = document.getElementById("consultaGuarda")?.value || "";
-      if (this.abaConsultaAtiva === "veiculos") {
-        let query = client
-          .from("abordagens_veiculos")
-          .select("*, usuarios(nome_completo)")
-          .eq("placa", termo);
-        if (dataInicio) query = query.gte("criado_em", dataInicio);
-        if (dataFim) query = query.lte("criado_em", dataFim + "T23:59:59");
-        if (guardaId) query = query.eq("criado_por", guardaId);
-        const res = await query.order("criado_em", { ascending: false });
-        data = res.data || [];
-      } else {
-        let query = client
-          .from("abordagens_pessoas")
-          .select("*, usuarios(nome_completo)")
-          .or(
-            `nome.ilike.%${termo}%,cpf.ilike.%${termo}%,rg.ilike.%${termo}%,alcunha.ilike.%${termo}%`,
-          );
-        if (dataInicio) query = query.gte("criado_em", dataInicio);
-        if (dataFim) query = query.lte("criado_em", dataFim + "T23:59:59");
-        if (guardaId) query = query.eq("criado_por", guardaId);
-        const res = await query.order("criado_em", { ascending: false });
-        data = res.data || [];
-      }
-      if (data.length === 0) {
-        areaResultados.innerHTML = `
-          <div style="text-align:center;padding:40px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-            <i class="fas fa-info-circle" style="font-size:32px;color:var(--cinza-medio);margin-bottom:12px;opacity:0.3;"></i>
-            <p>Nenhum histórico encontrado para "<strong>${termo}</strong>".</p>
-            <p style="font-size:13px;color:var(--cinza-medio);">Deseja registrar uma nova orientação para este item?</p>
-            <button onclick="app.abrirFormularioAbordagem('${termo}')" class="btn-primary" style="margin-top:16px;">
-              <i class="fas fa-plus"></i> Registrar Nova Abordagem
-            </button>
-            <button onclick="app.carregarFeedConsultas()" class="btn-secondary" style="margin-top:8px;margin-left:8px;">
-              <i class="fas fa-arrow-left"></i> Ver Todas
-            </button>
-          </div>
-        `;
-        return;
-      }
-      this.renderLinhaDoTempo(data, termo);
-    } catch (error) {
-      console.error("Erro na busca:", error);
-      areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao realizar busca: ${error.message}</p>`;
-    }
-  }
-
-  async renderLinhaDoTempo(historico, termo) {
-    const area = document.getElementById("consultaResultadosArea");
-    if (historico.length === 0) {
-      area.innerHTML = `
-        <div style="text-align:center;padding:40px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-          <i class="fas fa-info-circle" style="font-size:32px;color:var(--cinza-medio);margin-bottom:12px;opacity:0.3;"></i>
-          <p>Nenhum histórico encontrado para "${termo}".</p>
-          <button onclick="app.abrirFormularioAbordagem('${termo}')" class="btn-primary" style="margin-top:16px;">
-            <i class="fas fa-plus"></i> Iniciar Primeiro Registro
-          </button>
-        </div>
-      `;
-      return;
-    }
-    let html = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;">
-          <i class="fas fa-history" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-          Histórico de Abordagens para "${termo}"
-        </h3>
-        <span class="badge" style="background:var(--azul-bandeira);color:white;padding:2px 8px;border-radius:10px;font-size:10px;">${historico.length} registros</span>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-        <button onclick="app.carregarFeedConsultas()" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 12px;width:auto;border-radius:8px;">
-          <i class="fas fa-arrow-left"></i> Ver Todas
-        </button>
-      </div>
-      <div class="timeline" style="position:relative;padding-left:20px;border-left:2px solid var(--cinza-claro);margin-left:10px;">
-    `;
-    for (const h of historico) {
-      const isVeiculo = h.placa !== undefined;
-      const reincidencias = await this.contarReincidencias(h, isVeiculo);
-      const data = new Date(h.criado_em).toLocaleString("pt-BR");
-      const guardaNome = h.usuarios?.nome_completo || "Desconhecido";
-      let icone, identificador, detalhes, badgeColor, badgeIcon;
-      if (isVeiculo) {
-        icone = "fa-motorcycle";
-        identificador = h.placa || "Placa não informada";
-        detalhes =
-          `${h.marca_modelo || ""} (${h.cor || "cor não informada"})`.trim() ||
-          "Detalhes não informados";
-        badgeColor = "badge-veiculo";
-        badgeIcon = "🚗";
-      } else {
-        icone = "fa-user";
-        identificador = h.nome || "Nome não informado";
-        detalhes = h.alcunha ? `(${h.alcunha})` : "";
-        if (h.cpf) detalhes += ` - CPF: ${h.cpf}`;
-        if (h.rg) detalhes += ` - RG: ${h.rg}`;
-        badgeColor = "badge-pessoa";
-        badgeIcon = "👤";
-      }
-      let reincidenciaHTML = "";
-      if (reincidencias > 0) {
-        const classe =
-          reincidencias >= 2 ? "reincidencia-alta" : "reincidencia-media";
-        const emoji = reincidencias >= 2 ? "🔴" : "🟡";
-        reincidenciaHTML = `
-          <div style="margin-top:4px;">
-            <span class="badge ${classe}" style="font-size:9px;padding:2px 10px;">
-              ${emoji} Reincidente (${reincidencias + 1}x)
-            </span>
-          </div>
-        `;
-      } else {
-        reincidenciaHTML = `
-          <div style="margin-top:4px;">
-            <span class="badge badge-primeira" style="font-size:9px;padding:2px 10px;background:var(--verde-muito-claro);color:var(--verde-escuro);">
-              ✅ Primeira orientação
-            </span>
-          </div>
-        `;
-      }
-      html += `
-        <div class="timeline-item" style="margin-bottom:20px;position:relative;">
-          <div style="position:absolute;left:-26px;top:0;width:10px;height:10px;border-radius:50%;background:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};border:2px solid var(--branco);"></div>
-          <div style="background:var(--branco);padding:12px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--cinza-medio);margin-bottom:4px;">
-              <span><i class="fas fa-calendar-alt"></i> ${data}</span>
-              <span><i class="fas fa-map-marker-alt"></i> ${h.local_abordagem || "Local não informado"}</span>
-            </div>
-            <div style="font-weight:700;color:var(--azul-bandeira);font-size:13px;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span class="badge ${badgeColor}" style="font-size:10px;padding:2px 10px;">
-                ${badgeIcon} ${isVeiculo ? "Veículo" : "Pessoa"}
-              </span>
-              <i class="fas ${icone}"></i> ${identificador}
-              <span style="font-size:10px;font-weight:400;color:var(--cinza-medio);">${detalhes}</span>
-            </div>
-            ${reincidenciaHTML}
-            <div style="font-size:12px;color:var(--cinza-escuro);line-height:1.4;background:var(--cinza-muito-claro);padding:8px;border-radius:4px;margin-top:4px;">
-              <strong>Motivo:</strong> ${h.motivo || "Não informado"}
-            </div>
-            <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
-              <span style="font-size:10px;color:var(--cinza-medio);">
-                <i class="fas fa-user-shield"></i> ${guardaNome}
-              </span>
-              <button onclick="app.converterEmBO('${isVeiculo ? "veiculo" : "pessoa"}', '${btoa(JSON.stringify(h))}')" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 8px;width:auto;border-radius:8px;">
-                <i class="fas fa-file-export"></i> Converter em BO
-              </button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-    html += `</div>`;
-    area.innerHTML = html;
-  }
-
-  mudarAbaConsulta(aba) {
-    this.abaConsultaAtiva = aba;
-    this.filtrosConsulta.tipo = aba;
-    const tabVeiculos = document.getElementById("tabVeiculos");
-    const tabPessoas = document.getElementById("tabPessoas");
-    if (tabVeiculos && tabPessoas) {
-      tabVeiculos.classList.remove("active");
-      tabPessoas.classList.remove("active");
-      if (aba === "veiculos") {
-        tabVeiculos.classList.add("active");
-        tabVeiculos.style.background = "var(--branco)";
-        tabPessoas.style.background = "none";
-      } else {
-        tabPessoas.classList.add("active");
-        tabPessoas.style.background = "var(--branco)";
-        tabVeiculos.style.background = "none";
-      }
-    }
-    this.renderAbaConsulta();
-  }
-
-  abrirFormularioAbordagem(termoPreenchido = "") {
-    const area = document.getElementById("consultaResultadosArea");
-    const isVeiculo = this.abaConsultaAtiva === "veiculos";
-    let campos = isVeiculo
-      ? `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Placa</label>
-        <input type="text" id="formPlaca" value="${termoPreenchido}" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;text-transform:uppercase;font-size:14px;">
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Marca/Modelo</label>
-        <input type="text" id="formMarcaModelo" placeholder="Ex: Honda Civic" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Cor</label>
-        <input type="text" id="formCor" placeholder="Ex: Prata" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Condutor (Nome)</label>
-        <input type="text" id="formCondutor" placeholder="Nome completo" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-      </div>
-    `
-      : `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Nome Completo</label>
-        <input type="text" id="formNome" value="${termoPreenchido}" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Alcunha (Apelido)</label>
-        <input type="text" id="formAlcunha" placeholder="Ex: 'Neguinho', 'Magrão'" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-      </div>
-      <div class="form-group" style="display:flex;gap:8px;margin-bottom:12px;">
-        <div style="flex:1;">
-          <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">CPF</label>
-          <input type="text" id="formCpf" placeholder="000.000.000-00" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-        </div>
-        <div style="flex:1;">
-          <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">RG</label>
-          <input type="text" id="formRg" placeholder="00.000.000-0" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-        </div>
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Características Físicas/Vestimentas</label>
-        <textarea id="formCaracteristicas" rows="2" placeholder="Descreva roupas, tatuagens, cicatrizes..." style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;"></textarea>
-      </div>
-    `;
-    area.innerHTML = `
-      <div style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
-        <h3 style="font-size:14px;color:var(--azul-bandeira);margin-bottom:16px;">
-          <i class="fas fa-plus-circle"></i> Nova Abordagem/Orientação
-        </h3>
-        ${campos}
-        <div class="form-group" style="margin-bottom:12px;">
-          <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Local da Abordagem</label>
-          <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;">
-        </div>
-        <div class="form-group" style="margin-bottom:12px;">
-          <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Motivo da Abordagem</label>
-          <textarea id="formMotivo" rows="3" placeholder="Descreva o que motivou a orientação e o desfecho..." style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;"></textarea>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:20px;">
-          <button onclick="app.salvarAbordagem()" class="btn-primary" style="flex:2;border-radius:8px;">
-            <i class="fas fa-save"></i> Salvar Orientação
-          </button>
-          <button onclick="app.carregarFeedConsultas()" class="btn-secondary" style="flex:1;border-radius:8px;">
-            Cancelar
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  async salvarAbordagem() {
-    const isVeiculo = this.abaConsultaAtiva === "veiculos";
-    const user = authManager.getUser();
-    let dados = {
-      criado_por: user.id,
-      local_abordagem: document.getElementById("formLocal").value,
-      motivo: document.getElementById("formMotivo").value,
-      criado_em: new Date(
-        new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-      )
-        .toISOString()
-        .slice(0, 19),
-    };
-    if (isVeiculo) {
-      dados.placa = document.getElementById("formPlaca").value.toUpperCase();
-      dados.marca_modelo = document.getElementById("formMarcaModelo").value;
-      dados.cor = document.getElementById("formCor").value;
-      dados.condutor_nome = document.getElementById("formCondutor").value;
-      if (!dados.placa) return this.showToast("Placa é obrigatória", "warning");
-    } else {
-      dados.nome = document.getElementById("formNome").value;
-      dados.alcunha = document.getElementById("formAlcunha").value;
-      dados.cpf = document.getElementById("formCpf").value;
-      dados.rg = document.getElementById("formRg").value;
-      dados.caracteristicas_fisicas = document.getElementById(
-        "formCaracteristicas",
-      ).value;
-      if (!dados.nome) return this.showToast("Nome é obrigatório", "warning");
-    }
-    try {
-      const client = supabaseClient.getClient();
-      const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
-      const { error } = await client.from(tabela).insert([dados]);
-      if (error) throw error;
-      this.showToast("Abordagem registrada com sucesso!", "success");
-      this.carregarFeedConsultas();
-      document.getElementById("inputBuscaConsulta").value = "";
-    } catch (error) {
-      console.error("Erro ao salvar:", error);
-      this.showToast("Erro ao salvar registro: " + error.message, "error");
-    }
-  }
-
-  converterEmBO(tipo, dadosBase64) {
-    const dados = JSON.parse(atob(dadosBase64));
-    window._dadosPreenchimentoBO = {
-      tipo: tipo,
-      dados: dados,
-    };
-    this.navigateTo("nova-ocorrencia");
-    this.showToast("Iniciando BO com dados da abordagem", "info");
-  }
-
-  // ============================================
-  // FIM DA CONSULTA OPERACIONAL
-  // ============================================
-
-  async renderMural(container) {
-    const isSupervisor = authManager.isSupervisor();
-    await this.marcarMuralComoLido();
-    let html = `
-      <div class="container" style="padding-bottom:100px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-bullhorn" style="margin-right:8px;"></i>
-            Mural de Avisos
-          </h2>
-          ${
-            isSupervisor
-              ? `
-            <div style="display:flex;gap:8px;">
-              <button id="btnNovoAvisoMural" class="btn-primary" style="padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;font-weight:700;box-shadow:0 2px 12px rgba(0,63,135,0.25);">
-                <i class="fas fa-plus"></i> Novo Aviso
-              </button>
-            </div>
-          `
-              : ""
-          }
-        </div>
-        <div class="filtros-container" style="margin-bottom:12px;border-radius:16px;padding:12px;">
-          <div class="filtros-row">
-            <div class="filtro-group" style="flex:2;">
-              <label><i class="fas fa-search"></i> Buscar</label>
-              <input type="text" id="muralBusca" placeholder="Buscar por título ou conteúdo..." value="${this.filtrosMural.busca || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-tag"></i> Categoria</label>
-              <select id="muralFiltroTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
-                <option value="todos" ${this.filtrosMural.tipo === "todos" ? "selected" : ""}>Todos</option>
-                <option value="noticia" ${this.filtrosMural.tipo === "noticia" ? "selected" : ""}>Notícias</option>
-                <option value="procurado" ${this.filtrosMural.tipo === "procurado" ? "selected" : ""}>Procurados</option>
-                <option value="desaparecido" ${this.filtrosMural.tipo === "desaparecido" ? "selected" : ""}>Desaparecidos</option>
-                <option value="ordem_servico" ${this.filtrosMural.tipo === "ordem_servico" ? "selected" : ""}>O.S.</option>
-              </select>
-            </div>
-          </div>
-          <div class="filtros-row" style="margin-top:6px;">
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
-              <input type="date" id="muralDataInicio" value="${this.filtrosMural.dataInicio || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
-              <input type="date" id="muralDataFim" value="${this.filtrosMural.dataFim || ""}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);">
-            </div>
-            <div class="filtros-actions">
-              <button onclick="app.aplicarFiltrosMural()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
-                <i class="fas fa-search"></i>
-              </button>
-              <button onclick="app.limparFiltrosMural()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
-                <i class="fas fa-undo"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div id="muralListaArea">
-          <div style="text-align:center;padding:20px;"><div class="spinner-azul" style="margin:0 auto;"></div></div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-    const btnNovo = document.getElementById("btnNovoAvisoMural");
-    if (btnNovo) {
-      btnNovo.addEventListener("click", () => this.abrirFormularioMural());
-    }
-    document.getElementById("muralBusca")?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") this.aplicarFiltrosMural();
-    });
-    this._injetarEstilosCarrossel();
-    await this.carregarAvisosMural();
-    this.atualizarBadgeMural();
-  }
-
-  async carregarAvisosMural() {
-    const area = document.getElementById("muralListaArea");
-    if (!area) return;
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) {
-        area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor</p>`;
-        return;
-      }
-      let query = client.from("mural_avisos").select("*");
-      if (this.filtrosMural.tipo !== "todos") {
-        query = query.eq("tipo", this.filtrosMural.tipo);
-      }
-      if (this.filtrosMural.busca && this.filtrosMural.busca.trim() !== "") {
-        const termo = `%${this.filtrosMural.busca.trim()}%`;
-        query = query.or(`titulo.ilike.${termo},conteudo.ilike.${termo}`);
-      }
-      if (this.filtrosMural.dataInicio) {
-        query = query.gte("criado_em", this.filtrosMural.dataInicio);
-      }
-      if (this.filtrosMural.dataFim) {
-        query = query.lte("criado_em", this.filtrosMural.dataFim + "T23:59:59");
-      }
-      query = query
-        .order("prioridade", { ascending: false })
-        .order("criado_em", { ascending: false });
-      const { data, error } = await query;
-      if (error) throw error;
-      if (data.length === 0) {
-        area.innerHTML = `
-          <div style="text-align:center;padding:40px;color:var(--cinza-medio);">
-            <i class="fas fa-inbox" style="font-size:48px;display:block;margin-bottom:12px;color:var(--cinza-claro);"></i>
-            <p>Nenhum aviso encontrado</p>
-            ${this.filtrosMural.busca || this.filtrosMural.tipo !== "todos" || this.filtrosMural.dataInicio || this.filtrosMural.dataFim ? '<button onclick="app.limparFiltrosMural()" class="btn-secondary" style="margin-top:12px;padding:6px 16px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">Limpar Filtros</button>' : ""}
-          </div>
-        `;
-        return;
-      }
-      const isSupervisor = authManager.isSupervisor();
-      const user = authManager.getUser();
-      const avisosComDados = await Promise.all(
-        data.map(async (aviso) => {
-          const { data: comentarios } = await client
-            .from("mural_comentarios")
-            .select("*, usuarios(nome_completo)")
-            .eq("aviso_id", aviso.id)
-            .order("criado_em", { ascending: true });
-          const { data: reacoes } = await client
-            .from("mural_reações")
-            .select("*")
-            .eq("aviso_id", aviso.id);
-          const reacaoUsuario = reacoes?.find((r) => r.usuario_id === user?.id);
-          return {
-            ...aviso,
-            comentarios: comentarios || [],
-            reacoes: reacoes || [],
-            reacao_usuario: reacaoUsuario,
-            total_reacoes: reacoes?.length || 0,
-            anexos: aviso.anexos || [],
-          };
-        }),
-      );
-      const reacoesEmojis = {
-        like: "👍",
-        olhos: "👀",
-        alerta: "🚨",
-        ok: "✅",
-        duvida: "❓",
-      };
-      const labels = {
-        noticia: "Notícia",
-        procurado: "Procurado",
-        desaparecido: "Desaparecido",
-        ordem_servico: "Ordem de Serviço",
-      };
-      const iconMap = {
-        noticia: "📢",
-        procurado: "🔍",
-        desaparecido: "🆘",
-        ordem_servico: "📋",
-      };
-      area.innerHTML = avisosComDados
-        .map((aviso) => {
-          const temAnexos = aviso.anexos && aviso.anexos.length > 0;
-          const primeiraImagem = temAnexos ? aviso.anexos[0] : null;
-          const temMultiplas = temAnexos && aviso.anexos.length > 1;
-          const temVideo =
-            temAnexos && aviso.anexos.some((a) => a.tipo === "video");
-          return `
-          <div class="mural-card" id="mural-card-${aviso.id}">
-            ${aviso.prioridade ? `<div class="urgent-badge">🚨 Urgente</div>` : ""}
-            <div class="card-header">
-              <span class="card-badge ${aviso.tipo}">
-                ${iconMap[aviso.tipo] || "📌"} ${labels[aviso.tipo] || aviso.tipo}
-              </span>
-              <span class="card-date">
-                <i class="fas fa-clock"></i>
-                ${new Date(aviso.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-              </span>
-            </div>
-            <div class="card-media">
-              ${
-                temAnexos
-                  ? `
-                <div class="media-wrapper" onclick="app.abrirCarrossel('${aviso.id}')">
-                  <img src="${primeiraImagem.url}" alt="${aviso.titulo}" loading="lazy">
-                  ${temMultiplas ? `<span class="media-count">+${aviso.anexos.length - 1}</span>` : ""}
-                  ${temVideo ? `<span class="media-play"><i class="fas fa-play"></i></span>` : ""}
-                </div>
-              `
-                  : ""
-              }
-              <div class="media-content">
-                <h3 class="card-title">${aviso.titulo}</h3>
-                <p class="card-content" id="conteudo_${aviso.id}">${aviso.conteudo}</p>
-                ${
-                  aviso.conteudo.length > 150
-                    ? `
-                  <button class="btn-ver-mais" onclick="app.expandirConteudoMural('${aviso.id}')">
-                    <span id="expandBtn_${aviso.id}">Ver mais</span> <i class="fas fa-chevron-down" id="expandIcon_${aviso.id}"></i>
-                  </button>
-                `
-                    : ""
-                }
-              </div>
-            </div>
-            <div class="reacoes">
-              ${Object.entries(reacoesEmojis)
-                .map(([key, emoji]) => {
-                  const count = aviso.reacoes.filter(
-                    (r) => r.tipo === key,
-                  ).length;
-                  const isUserReacted = aviso.reacao_usuario?.tipo === key;
-                  return `
-                  <button onclick="app.toggleReacao('${aviso.id}', '${key}')" class="reacao-btn ${isUserReacted ? "ativo" : ""}">
-                    ${emoji}
-                    <span class="count">${count}</span>
-                  </button>
-                `;
-                })
-                .join("")}
-            </div>
-            <div class="comentarios">
-              <div style="display:flex;gap:8px;margin-bottom:8px;">
-                <input type="text" id="comentarioInput_${aviso.id}" placeholder="Escreva um comentário..." style="flex:1;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:12px;background:var(--branco-fumaca);">
-                <button onclick="app.adicionarComentario('${aviso.id}')" class="btn-primary" style="padding:4px 14px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">
-                  <i class="fas fa-paper-plane"></i>
-                </button>
-              </div>
-              ${aviso.comentarios
-                .slice(0, 3)
-                .map(
-                  (c) => `
-                <div class="comentario-item">
-                  <div class="comentario-avatar">${c.usuarios?.nome_completo?.charAt(0)?.toUpperCase() || "U"}</div>
-                  <div class="comentario-body">
-                    <div>
-                      <span class="comentario-nome">${c.usuarios?.nome_completo || "Usuário"}</span>
-                      <span class="comentario-data">${new Date(c.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-                    </div>
-                    <div class="comentario-texto">${c.comentario}</div>
-                  </div>
-                </div>
-              `,
-                )
-                .join("")}
-              ${
-                aviso.comentarios.length > 3
-                  ? `
-                <div style="text-align:center;padding:4px 0;">
-                  <button onclick="app.verTodosComentarios('${aviso.id}')" class="btn-secondary" style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;">
-                    Ver todos (${aviso.comentarios.length})
-                  </button>
-                </div>
-              `
-                  : ""
-              }
-            </div>
-            <div style="padding:0 16px 12px 16px;display:flex;gap:8px;flex-wrap:wrap;">
-              ${
-                isSupervisor
-                  ? `
-                <button onclick="app.editarAvisoMural('${aviso.id}')" class="btn-secondary" style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
-                  <i class="fas fa-edit"></i> Editar
-                </button>
-                <button onclick="app.deletarAvisoMural('${aviso.id}')" style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--erro-claro);color:var(--erro);border:none;cursor:pointer;">
-                  <i class="fas fa-trash"></i> Excluir
-                </button>
-              `
-                  : ""
-              }
-            </div>
-          </div>
-        `;
-        })
-        .join("");
-    } catch (error) {
-      console.error("Erro ao carregar mural:", error);
-      area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao carregar avisos: ${error.message}</p>`;
-    }
-  }
-
-  async abrirCarrossel(avisoId) {
-    try {
-      const client = supabaseClient.getClient();
-      const { data, error } = await client
-        .from("mural_avisos")
-        .select("anexos")
-        .eq("id", avisoId)
-        .single();
-      if (error) throw error;
-      const anexos = data?.anexos || [];
-      if (anexos.length === 0) {
-        this.showToast("Nenhuma imagem disponível", "info");
-        return;
-      }
-      let indexAtual = 0;
-      const imagens = anexos.filter((a) => a.tipo === "image");
-      const videos = anexos.filter((a) => a.tipo === "video");
-      const todos = [...imagens, ...videos];
-      if (todos.length === 0) {
-        this.showToast("Nenhum arquivo disponível", "info");
-        return;
-      }
-      const overlay = document.createElement("div");
-      overlay.className = "carrossel-modal-overlay";
-      overlay.innerHTML = `
-        <button class="carrossel-close" onclick="this.closest('.carrossel-modal-overlay').remove()">
-          <i class="fas fa-times"></i>
-        </button>
-        <div class="carrossel-container">
-          <div class="carrossel-slide" id="carrosselSlide">
-            ${todos
-              .map(
-                (item, i) => `
-              <div class="carrossel-item ${i === 0 ? "active" : ""}" data-index="${i}">
-                ${
-                  item.tipo === "video"
-                    ? `
-                  <video controls>
-                    <source src="${item.url}" type="video/mp4">
-                  </video>
-                `
-                    : `
-                  <img src="${item.url}" alt="Imagem ${i + 1}" loading="lazy">
-                `
-                }
-              </div>
-            `,
-              )
-              .join("")}
-          </div>
-          ${
-            todos.length > 1
-              ? `
-            <button class="carrossel-nav carrossel-prev" onclick="app._navegarCarrossel(-1)">
-              <i class="fas fa-chevron-left"></i>
-            </button>
-            <button class="carrossel-nav carrossel-next" onclick="app._navegarCarrossel(1)">
-              <i class="fas fa-chevron-right"></i>
-            </button>
-            <div class="carrossel-dots">
-              ${todos
-                .map(
-                  (_, i) => `
-                <span class="carrossel-dot ${i === 0 ? "active" : ""}" onclick="app._irParaCarrossel(${i})"></span>
-              `,
-                )
-                .join("")}
-            </div>
-            <div class="carrossel-counter">1 / ${todos.length}</div>
-          `
-              : ""
-          }
-        </div>
-      `;
-      document.body.appendChild(overlay);
-      window._carrosselData = {
-        total: todos.length,
-        currentIndex: 0,
-        overlay: overlay,
-      };
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) {
-          overlay.remove();
-        }
-      });
-      document.addEventListener("keydown", function handler(e) {
-        if (e.key === "ArrowLeft") {
-          app._navegarCarrossel(-1);
-        } else if (e.key === "ArrowRight") {
-          app._navegarCarrossel(1);
-        } else if (e.key === "Escape") {
-          if (window._carrosselData?.overlay) {
-            window._carrosselData.overlay.remove();
-            document.removeEventListener("keydown", handler);
-          }
-        }
-      });
-    } catch (error) {
-      console.error("Erro ao abrir carrossel:", error);
-      this.showToast("Erro ao carregar imagens", "error");
-    }
-  }
-
-  _navegarCarrossel(direcao) {
-    const data = window._carrosselData;
-    if (!data) return;
-    const novoIndex = data.currentIndex + direcao;
-    if (novoIndex < 0 || novoIndex >= data.total) return;
-    data.currentIndex = novoIndex;
-    this._atualizarCarrosselUI();
-  }
-
-  _irParaCarrossel(index) {
-    const data = window._carrosselData;
-    if (!data || index < 0 || index >= data.total) return;
-    data.currentIndex = index;
-    this._atualizarCarrosselUI();
-  }
-
-  _atualizarCarrosselUI() {
-    const data = window._carrosselData;
-    if (!data) return;
-    const slides = data.overlay.querySelectorAll(".carrossel-item");
-    slides.forEach((slide, i) => {
-      slide.classList.toggle("active", i === data.currentIndex);
-    });
-    const dots = data.overlay.querySelectorAll(".carrossel-dot");
-    dots.forEach((dot, i) => {
-      dot.classList.toggle("active", i === data.currentIndex);
-    });
-    const counter = data.overlay.querySelector(".carrossel-counter");
-    if (counter) {
-      counter.textContent = `${data.currentIndex + 1} / ${data.total}`;
-    }
-  }
-
-  _injetarEstilosCarrossel() {
-    if (document.getElementById("carrossel-styles")) return;
-    const styles = `
-      .carrossel-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:10000;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.3s ease}
-      .carrossel-close{position:absolute;top:20px;right:20px;background:rgba(255,255,255,0.2);border:none;color:white;font-size:28px;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease;z-index:10}
-      .carrossel-close:hover{background:rgba(255,255,255,0.3)}
-      .carrossel-container{position:relative;width:90%;max-width:800px;max-height:90vh}
-      .carrossel-slide{position:relative;width:100%;height:100%;min-height:300px;display:flex;align-items:center;justify-content:center}
-      .carrossel-item{display:none;width:100%;height:100%;max-height:80vh;text-align:center}
-      .carrossel-item.active{display:block;animation:fadeIn 0.3s ease}
-      .carrossel-item img{max-width:100%;max-height:80vh;object-fit:contain;border-radius:8px}
-      .carrossel-item video{max-width:100%;max-height:80vh;border-radius:8px}
-      .carrossel-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.2);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease;z-index:5}
-      .carrossel-nav:hover{background:rgba(255,255,255,0.3)}
-      .carrossel-prev{left:10px}
-      .carrossel-next{right:10px}
-      .carrossel-dots{position:absolute;bottom:-40px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:5}
-      .carrossel-dot{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.3);cursor:pointer;transition:background 0.2s ease}
-      .carrossel-dot.active{background:white}
-      .carrossel-counter{position:absolute;bottom:-40px;right:0;color:rgba(255,255,255,0.7);font-size:13px;font-weight:600;z-index:5}
-      .media-count{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.7);color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:12px}
-      .media-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:48px;height:48px;background:rgba(0,0,0,0.6);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:20px}
-      @media(max-width:480px){.carrossel-nav{width:36px;height:36px;font-size:18px}.carrossel-prev{left:4px}.carrossel-next{right:4px}.carrossel-container{width:95%}.carrossel-dots{bottom:-32px}.carrossel-counter{bottom:-32px}}
-    `;
-    const styleEl = document.createElement("style");
-    styleEl.id = "carrossel-styles";
-    styleEl.textContent = styles;
-    document.head.appendChild(styleEl);
-  }
-
-  expandirConteudoMural(id) {
-    const conteudo = document.getElementById(`conteudo_${id}`);
-    const btn = document.getElementById(`expandBtn_${id}`);
-    const icon = document.getElementById(`expandIcon_${id}`);
-    if (!conteudo) return;
-    if (conteudo.classList.contains("expanded")) {
-      conteudo.classList.remove("expanded");
-      btn.textContent = "Ver mais";
-      icon.className = "fas fa-chevron-down";
-    } else {
-      conteudo.classList.add("expanded");
-      btn.textContent = "Ver menos";
-      icon.className = "fas fa-chevron-up";
-    }
-  }
-
-  async toggleReacao(avisoId, tipo) {
-    try {
-      const user = authManager.getUser();
-      if (!user) {
-        this.showToast("Usuário não autenticado", "error");
-        return;
-      }
-      const client = supabaseClient.getClient();
-      const { data: reacoesExistentes, error: checkError } = await client
-        .from("mural_reações")
-        .select("*")
-        .eq("aviso_id", avisoId)
-        .eq("usuario_id", user.id);
-      if (checkError) {
-        console.error("Erro ao verificar reações:", checkError);
-        this.showToast("Erro ao processar reação", "error");
-        return;
-      }
-      const reacaoExistente = reacoesExistentes?.find((r) => r.tipo === tipo);
-      if (reacaoExistente) {
-        const { error } = await client
-          .from("mural_reações")
-          .delete()
-          .eq("id", reacaoExistente.id);
-        if (error) throw error;
-        this.showToast("Reação removida", "info");
-      } else {
-        if (reacoesExistentes && reacoesExistentes.length > 0) {
-          const idsParaRemover = reacoesExistentes.map((r) => r.id);
-          const { error: deleteError } = await client
-            .from("mural_reações")
-            .delete()
-            .in("id", idsParaRemover);
-          if (deleteError) throw deleteError;
-        }
-        const { error: insertError } = await client
-          .from("mural_reações")
-          .insert({ aviso_id: avisoId, usuario_id: user.id, tipo: tipo });
-        if (insertError) throw insertError;
-        this.showToast("Reação adicionada!", "success");
-      }
-      await this.carregarAvisosMural();
-    } catch (error) {
-      console.error("Erro ao alternar reação:", error);
-      this.showToast("Erro ao processar reação", "error");
-    }
-  }
-
-  async adicionarComentario(avisoId) {
-    const input = document.getElementById(`comentarioInput_${avisoId}`);
-    if (!input) return;
-    const comentario = input.value.trim();
-    if (!comentario) {
-      this.showToast("Digite um comentário", "warning");
-      return;
-    }
-    try {
-      const user = authManager.getUser();
-      if (!user) {
-        this.showToast("Usuário não autenticado", "error");
-        return;
-      }
-      const client = supabaseClient.getClient();
-      const { data, error } = await client
-        .from("mural_comentarios")
-        .insert({
-          aviso_id: avisoId,
-          usuario_id: user.id,
-          comentario: comentario,
-          criado_em: new Date().toISOString(),
-        })
-        .select();
-      if (error) {
-        console.error("Erro detalhado ao inserir comentário:", error);
-        if (error.code === "42501") {
-          this.showToast(
-            "Erro de permissão. Contate o administrador para configurar as políticas RLS.",
-            "error",
-          );
-        } else {
-          this.showToast(
-            "Erro ao adicionar comentário: " + error.message,
-            "error",
-          );
-        }
-        return;
-      }
-      input.value = "";
-      this.showToast("Comentário adicionado!", "success");
-      this.carregarAvisosMural();
-    } catch (error) {
-      console.error("Erro ao adicionar comentário:", error);
-      this.showToast("Erro ao adicionar comentário", "error");
-    }
-  }
-
-  async verTodosComentarios(avisoId) {
-    try {
-      const client = supabaseClient.getClient();
-      const { data: comentarios, error } = await client
-        .from("mural_comentarios")
-        .select("*, usuarios(nome_completo)")
-        .eq("aviso_id", avisoId)
-        .order("criado_em", { ascending: true });
-      if (error) throw error;
-      const overlay = document.createElement("div");
-      overlay.className = "modal-overlay";
-      overlay.innerHTML = `
-        <div class="modal" style="max-width:500px;">
-          <div class="modal-header">
-            <div class="title">
-              <i class="fas fa-comments" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-              Todos os Comentários
-            </div>
-            <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
-            ${
-              comentarios.length === 0
-                ? `
-              <p style="text-align:center;color:var(--cinza-medio);padding:20px;">Nenhum comentário ainda</p>
-            `
-                : `
-              ${comentarios
-                .map(
-                  (c) => `
-                <div style="padding:8px 0;border-bottom:1px solid var(--cinza-claro);">
-                  <div style="display:flex;justify-content:space-between;">
-                    <strong style="color:var(--azul-bandeira);font-size:13px;">${c.usuarios?.nome_completo || "Usuário"}</strong>
-                    <span style="color:var(--cinza-medio);font-size:10px;">${new Date(c.criado_em).toLocaleString("pt-BR")}</span>
-                  </div>
-                  <div style="font-size:13px;margin-top:4px;">${c.comentario}</div>
-                </div>
-              `,
-                )
-                .join("")}
-            `
-            }
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-    } catch (error) {
-      console.error("Erro ao carregar comentários:", error);
-      this.showToast("Erro ao carregar comentários", "error");
-    }
-  }
-
-  abrirFormularioMural() {
-    const container =
-      document.getElementById("muralContent") ||
-      document.getElementById("page-mural");
-    container.innerHTML = `
-      <div class="container" style="padding-bottom:100px;">
-        <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">Novo Aviso no Mural</h2>
-        <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Título do Aviso</label>
-            <input type="text" id="muralTitulo" placeholder="Ex: Atenção: Veículo Suspeito" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
-          </div>
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Tipo de Aviso</label>
-            <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
-              <option value="noticia">📢 Notícia</option>
-              <option value="procurado">🔍 Procurado</option>
-              <option value="desaparecido">🆘 Desaparecido</option>
-              <option value="ordem_servico">📋 Ordem de Serviço</option>
-            </select>
-          </div>
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Conteúdo/Descrição</label>
-            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..." style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;"></textarea>
-          </div>
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Fotos (máx 3)</label>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" onchange="app.previewMultiplasImagensMural(this)">
-              <button type="button" onclick="document.getElementById('muralArquivo').click()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:12px;">
-                <i class="fas fa-camera"></i> Selecionar Fotos (máx 3)
-              </button>
-              <div id="muralPreviewArea" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
-              <input type="hidden" id="muralImagens" value="">
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Máximo 3 imagens. Cada imagem será comprimida para até 1MB.
-              </div>
-            </div>
-          </div>
-          <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="muralPrioridade" style="width:18px;height:18px;accent-color:var(--erro);">
-            <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:20px;">
-            <button onclick="app.salvarAvisoMural()" class="btn-primary" style="flex:2;border-radius:12px;">
-              <i class="fas fa-paper-plane"></i> Publicar no Mural
-            </button>
-            <button onclick="app.renderMural(document.getElementById('muralContent') || document.getElementById('page-mural'))" class="btn-secondary" style="flex:1;border-radius:12px;">
-              Cancelar
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  previewMultiplasImagensMural(input) {
-    const area = document.getElementById("muralPreviewArea");
-    if (!area) return;
-    const files = input.files;
-    if (files.length > 3) {
-      this.showToast("Máximo 3 imagens permitidas", "warning");
-      input.value = "";
-      return;
-    }
-    area.innerHTML = "";
-    const imagensData = [];
-    for (const file of files) {
-      if (file.size > 10 * 1024 * 1024) {
-        this.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
-        continue;
-      }
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const div = document.createElement("div");
-        div.style.cssText =
-          "position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
-        div.innerHTML = `
-          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
-          <button type="button" onclick="app.removerImagemMuralPreview(this)" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
-            <i class="fas fa-times"></i>
-          </button>
-        `;
-        area.appendChild(div);
-        imagensData.push(file);
-      };
-      reader.readAsDataURL(file);
-    }
-    window._muralArquivosTemp = imagensData;
-  }
-
-  removerImagemMuralPreview(btn) {
-    const div = btn.closest("div");
-    const img = div.querySelector("img");
-    if (img) {
-      const files = window._muralArquivosTemp || [];
-      const index = files.findIndex((f) => {
-        return f.name === img.alt || f.name === img.src.split("/").pop();
-      });
-      if (index > -1) {
-        files.splice(index, 1);
-        window._muralArquivosTemp = files;
-      }
-    }
-    div.remove();
-  }
-
-  comprimirImagem(file, maxWidth = 800, qualidade = 0.8) {
-    return new Promise((resolve) => {
-      if (!file.type.startsWith("image/")) {
-        resolve(file);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          let width = img.width;
-          let height = img.height;
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, width, height);
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const compressedFile = new File([blob], file.name, {
-                  type: "image/jpeg",
-                });
-                resolve(compressedFile);
-              } else {
-                resolve(file);
-              }
-            },
-            "image/jpeg",
-            qualidade,
-          );
-        };
-        img.onerror = () => resolve(file);
-        img.src = e.target.result;
-      };
-      reader.onerror = () => resolve(file);
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async processarAnexosMural(files) {
-    const maxFiles = 3;
-    const maxSize = 1 * 1024 * 1024;
-    const anexos = [];
-    const filesToProcess = Array.from(files).slice(0, maxFiles);
-    for (const file of filesToProcess) {
-      try {
-        let fileProcessado = await this.comprimirImagem(file, 800, 0.8);
-        if (fileProcessado.size > maxSize) {
-          fileProcessado = await this.comprimirImagem(file, 600, 0.6);
-          if (fileProcessado.size > maxSize) {
-            this.showToast(
-              `Arquivo ${file.name} excede 1MB mesmo após compressão`,
-              "warning",
-            );
-            continue;
-          }
-        }
-        anexos.push({
-          nome: file.name,
-          tipo: "image",
-          tamanho: fileProcessado.size,
-          arquivo: fileProcessado,
-          url: null,
-        });
-      } catch (error) {
-        console.error("Erro ao processar anexo:", error);
-        this.showToast(`Erro ao processar ${file.name}`, "error");
-      }
-    }
-    return anexos;
-  }
-
-  async uploadAnexosMural(avisoId, anexos) {
-    if (!anexos || anexos.length === 0) return [];
-    const client = supabaseClient.getClient();
-    const urls = [];
-    for (const anexo of anexos) {
-      try {
-        const fileExt = anexo.arquivo.name.split(".").pop();
-        const fileName = `mural/${avisoId}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-        const { error: uploadError } = await client.storage
-          .from("anexos")
-          .upload(fileName, anexo.arquivo);
-        if (uploadError) throw uploadError;
-        const { data: urlData } = client.storage
-          .from("anexos")
-          .getPublicUrl(fileName);
-        urls.push({
-          url: urlData.publicUrl,
-          tipo: anexo.tipo,
-          ordem: urls.length,
-        });
-      } catch (error) {
-        console.error("Erro no upload do anexo:", error);
-      }
-    }
-    return urls;
-  }
-
-  async salvarAvisoMural() {
-    const user = authManager.getUser();
-    const titulo = document.getElementById("muralTitulo").value.trim();
-    const conteudo = document.getElementById("muralConteudo").value.trim();
-    const prioridade = document.getElementById("muralPrioridade").checked;
-    const tipo = document.getElementById("muralTipo").value;
-    if (!titulo || !conteudo) {
-      return this.showToast("Título e conteúdo são obrigatórios", "warning");
-    }
-    const files = window._muralArquivosTemp || [];
-    if (files.length > 3) {
-      return this.showToast("Máximo 3 imagens permitidas", "warning");
-    }
-    this.showToast("Processando imagens...", "info");
-    try {
-      const client = supabaseClient.getClient();
-      let anexos = [];
-      let anexosUrls = [];
-      if (files.length > 0) {
-        anexos = await this.processarAnexosMural(files);
-        if (anexos.length === 0) {
-          this.showToast("Nenhum anexo válido foi processado", "warning");
-        }
-      }
-      const dados = {
-        titulo,
-        tipo,
-        conteudo,
-        prioridade,
-        criado_por: user.id,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
-        anexos: [],
-      };
-      const { data: aviso, error } = await client
-        .from("mural_avisos")
-        .insert([dados])
-        .select()
-        .single();
-      if (error) throw error;
-      if (anexos.length > 0) {
-        this.showToast("Enviando imagens...", "info");
-        anexosUrls = await this.uploadAnexosMural(aviso.id, anexos);
-        if (anexosUrls.length > 0) {
-          const { error: updateError } = await client
-            .from("mural_avisos")
-            .update({ anexos: anexosUrls })
-            .eq("id", aviso.id);
-          if (updateError) {
-            console.error("Erro ao atualizar anexos:", updateError);
-          }
-        }
-      }
-      document.getElementById("muralPreviewArea").innerHTML = "";
-      window._muralArquivosTemp = [];
-      document.getElementById("muralArquivo").value = "";
-      await this.notificarNovoAviso(aviso);
-      this.showToast("Aviso publicado com sucesso!", "success");
-      this.renderMural(
-        document.getElementById("muralContent") ||
-          document.getElementById("page-mural"),
-      );
-    } catch (error) {
-      console.error("Erro ao salvar aviso:", error);
-      this.showToast(
-        "Erro ao publicar: " + (error.message || "Erro desconhecido"),
-        "error",
-      );
-    }
-  }
-
-  async editarAvisoMural(id) {
-    try {
-      const client = supabaseClient.getClient();
-      const { data: aviso, error } = await client
-        .from("mural_avisos")
-        .select("*")
-        .eq("id", id)
-        .single();
-      if (error) throw error;
-      const container =
-        document.getElementById("muralContent") ||
-        document.getElementById("page-mural");
-      container.innerHTML = `
-        <div class="container" style="padding-bottom:100px;">
-          <h2 style="color:var(--azul-bandeira);margin-bottom:16px;">Editar Aviso</h2>
-          <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Título do Aviso</label>
-              <input type="text" id="muralTitulo" value="${aviso.titulo}" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
-            </div>
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Tipo de Aviso</label>
-              <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;">
-                <option value="noticia" ${aviso.tipo === "noticia" ? "selected" : ""}>📢 Notícia</option>
-                <option value="procurado" ${aviso.tipo === "procurado" ? "selected" : ""}>🔍 Procurado</option>
-                <option value="desaparecido" ${aviso.tipo === "desaparecido" ? "selected" : ""}>🆘 Desaparecido</option>
-                <option value="ordem_servico" ${aviso.tipo === "ordem_servico" ? "selected" : ""}>📋 Ordem de Serviço</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Conteúdo/Descrição</label>
-              <textarea id="muralConteudo" rows="4" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;">${aviso.conteudo}</textarea>
-            </div>
-            <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""} style="width:18px;height:18px;accent-color:var(--erro);">
-              <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:20px;">
-              <button onclick="app.salvarEdicaoAviso('${id}')" class="btn-primary" style="flex:2;border-radius:12px;">
-                <i class="fas fa-save"></i> Salvar Alterações
-              </button>
-              <button onclick="app.renderMural(document.getElementById('muralContent') || document.getElementById('page-mural'))" class="btn-secondary" style="flex:1;border-radius:12px;">
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      `;
-    } catch (error) {
-      console.error("Erro ao carregar aviso para edição:", error);
-      this.showToast("Erro ao carregar aviso", "error");
-    }
-  }
-
-  async salvarEdicaoAviso(id) {
-    const titulo = document.getElementById("muralTitulo").value.trim();
-    const tipo = document.getElementById("muralTipo").value;
-    const conteudo = document.getElementById("muralConteudo").value.trim();
-    const prioridade = document.getElementById("muralPrioridade").checked;
-    if (!titulo || !conteudo) {
-      return this.showToast("Título e conteúdo são obrigatórios", "warning");
-    }
-    try {
-      const client = supabaseClient.getClient();
-      const { error } = await client
-        .from("mural_avisos")
-        .update({
-          titulo,
-          tipo,
-          conteudo,
-          prioridade,
-          atualizado_em: new Date().toISOString(),
-        })
-        .eq("id", id);
-      if (error) throw error;
-      this.showToast("Aviso atualizado com sucesso!", "success");
-      this.renderMural(
-        document.getElementById("muralContent") ||
-          document.getElementById("page-mural"),
-      );
-    } catch (error) {
-      console.error("Erro ao salvar edição:", error);
-      this.showToast("Erro ao salvar: " + error.message, "error");
-    }
-  }
-
-  async deletarAvisoMural(id) {
-    const confirmado = await this.confirmar(
-      "Tem certeza que deseja excluir este aviso?",
-    );
-    if (!confirmado) return;
-    try {
-      const client = supabaseClient.getClient();
-      const { error } = await client.from("mural_avisos").delete().eq("id", id);
-      if (error) throw error;
-      this.showToast("Aviso excluído", "success");
-      this.carregarAvisosMural();
-    } catch (error) {
-      console.error("Erro ao deletar:", error);
-      this.showToast("Erro ao excluir aviso", "error");
-    }
-  }
-
-  async notificarNovoAviso(aviso) {
-    try {
-      const client = supabaseClient.getClient();
-      const { data: usuarios, error } = await client
-        .from("usuarios")
-        .select("id")
-        .eq("status", "ativo")
-        .neq("id", aviso.criado_por);
-      if (error) throw error;
-      if (usuarios.length === 0) return;
-      const notificacoes = usuarios.map((u) => ({
-        usuario_id: u.id,
-        titulo: `📢 Novo aviso: ${aviso.titulo}`,
-        mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
-        tipo: "sistema",
-        link: "#mural",
-        criado_em: new Date().toISOString(),
-      }));
-      const batchSize = 50;
-      for (let i = 0; i < notificacoes.length; i += batchSize) {
-        const batch = notificacoes.slice(i, i + batchSize);
-        const { error: insertError } = await client
-          .from("notificacoes")
-          .insert(batch);
-        if (insertError)
-          console.warn("Erro ao inserir notificações em lote:", insertError);
-      }
-      console.log(
-        `✅ ${notificacoes.length} notificações enviadas para o novo aviso`,
-      );
-    } catch (error) {
-      console.error("Erro ao enviar notificações:", error);
-    }
-  }
-
-  aplicarFiltrosMural() {
-    const busca = document.getElementById("muralBusca")?.value || "";
-    const tipo = document.getElementById("muralFiltroTipo")?.value || "todos";
-    const dataInicio = document.getElementById("muralDataInicio")?.value || "";
-    const dataFim = document.getElementById("muralDataFim")?.value || "";
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
-      return;
-    }
-    this.filtrosMural = {
-      busca: busca,
-      tipo: tipo,
-      dataInicio: dataInicio,
-      dataFim: dataFim,
-    };
-    this.carregarAvisosMural();
-  }
-
-  limparFiltrosMural() {
-    this.filtrosMural = {
-      busca: "",
-      tipo: "todos",
-      dataInicio: "",
-      dataFim: "",
-    };
-    document.getElementById("muralBusca").value = "";
-    document.getElementById("muralFiltroTipo").value = "todos";
-    document.getElementById("muralDataInicio").value = "";
-    document.getElementById("muralDataFim").value = "";
-    this.carregarAvisosMural();
-    this.showToast("Filtros removidos", "info");
-  }
-
-  async atualizarBadgeMural() {
-    try {
-      const user = authManager.getUser();
-      if (!user) return;
-      const client = supabaseClient.getClient();
-      const { data: leitura, error: leituraError } = await client
-        .from("mural_leituras")
-        .select("ultimo_aviso_lido_id, lido_em")
-        .eq("usuario_id", user.id)
-        .maybeSingle();
-      if (leituraError && leituraError.code !== "PGRST116") {
-        console.error("Erro ao buscar leitura:", leituraError);
-        return;
-      }
-      const { data: avisos, error: avisosError } = await client
-        .from("mural_avisos")
-        .select("id, criado_em")
-        .order("criado_em", { ascending: false });
-      if (avisosError) {
-        console.error("Erro ao buscar avisos:", avisosError);
-        return;
-      }
-      if (!avisos || avisos.length === 0) {
-        this._atualizarBadgeMuralUI(0);
-        return;
-      }
-      if (!leitura) {
-        this._atualizarBadgeMuralUI(avisos.length);
-        return;
-      }
-      const dataUltimaLeitura = new Date(leitura.lido_em);
-      const naoLidos = avisos.filter((a) => {
-        const dataAviso = new Date(a.criado_em);
-        return dataAviso > dataUltimaLeitura;
-      });
-      this._atualizarBadgeMuralUI(naoLidos.length);
-    } catch (error) {
-      console.error("Erro ao atualizar badge do mural:", error);
-    }
-  }
-
-  _atualizarBadgeMuralUI(count) {
-    const badge = document.getElementById("badge-mural");
-    if (badge) {
-      if (count > 0) {
-        badge.textContent = count > 9 ? "9+" : count;
-        badge.style.display = "flex";
-      } else {
-        badge.style.display = "none";
-      }
-    }
-  }
-
-  async marcarMuralComoLido() {
-    try {
-      const user = authManager.getUser();
-      if (!user) return;
-      const client = supabaseClient.getClient();
-      const { data: ultimoAviso, error } = await client
-        .from("mural_avisos")
-        .select("id")
-        .order("criado_em", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) {
-        console.error("Erro ao buscar último aviso:", error);
-        return;
-      }
-      await client.from("mural_leituras").upsert(
-        {
-          usuario_id: user.id,
-          ultimo_aviso_lido_id: ultimoAviso?.id || null,
-          lido_em: new Date().toISOString(),
-        },
-        { onConflict: "usuario_id" },
-      );
-      this.atualizarBadgeMural();
-    } catch (error) {
-      console.error("Erro ao marcar mural como lido:", error);
-    }
-  }
-
-  async renderRelatorioExecutivo(container, ocorrencias, dataInicio, dataFim) {
-    const stats = this.calcularEstatisticas(ocorrencias);
-    const porTipo = this.agruparPorTipo(ocorrencias);
-    const porMes = this.agruparPorMes(ocorrencias);
-    const total = stats.total || 1;
-    const taxaResolutividade = ((stats.finalizadas / total) * 100).toFixed(1);
-    const mediaDiaria = this.calcularMediaDiaria(
-      ocorrencias,
-      dataInicio,
-      dataFim,
-    );
-    const coresPizza = [
-      "#003F87",
-      "#00843D",
-      "#DC2626",
-      "#F59E0B",
-      "#8B5CF6",
-      "#EC4899",
-      "#06B6D4",
-      "#F97316",
-      "#14B8A6",
-      "#6366F1",
-    ];
-    const html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-chart-pie" style="margin-right:8px;"></i>
-            Relatório Executivo
-          </h2>
-          <div style="display:flex;gap:4px;">
-            <button class="btn-secondary" onclick="app.exportarRelatorioPDF()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-              <i class="fas fa-file-pdf"></i>
-            </button>
-            <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-              <i class="fas fa-arrow-left"></i>
-            </button>
-          </div>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${total}</div>
-            <div style="font-size:9px;opacity:0.8;">Total</div>
-          </div>
-          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${stats.finalizadas}</div>
-            <div style="font-size:9px;opacity:0.8;">Finalizadas</div>
-          </div>
-          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:8px 6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${stats.pendentes}</div>
-            <div style="font-size:9px;opacity:0.8;">Pendentes</div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:var(--verde-bandeira);">${taxaResolutividade}%</div>
-            <div style="font-size:9px;color:var(--cinza-medio);">Resolutividade</div>
-          </div>
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:var(--azul-bandeira);">${mediaDiaria}</div>
-            <div style="font-size:9px;color:var(--cinza-medio);">Média Diária</div>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-chart-pie" style="margin-right:4px;"></i>
-            Tipos de Ocorrência
-          </h4>
-          <div style="height:200px;position:relative;">
-            <canvas id="chartRelatorioPizza"></canvas>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
-            Evolução Mensal
-          </h4>
-          <div style="height:150px;position:relative;">
-            <canvas id="chartRelatorioMensal"></canvas>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-table" style="margin-right:4px;"></i>
-            Detalhamento por Tipo
-          </h4>
-          <div class="table-wrapper">
-            <table style="font-size:12px;">
-              <thead>
-                <tr>
-                  <th>Tipo</th>
-                  <th style="text-align:center;">Total</th>
-                  <th style="text-align:center;">%</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${porTipo
-                  .slice(0, 8)
-                  .map(
-                    (t) => `
-                  <tr>
-                    <td style="font-size:11px;">${t.tipo}</td>
-                    <td style="text-align:center;font-weight:600;">${t.total}</td>
-                    <td style="text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  porTipo.length > 8
-                    ? `
-                  <tr>
-                    <td colspan="3" style="text-align:center;color:var(--cinza-medio);font-size:11px;">
-                      + ${porTipo.length - 8} outros tipos
-                    </td>
-                  </tr>
-                `
-                    : ""
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-    await this.renderizarGraficoPizza(
-      "chartRelatorioPizza",
-      porTipo.slice(0, 8),
-      coresPizza,
-    );
-    await this.renderizarGraficoBarras("chartRelatorioMensal", porMes);
-  }
-
-  async renderRelatorioPorTipo(container, ocorrencias, dataInicio, dataFim) {
-    const porTipo = this.agruparPorTipo(ocorrencias);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-tag" style="margin-right:8px;"></i>
-            Ocorrências por Tipo
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-          ${porTipo
-            .map(
-              (t) => `
-            <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;padding:4px 12px;">
-              ${t.tipo}: ${t.total}
-            </span>
-          `,
-            )
-            .join("")}
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <div class="table-wrapper">
-            <table style="font-size:12px;">
-              <thead>
-                <tr>
-                  <th>Tipo</th>
-                  <th style="text-align:center;">Total</th>
-                  <th style="text-align:center;">%</th>
-                  <th style="text-align:center;">Finalizadas</th>
-                  <th style="text-align:center;">Pendentes</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${porTipo
-                  .map(
-                    (t) => `
-                  <tr>
-                    <td>${t.tipo}</td>
-                    <td style="text-align:center;font-weight:600;">${t.total}</td>
-                    <td style="text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
-                    <td style="text-align:center;color:var(--verde-bandeira);">${t.finalizadas}</td>
-                    <td style="text-align:center;color:var(--aviso);">${t.pendentes}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioPorLocal(container, ocorrencias, dataInicio, dataFim) {
-    const porBairro = this.agruparPorBairro(ocorrencias);
-    const topBairros = porBairro.slice(0, 10);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-map-marker-alt" style="margin-right:8px;"></i>
-            Ocorrências por Localidade
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-trophy" style="margin-right:4px;"></i>
-            Top 10 Bairros
-          </h4>
-          ${topBairros
-            .map(
-              (b, index) => `
-            <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
-              <span style="font-weight:700;color:var(--cinza-medio);min-width:20px;font-size:12px;">${index + 1}º</span>
-              <span style="flex:1;font-weight:500;">${b.bairro}</span>
-              <span style="font-weight:700;color:var(--azul-bandeira);">${b.total}</span>
-              <span style="font-size:11px;color:var(--cinza-medio);">(${b.percentual}%)</span>
-            </div>
-          `,
-            )
-            .join("")}
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
-            Distribuição por Bairro
-          </h4>
-          <div style="height:200px;">
-            <canvas id="chartRelatorioBairros"></canvas>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-    await this.renderizarGraficoBarras(
-      "chartRelatorioBairros",
-      topBairros.map((b) => ({
-        label: b.bairro.length > 15 ? b.bairro.slice(0, 12) + "..." : b.bairro,
-        value: b.total,
-      })),
-    );
-  }
-
-  async renderRelatorioAtendimento(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const comTempo = ocorrencias.filter(
-      (o) => o.data_hora_inicio && o.data_hora_encerramento,
-    );
-    const tempos = comTempo
-      .map((o) => {
-        const inicio = new Date(o.data_hora_inicio);
-        const fim = new Date(o.data_hora_encerramento);
-        const diff = (fim - inicio) / (1000 * 60);
-        return { ...o, tempoMinutos: diff };
-      })
-      .filter((t) => t.tempoMinutos > 0);
-    const mediaGeral =
-      tempos.length > 0
-        ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length
-        : 0;
-    const maisRapida =
-      tempos.length > 0
-        ? tempos.reduce((a, b) => (a.tempoMinutos < b.tempoMinutos ? a : b))
-        : null;
-    const maisLenta =
-      tempos.length > 0
-        ? tempos.reduce((a, b) => (a.tempoMinutos > b.tempoMinutos ? a : b))
-        : null;
-    const porTipo = {};
-    tempos.forEach((t) => {
-      const tipo = t.tipo_ocorrencia || "Não informado";
-      if (!porTipo[tipo]) porTipo[tipo] = [];
-      porTipo[tipo].push(t.tempoMinutos);
-    });
-    const mediaPorTipo = Object.keys(porTipo)
-      .map((key) => ({
-        tipo: this.getTipoLabel(key),
-        media: porTipo[key].reduce((s, v) => s + v, 0) / porTipo[key].length,
-        total: porTipo[key].length,
-      }))
-      .sort((a, b) => b.media - a.media);
-    const formatarTempo = (minutos) => {
-      if (minutos < 1) return "< 1 min";
-      if (minutos < 60) return `${Math.round(minutos)} min`;
-      const horas = Math.floor(minutos / 60);
-      const mins = Math.round(minutos % 60);
-      return `${horas}h ${mins}min`;
-    };
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-clock" style="margin-right:8px;"></i>
-            Tempo Médio de Atendimento
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${formatarTempo(mediaGeral)}</div>
-            <div style="font-size:9px;opacity:0.8;">Média Geral</div>
-          </div>
-          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${maisRapida ? formatarTempo(maisRapida.tempoMinutos) : "-"}</div>
-            <div style="font-size:9px;opacity:0.8;">Mais Rápida</div>
-          </div>
-          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${maisLenta ? formatarTempo(maisLenta.tempoMinutos) : "-"}</div>
-            <div style="font-size:9px;opacity:0.8;">Mais Lenta</div>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
-            Tempo Médio por Tipo
-          </h4>
-          <div class="table-wrapper">
-            <table style="font-size:12px;">
-              <thead>
-                <tr>
-                  <th>Tipo</th>
-                  <th style="text-align:center;">Média</th>
-                  <th style="text-align:center;">Ocorrências</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${mediaPorTipo
-                  .map(
-                    (t) => `
-                  <tr>
-                    <td>${t.tipo}</td>
-                    <td style="text-align:center;font-weight:600;color:var(--azul-bandeira);">${formatarTempo(t.media)}</td>
-                    <td style="text-align:center;color:var(--cinza-medio);">${t.total}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  mediaPorTipo.length === 0
-                    ? `
-                  <tr>
-                    <td colspan="3" style="text-align:center;color:var(--cinza-medio);padding:16px;">
-                      Nenhuma ocorrência com tempo registrado
-                    </td>
-                  </tr>
-                `
-                    : ""
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioDesempenho(container, ocorrencias, dataInicio, dataFim) {
-    const client = supabaseClient.getClient();
-    const { data: usuarios } = await client
-      .from("usuarios")
-      .select("id, nome_completo")
-      .eq("status", "ativo");
-    const mapaUsuarios = {};
-    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
-    const porGuarda = {};
-    ocorrencias.forEach((o) => {
-      const guardaId = o.criado_por;
-      const nome = mapaUsuarios[guardaId] || "Desconhecido";
-      if (!porGuarda[guardaId]) {
-        porGuarda[guardaId] = {
-          nome,
-          total: 0,
-          finalizadas: 0,
-          pendentes: 0,
-          canceladas: 0,
-          retificadas: 0,
-        };
-      }
-      porGuarda[guardaId].total++;
-      if (o.status === "synced") porGuarda[guardaId].finalizadas++;
-      if (o.status === "pending_sync") porGuarda[guardaId].pendentes++;
-      if (o.status === "cancelled") porGuarda[guardaId].canceladas++;
-      if (o.status === "rectified") porGuarda[guardaId].retificadas++;
-    });
-    const ranking = Object.values(porGuarda)
-      .map((g) => ({
-        ...g,
-        taxa: g.total > 0 ? ((g.finalizadas / g.total) * 100).toFixed(1) : 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-user-tie" style="margin-right:8px;"></i>
-            Desempenho por Guarda
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <div class="table-wrapper">
-            <table style="font-size:12px;">
-              <thead>
-                <tr>
-                  <th>Guarda</th>
-                  <th style="text-align:center;">Total</th>
-                  <th style="text-align:center;">Finalizadas</th>
-                  <th style="text-align:center;">Taxa</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${ranking
-                  .map(
-                    (g, i) => `
-                  <tr>
-                    <td>
-                      <span style="font-weight:600;">${g.nome}</span>
-                      ${i === 0 ? ' <span style="font-size:10px;">🏆</span>' : ""}
-                    </td>
-                    <td style="text-align:center;font-weight:600;">${g.total}</td>
-                    <td style="text-align:center;color:var(--verde-bandeira);">${g.finalizadas}</td>
-                    <td style="text-align:center;font-weight:600;color:${g.taxa >= 70 ? "var(--verde-bandeira)" : g.taxa >= 50 ? "var(--aviso)" : "var(--erro)"};">${g.taxa}%</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  ranking.length === 0
-                    ? `
-                  <tr>
-                    <td colspan="4" style="text-align:center;color:var(--cinza-medio);padding:16px;">
-                      Nenhuma ocorrência no período
-                    </td>
-                  </tr>
-                `
-                    : ""
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioRetificacoes(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const retificacoes = ocorrencias.filter((o) => o.status === "rectified");
-    const pendentes = ocorrencias.filter(
-      (o) => o.status === "pending_rectification",
-    );
-    const rejeitadas = ocorrencias.filter(
-      (o) => o.status === "rectification_rejected",
-    );
-    const client = supabaseClient.getClient();
-    const { data: usuarios } = await client
-      .from("usuarios")
-      .select("id, nome_completo");
-    const mapaUsuarios = {};
-    usuarios?.forEach((u) => (mapaUsuarios[u.id] = u.nome_completo));
-    const camposMaisAlterados = {};
-    retificacoes.forEach((r) => {
-      if (r.campos_alterados) {
-        try {
-          const campos = JSON.parse(r.campos_alterados);
-          campos.forEach((c) => {
-            const label = c.label || c.campo;
-            if (!camposMaisAlterados[label]) camposMaisAlterados[label] = 0;
-            camposMaisAlterados[label]++;
-          });
-        } catch (e) {}
-      }
-    });
-    const topCampos = Object.keys(camposMaisAlterados)
-      .map((key) => ({
-        campo: key,
-        total: camposMaisAlterados[key],
-      }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
-            Relatório de Retificações
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${retificacoes.length}</div>
-            <div style="font-size:9px;opacity:0.8;">Aprovadas</div>
-          </div>
-          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${pendentes.length}</div>
-            <div style="font-size:9px;opacity:0.8;">Pendentes</div>
-          </div>
-          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${rejeitadas.length}</div>
-            <div style="font-size:9px;opacity:0.8;">Rejeitadas</div>
-          </div>
-        </div>
-        ${
-          topCampos.length > 0
-            ? `
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-            <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-              <i class="fas fa-edit" style="margin-right:4px;"></i>
-              Campos Mais Alterados
-            </h4>
-            ${topCampos
-              .map(
-                (c) => `
-              <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
-                <span style="flex:1;">${c.campo}</span>
-                <span style="font-weight:700;color:var(--azul-bandeira);">${c.total}</span>
-                <span style="font-size:11px;color:var(--cinza-medio);">vezes</span>
-              </div>
-            `,
-              )
-              .join("")}
-          </div>
-        `
-            : ""
-        }
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-list" style="margin-right:4px;"></i>
-            Últimas Retificações
-          </h4>
-          ${retificacoes
-            .slice(0, 10)
-            .map(
-              (r) => `
-            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-              <span>#${r.numero_ocorrencia || r.numero_temporario || "N/A"}</span>
-              <span style="color:var(--cinza-medio);">${new Date(r.criado_em).toLocaleDateString("pt-BR")}</span>
-            </div>
-          `,
-            )
-            .join("")}
-          ${
-            retificacoes.length === 0
-              ? `
-            <p style="text-align:center;color:var(--cinza-medio);padding:12px;font-size:13px;">
-              Nenhuma retificação no período
-            </p>
-          `
-              : ""
-          }
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioCancelamentos(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const canceladas = ocorrencias.filter((o) => o.status === "cancelled");
-    const motivos = {};
-    canceladas.forEach((o) => {
-      const motivo = o.motivo_cancelamento || "Não informado";
-      if (!motivos[motivo]) motivos[motivo] = 0;
-      motivos[motivo]++;
-    });
-    const topMotivos = Object.keys(motivos)
-      .map((key) => ({
-        motivo: key,
-        total: motivos[key],
-      }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-times-circle" style="margin-right:8px;"></i>
-            Relatório de Cancelamentos
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--erro);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${canceladas.length}</div>
-            <div style="font-size:9px;opacity:0.8;">Total Canceladas</div>
-          </div>
-          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${ocorrencias.length > 0 ? ((canceladas.length / ocorrencias.length) * 100).toFixed(1) : 0}%</div>
-            <div style="font-size:9px;opacity:0.8;">Taxa de Cancelamento</div>
-          </div>
-        </div>
-        ${
-          topMotivos.length > 0
-            ? `
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-            <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-              <i class="fas fa-list" style="margin-right:4px;"></i>
-              Principais Motivos
-            </h4>
-            ${topMotivos
-              .map(
-                (m) => `
-              <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
-                <span style="flex:1;">${m.motivo}</span>
-                <span style="font-weight:700;color:var(--erro);">${m.total}</span>
-              </div>
-            `,
-              )
-              .join("")}
-          </div>
-        `
-            : ""
-        }
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioTendencias(container, ocorrencias, dataInicio, dataFim) {
-    const porDiaSemana = {};
-    const porHora = {};
-    const porMes = this.agruparPorMes(ocorrencias);
-    const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-    ocorrencias.forEach((o) => {
-      const data = new Date(o.criado_em);
-      const diaSemana = data.getDay();
-      const hora = data.getHours();
-      if (!porDiaSemana[diaSemana]) porDiaSemana[diaSemana] = 0;
-      porDiaSemana[diaSemana]++;
-      if (!porHora[hora]) porHora[hora] = 0;
-      porHora[hora]++;
-    });
-    const dadosDiaSemana = Object.keys(porDiaSemana)
-      .map((key) => ({
-        dia: diasSemana[parseInt(key)],
-        total: porDiaSemana[key],
-      }))
-      .sort((a, b) => diasSemana.indexOf(a.dia) - diasSemana.indexOf(b.dia));
-    const dadosHora = Object.keys(porHora)
-      .map((key) => ({
-        hora: parseInt(key),
-        total: porHora[key],
-      }))
-      .sort((a, b) => a.hora - b.hora);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-chart-line" style="margin-right:8px;"></i>
-            Tendências e Sazonalidade
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-chart-bar" style="margin-right:4px;"></i>
-            Evolução Mensal
-          </h4>
-          <div style="height:150px;">
-            <canvas id="chartTendenciasMensal"></canvas>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-calendar-week" style="margin-right:4px;"></i>
-            Ocorrências por Dia da Semana
-          </h4>
-          <div style="height:120px;">
-            <canvas id="chartTendenciasDiaSemana"></canvas>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-clock" style="margin-right:4px;"></i>
-            Ocorrências por Hora do Dia
-          </h4>
-          <div style="height:120px;">
-            <canvas id="chartTendenciasHora"></canvas>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-    await this.renderizarGraficoBarras("chartTendenciasMensal", porMes);
-    await this.renderizarGraficoBarras(
-      "chartTendenciasDiaSemana",
-      dadosDiaSemana.map((d) => ({ label: d.dia, value: d.total })),
-    );
-    await this.renderizarGraficoBarras(
-      "chartTendenciasHora",
-      dadosHora.map((d) => ({
-        label: String(d.hora).padStart(2, "0") + "h",
-        value: d.total,
-      })),
-    );
-  }
-
-  async renderRelatorioProdutividade(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const total = ocorrencias.length;
-    const finalizadas = ocorrencias.filter((o) => o.status === "synced").length;
-    const pendentes = ocorrencias.filter(
-      (o) => o.status === "pending_sync",
-    ).length;
-    const totalDias = this.calcularDiasPeriodo(dataInicio, dataFim);
-    const mediaDiaria = totalDias > 0 ? (total / totalDias).toFixed(1) : 0;
-    const projecao = mediaDiaria * 30;
-    const dataAnteriorInicio = this.calcularDataAnterior(dataInicio, dataFim);
-    const dataAnteriorFim = dataInicio;
-    const ocorrenciasAnterior = await this.buscarOcorrenciasPeriodo(
-      dataAnteriorInicio,
-      dataAnteriorFim,
-    );
-    const totalAnterior = ocorrenciasAnterior.length;
-    const variacao =
-      totalAnterior > 0
-        ? (((total - totalAnterior) / totalAnterior) * 100).toFixed(1)
-        : 0;
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-rocket" style="margin-right:8px;"></i>
-            Produtividade do Setor
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${total}</div>
-            <div style="font-size:9px;opacity:0.8;">Ocorrências</div>
-          </div>
-          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:8px;text-align:center;color:var(--branco);">
-            <div style="font-size:16px;font-weight:800;">${mediaDiaria}</div>
-            <div style="font-size:9px;opacity:0.8;">Média Diária</div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:var(--cinza-escuro);">${projecao}</div>
-            <div style="font-size:9px;color:var(--cinza-medio);">Projeção Mensal</div>
-          </div>
-          <div style="background:var(--branco);border-radius:var(--border-radius);padding:8px;box-shadow:var(--sombra-suave);text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:${variacao >= 0 ? "var(--verde-bandeira)" : "var(--erro)"};">${variacao >= 0 ? "+" : ""}${variacao}%</div>
-            <div style="font-size:9px;color:var(--cinza-medio);">Variação vs Período Anterior</div>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <h4 style="color:var(--azul-bandeira);margin-bottom:6px;font-size:13px;">
-            <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-            Resumo do Período
-          </h4>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;">
-            <div><span style="color:var(--cinza-medio);">Finalizadas:</span> <strong>${finalizadas}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Pendentes:</span> <strong>${pendentes}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Dias no período:</span> <strong>${totalDias}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Taxa resolução:</span> <strong>${total > 0 ? ((finalizadas / total) * 100).toFixed(1) : 0}%</strong></div>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async renderRelatorioDetalhadoLista(
-    container,
-    ocorrencias,
-    dataInicio,
-    dataFim,
-  ) {
-    const porTipo = this.agruparPorTipo(ocorrencias);
-    let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-list-ul" style="margin-right:8px;"></i>
-            Ocorrências Detalhado
-          </h2>
-          <button class="btn-secondary" onclick="app.voltarRelatorios()" style="padding:3px 10px;font-size:10px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:12px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i>
-          ${new Date(dataInicio).toLocaleDateString("pt-BR")} até ${new Date(dataFim).toLocaleDateString("pt-BR")}
-          <span style="margin-left:8px;font-weight:600;">${ocorrencias.length} ocorrências</span>
-        </p>
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">
-          ${porTipo
-            .slice(0, 5)
-            .map(
-              (t) => `
-            <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:10px;padding:2px 10px;">
-              ${t.tipo}: ${t.total}
-            </span>
-          `,
-            )
-            .join("")}
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <div class="table-wrapper">
-            <table style="font-size:11px;">
-              <thead>
-                <tr>
-                  <th>Nº</th>
-                  <th>Data</th>
-                  <th>Tipo</th>
-                  <th>Local</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${ocorrencias
-                  .slice(0, 50)
-                  .map(
-                    (o) => `
-                  <tr onclick="app.verDetalhes('${o.id}')" style="cursor:pointer;">
-                    <td style="font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || "Rascunho"}</td>
-                    <td style="font-size:10px;color:var(--cinza-medio);">${this.formatarDataHoraLocal(o.criado_em)}</td>
-                    <td>${this.getTipoLabel(o.tipo_ocorrencia)}</td>
-                    <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || "-"}</td>
-                    <td><span class="badge badge-${this.getStatusClass(o.status)}" style="font-size:9px;">${this.getStatusLabel(o.status)}</span></td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-                ${
-                  ocorrencias.length > 50
-                    ? `
-                  <tr>
-                    <td colspan="5" style="text-align:center;color:var(--cinza-medio);font-size:12px;padding:12px;">
-                      + ${ocorrencias.length - 50} outras ocorrências
-                    </td>
-                  </tr>
-                `
-                    : ""
-                }
-                ${
-                  ocorrencias.length === 0
-                    ? `
-                  <tr>
-                    <td colspan="5" style="text-align:center;color:var(--cinza-medio);padding:20px;font-size:13px;">
-                      Nenhuma ocorrência no período
-                    </td>
-                  </tr>
-                `
-                    : ""
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  calcularEstatisticas(ocorrencias) {
-    return {
-      total: ocorrencias.length,
-      finalizadas: ocorrencias.filter((o) => o.status === "synced").length,
-      pendentes: ocorrencias.filter((o) => o.status === "pending_sync").length,
-      canceladas: ocorrencias.filter((o) => o.status === "cancelled").length,
-      retificadas: ocorrencias.filter((o) => o.status === "rectified").length,
-    };
-  }
-
-  agruparPorTipo(ocorrencias) {
-    const tipos = {};
-    const total = ocorrencias.length || 1;
-    ocorrencias.forEach((o) => {
-      const tipo = o.tipo_ocorrencia || "Não informado";
-      if (!tipos[tipo]) {
-        tipos[tipo] = { total: 0, finalizadas: 0, pendentes: 0 };
-      }
-      tipos[tipo].total++;
-      if (o.status === "synced") tipos[tipo].finalizadas++;
-      if (o.status === "pending_sync") tipos[tipo].pendentes++;
-    });
-    return Object.keys(tipos)
-      .map((key) => ({
-        tipo: this.getTipoLabel(key),
-        total: tipos[key].total,
-        finalizadas: tipos[key].finalizadas,
-        pendentes: tipos[key].pendentes,
-        percentual: ((tipos[key].total / total) * 100).toFixed(1),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }
-
-  agruparPorMes(ocorrencias) {
-    const meses = {};
-    ocorrencias.forEach((o) => {
-      const data = new Date(o.criado_em);
-      const mes = `${String(data.getMonth() + 1).padStart(2, "0")}/${data.getFullYear()}`;
-      if (!meses[mes]) meses[mes] = 0;
-      meses[mes]++;
-    });
-    return Object.keys(meses)
-      .sort((a, b) => {
-        const [mesA, anoA] = a.split("/");
-        const [mesB, anoB] = b.split("/");
-        return `${anoA}${mesA}`.localeCompare(`${anoB}${mesB}`);
-      })
-      .map((mes) => ({ label: mes, value: meses[mes] }));
-  }
-
-  agruparPorBairro(ocorrencias) {
-    const bairros = {};
-    const total = ocorrencias.length || 1;
-    ocorrencias.forEach((o) => {
-      const bairro = o.bairro_ocorrencia || "Não informado";
-      if (!bairros[bairro]) bairros[bairro] = 0;
-      bairros[bairro]++;
-    });
-    return Object.keys(bairros)
-      .map((key) => ({
-        bairro: key,
-        total: bairros[key],
-        percentual: ((bairros[key] / total) * 100).toFixed(1),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }
-
-  calcularMediaDiaria(ocorrencias, dataInicio, dataFim) {
-    const dias = this.calcularDiasPeriodo(dataInicio, dataFim);
-    return dias > 0 ? (ocorrencias.length / dias).toFixed(1) : 0;
-  }
-
-  calcularDiasPeriodo(dataInicio, dataFim) {
-    const inicio = new Date(dataInicio);
-    const fim = new Date(dataFim);
-    return Math.ceil((fim - inicio) / (1000 * 60 * 60 * 24)) + 1;
-  }
-
-  calcularDataAnterior(dataInicio, dataFim) {
-    const inicio = new Date(dataInicio);
-    const fim = new Date(dataFim);
-    const diff = fim - inicio;
-    const data = new Date(inicio);
-    data.setTime(data.getTime() - diff);
-    return data.toISOString().slice(0, 10);
-  }
-
-  async renderizarGraficoPizza(canvasId, dados, cores) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    if (typeof Chart === "undefined") {
-      await this.carregarChartJS();
-    }
-    const defaultCores = [
-      "#003F87",
-      "#00843D",
-      "#DC2626",
-      "#F59E0B",
-      "#8B5CF6",
-      "#EC4899",
-      "#06B6D4",
-      "#F97316",
-      "#14B8A6",
-      "#6366F1",
-    ];
-    new Chart(canvas, {
-      type: "doughnut",
-      data: {
-        labels: dados.map((d) => d.tipo),
-        datasets: [
-          {
-            data: dados.map((d) => d.total),
-            backgroundColor: (cores || defaultCores).slice(0, dados.length),
-            borderWidth: 2,
-            borderColor: "#fff",
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: "bottom",
-            labels: {
-              font: { size: 10 },
-              boxWidth: 10,
-              padding: 6,
-            },
-          },
-        },
-      },
-    });
-  }
-
-  async renderizarGraficoBarras(canvasId, dados) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    if (typeof Chart === "undefined") {
-      await this.carregarChartJS();
-    }
-    new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: dados.map((d) => d.label),
-        datasets: [
-          {
-            label: "Ocorrências",
-            data: dados.map((d) => d.value),
-            backgroundColor: "rgba(0, 63, 135, 0.7)",
-            borderColor: "#003F87",
-            borderWidth: 1,
-            borderRadius: 3,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false,
-          },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { stepSize: 1, font: { size: 9 } },
-          },
-          x: {
-            ticks: { font: { size: 9 } },
-          },
-        },
-      },
-    });
-  }
-
-  carregarChartJS() {
-    return new Promise((resolve) => {
-      if (document.querySelector('script[src*="chart.js"]')) {
-        resolve();
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/chart.js";
-      script.onload = resolve;
-      document.head.appendChild(script);
-    });
-  }
-
-  async exportarRelatorioPDF() {
-    this.showToast("Exportação para PDF em desenvolvimento", "info");
-  }
-
-  async exportarRelatorioCSV() {
-    this.showToast("Exportação para CSV em desenvolvimento", "info");
-  }
-
-  async renderLogs(container) {
-    if (!authManager.isSupervisor()) {
-      container.innerHTML = `
-        <div class="container">
-          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-              <i class="fas fa-lock"></i>
-            </div>
-            <p style="font-weight:500;">Acesso restrito a supervisores</p>
-            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-              Voltar
-            </button>
-          </div>
-        </div>
-      `;
-      return;
-    }
-    const result = await authManager.listarLogsAcesso({ limit: 200 });
-    if (!result.success) {
-      container.innerHTML = `
-        <div class="container">
-          <p style="color:var(--erro);">Erro ao carregar logs: ${result.error}</p>
-          <button onclick="app.loadPageContent('logs')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-            Tentar novamente
-          </button>
-        </div>
-      `;
-      return;
-    }
-    const logs = result.data || [];
-    const stats = await authManager.getLogStats();
-    const usuariosResult = await authManager.listarUsuarios();
-    const usuarios = usuariosResult.success ? usuariosResult.data : [];
-    const acoes = [
-      { value: "", label: "Todas" },
-      { value: "login", label: "Login" },
-      { value: "logout", label: "Logout" },
-      { value: "primeiro_acesso", label: "Primeiro Acesso" },
-      { value: "criar_ocorrencia", label: "Criar Ocorrência" },
-      { value: "finalizar_ocorrencia", label: "Finalizar Ocorrência" },
-      { value: "cancelar_ocorrencia", label: "Cancelar Ocorrência" },
-      { value: "solicitar_retificacao", label: "Solicitar Retificação" },
-      { value: "aprovar_retificacao", label: "Aprovar Retificação" },
-      { value: "rejeitar_retificacao", label: "Rejeitar Retificação" },
-      { value: "criar_usuario", label: "Criar Usuário" },
-      { value: "editar_usuario", label: "Editar Usuário" },
-      { value: "resetar_senha", label: "Resetar Senha" },
-      { value: "ativar_desativar_usuario", label: "Ativar/Desativar Usuário" },
-    ];
-    const html = `
-      <div class="container" style="padding-bottom:120px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;">
-            <i class="fas fa-history" style="margin-right:8px;"></i>
-            Logs do Sistema
-          </h2>
-          <button onclick="app.navigateTo('dashboard')" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-arrow-left"></i> Voltar
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:12px;font-size:13px;">
-          ${logs.length} registros encontrados
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">
-          <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${logs.length}</div>
-            <div style="font-size:9px;opacity:0.8;">Total</div>
-          </div>
-          <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${logs.filter((l) => l.acao === "login").length}</div>
-            <div style="font-size:9px;opacity:0.8;">Logins</div>
-          </div>
-          <div style="background:var(--aviso);border-radius:var(--border-radius);padding:6px;text-align:center;color:var(--branco);">
-            <div style="font-size:18px;font-weight:800;">${logs.filter((l) => l.acao === "criar_ocorrencia").length}</div>
-            <div style="font-size:9px;opacity:0.8;">Ocorrências</div>
-          </div>
-        </div>
-        <div class="filtros-container" style="margin-bottom:12px;">
-          <div class="filtros-row">
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-user"></i> Usuário</label>
-              <select id="filtroLogUsuario">
-                <option value="">Todos</option>
-                ${usuarios
-                  .map(
-                    (u) => `
-                  <option value="${u.id}">${u.nome_completo}</option>
-                `,
-                  )
-                  .join("")}
-              </select>
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-tag"></i> Ação</label>
-              <select id="filtroLogAcao">
-                ${acoes
-                  .map(
-                    (a) => `
-                  <option value="${a.value}">${a.label}</option>
-                `,
-                  )
-                  .join("")}
-              </select>
-            </div>
-            <div class="filtros-actions">
-              <button onclick="app.aplicarFiltrosLogs()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
-                <i class="fas fa-search"></i>
-              </button>
-              <button onclick="app.limparFiltrosLogs()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;">
-                <i class="fas fa-undo"></i>
-              </button>
-            </div>
-          </div>
-          <div class="filtros-row" style="margin-top:6px;">
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Início</label>
-              <input type="date" id="filtroLogDataInicio">
-            </div>
-            <div class="filtro-group" style="flex:1;">
-              <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
-              <input type="date" id="filtroLogDataFim">
-            </div>
-          </div>
-        </div>
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-          <div class="table-wrapper">
-            <table style="font-size:12px;">
-              <thead>
-                <tr>
-                  <th>Data/Hora</th>
-                  <th>Usuário</th>
-                  <th>Ação</th>
-                  <th>IP</th>
-                  <th>Detalhes</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${
-                  logs.length === 0
-                    ? `
-                  <tr>
-                    <td colspan="5" style="text-align:center;padding:20px;color:var(--cinza-medio);">
-                      Nenhum log encontrado
-                    </td>
-                  </tr>
-                `
-                    : `
-                  ${logs
-                    .map((log) => {
-                      let detalhesDisplay = log.entidade || "-";
-                      if (log.detalhes) {
-                        try {
-                          const parsed = JSON.parse(log.detalhes);
-                          if (parsed.dispositivo || parsed.navegador) {
-                            const deviceInfo = [];
-                            if (parsed.dispositivo)
-                              deviceInfo.push(parsed.dispositivo);
-                            if (parsed.navegador)
-                              deviceInfo.push(parsed.navegador);
-                            if (deviceInfo.length > 0) {
-                              detalhesDisplay = deviceInfo.join(" • ");
-                            }
-                          }
-                        } catch (e) {}
-                      }
-                      return `
-                      <tr>
-                        <td style="font-size:11px;color:var(--cinza-medio);">
-                          ${this.formatarDataHoraLocal(log.data_hora)}
-                        </td>
-                        <td>${log.usuarios?.nome_completo || "Desconhecido"}</td>
-                        <td>
-                          <span class="badge ${this.getLogBadgeClass(log.acao)}" style="font-size:10px;">
-                            ${this.getLogLabel(log.acao)}
-                          </span>
-                        </td>
-                        <td style="font-size:11px;color:var(--cinza-medio);">${log.ip || "-"}</td>
-                        <td style="font-size:11px;color:var(--cinza-medio);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                          ${detalhesDisplay}
-                        </td>
-                      </tr>
-                    `;
-                    })
-                    .join("")}
-                `
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  getLogBadgeClass(acao) {
-    const map = {
-      login: "badge-synced",
-      logout: "badge-draft",
-      primeiro_acesso: "badge-pending",
-      criar_ocorrencia: "badge-azul",
-      finalizar_ocorrencia: "badge-verde",
-      cancelar_ocorrencia: "badge-cancelled",
-      solicitar_retificacao: "badge-pending",
-      aprovar_retificacao: "badge-synced",
-      rejeitar_retificacao: "badge-cancelled",
-      criar_usuario: "badge-azul",
-      editar_usuario: "badge-azul",
-      resetar_senha: "badge-pending",
-      ativar_desativar_usuario: "badge-azul",
-    };
-    return map[acao] || "badge-draft";
-  }
-
-  getLogLabel(acao) {
-    const map = {
-      login: "Login",
-      logout: "Logout",
-      primeiro_acesso: "Primeiro Acesso",
-      criar_ocorrencia: "Criar Ocorrência",
-      finalizar_ocorrencia: "Finalizar Ocorrência",
-      cancelar_ocorrencia: "Cancelar Ocorrência",
-      solicitar_retificacao: "Solicitar Retificação",
-      aprovar_retificacao: "Aprovar Retificação",
-      rejeitar_retificacao: "Rejeitar Retificação",
-      criar_usuario: "Criar Usuário",
-      editar_usuario: "Editar Usuário",
-      resetar_senha: "Resetar Senha",
-      ativar_desativar_usuario: "Ativar/Desativar Usuário",
-    };
-    return map[acao] || acao;
-  }
-
-  async aplicarFiltrosLogs() {
-    const usuarioId = document.getElementById("filtroLogUsuario")?.value || "";
-    const acao = document.getElementById("filtroLogAcao")?.value || "";
-    const dataInicio =
-      document.getElementById("filtroLogDataInicio")?.value || "";
-    const dataFim = document.getElementById("filtroLogDataFim")?.value || "";
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      this.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
-      return;
-    }
-    const filtros = { limit: 200 };
-    if (usuarioId) filtros.usuario_id = usuarioId;
-    if (acao) filtros.acao = acao;
-    if (dataInicio) filtros.data_inicio = dataInicio;
-    if (dataFim) filtros.data_fim = dataFim + "T23:59:59";
-    const result = await authManager.listarLogsAcesso(filtros);
-    if (!result.success) {
-      this.showToast("Erro ao filtrar logs: " + result.error, "error");
-      return;
-    }
-    const container = document.getElementById("logsContent");
-    if (container) {
-      this.filtrosLogs = filtros;
-      await this.renderLogs(container);
-    }
-  }
-
-  async limparFiltrosLogs() {
-    const usuarioSelect = document.getElementById("filtroLogUsuario");
-    const acaoSelect = document.getElementById("filtroLogAcao");
-    const dataInicioInput = document.getElementById("filtroLogDataInicio");
-    const dataFimInput = document.getElementById("filtroLogDataFim");
-    if (usuarioSelect) usuarioSelect.value = "";
-    if (acaoSelect) acaoSelect.value = "";
-    if (dataInicioInput) dataInicioInput.value = "";
-    if (dataFimInput) dataFimInput.value = "";
-    this.filtrosLogs = {};
-    this.loadPageContent("logs");
-  }
-
-  async renderNovaOcorrencia(container) {
-    if (this.dadosRascunho) {
-      this.novaOcorrencia = {
-        etapa: 1,
-        id: this.rascunhoId,
-        dados: this.dadosRascunho,
-      };
-      this.alteracoesNaoSalvas = true;
-      console.log("📂 Rascunho carregado para edição:", this.rascunhoId);
-    } else {
-      this.novaOcorrencia = {
-        etapa: 1,
-        id: null,
-        dados: {
-          forma_solicitacao: "",
-          nome_solicitante: "",
-          cpf_solicitante: "",
-          rg_solicitante: "",
-          telefone_solicitante: "",
-          endereco_solicitante: "",
-          codigo_municipal: "",
-          complemento: "",
-          bairro_solicitante: "",
-          identificacao_adicional: "",
-          codigo_operacional: "",
-          local_ocorrencia: "",
-          rodovia: "",
-          bairro_ocorrencia: "",
-          referencia: "",
-          data_hora_inicio: "",
-          data_hora_encerramento: "",
-          tipo_ocorrencia: "",
-          envolvidos: [],
-          observacoes: "",
-          anexos: [],
-        },
-      };
-      this.alteracoesNaoSalvas = false;
-    }
-    container.innerHTML = '<div id="novaOcorrenciaContent"></div>';
-    const contentContainer = document.getElementById("novaOcorrenciaContent");
-    this.renderizarEtapa(contentContainer);
-  }
-
-  renderizarEtapa(container) {
-    const etapa = this.novaOcorrencia.etapa;
-    const dados = this.novaOcorrencia.dados;
-    const totalEtapas = 6;
-    console.log(`📌 Renderizando etapa ${etapa} de ${totalEtapas}`);
-    let html = `
-      <div class="container" style="padding-bottom:100px;">
-        <div class="step-indicator">
-          ${this.renderSteps(etapa, totalEtapas)}
-        </div>
-        <div class="step-title">${this.getEtapaTitulo(etapa)}</div>
-        <div class="step-subtitle">${this.getEtapaSubtitulo(etapa)}</div>
-        <form id="formOcorrencia" style="margin-top:16px;">
-          ${this.renderEtapaForm(etapa, dados)}
-        </form>
-        <div class="form-actions">
-          ${
-            etapa > 1
-              ? `<button type="button" class="btn-secondary" onclick="app.etapaAnterior()">
-            <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar
-          </button>`
-              : ""
-          }
-          ${
-            etapa < totalEtapas
-              ? `<button type="button" class="btn-primary" onclick="app.proximaEtapa()">
-            Próximo <i class="fas fa-arrow-right" style="margin-left:6px;"></i>
-          </button>`
-              : `
-            <button type="button" class="btn-success" onclick="app.finalizarOcorrencia()">
-              <i class="fas fa-check-circle" style="margin-right:6px;"></i> Finalizar Ocorrência
-            </button>
-          `
-          }
-        </div>
-        <div style="margin-top:12px;">
-          <button type="button" class="btn-secondary" onclick="app.salvarRascunho()" style="width:100%;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
-            <i class="fas fa-save" style="margin-right:6px;"></i> Salvar Rascunho
-          </button>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-    this.configurarEventosFormulario();
-    document
-      .querySelectorAll(
-        "#formOcorrencia input, #formOcorrencia select, #formOcorrencia textarea",
-      )
-      .forEach((input) => {
-        input.addEventListener("change", () => {
-          this.alteracoesNaoSalvas = true;
-        });
-        input.addEventListener("input", () => {
-          this.alteracoesNaoSalvas = true;
-        });
-      });
-  }
-
-  renderSteps(etapaAtual, total) {
-    let html = "";
-    for (let i = 1; i <= total; i++) {
-      const classe = i < etapaAtual ? "done" : i === etapaAtual ? "active" : "";
-      html += `<div class="step ${classe}"><span class="step-number">${i}</span></div>`;
-      if (i < total) {
-        const linhaClasse =
-          i < etapaAtual ? "done" : i === etapaAtual ? "active" : "";
-        html += `<div class="line ${linhaClasse}"></div>`;
-      }
-    }
-    return html;
-  }
-
-  getEtapaTitulo(etapa) {
-    const titulos = {
-      1: "Origem da Solicitação",
-      2: "Dados da Ocorrência",
-      3: "Qualificação dos Envolvidos",
-      4: "Observações e Relato dos Fatos",
-      5: "Anexos",
-      6: "Revisão e Finalização",
-    };
-    return titulos[etapa] || "";
-  }
-
-  getEtapaSubtitulo(etapa) {
-    const subtitulos = {
-      1: "Informe como a solicitação chegou até você",
-      2: "Preencha os dados principais da ocorrência",
-      3: "Cadastre os envolvidos (autores, vítimas, testemunhas)",
-      4: "Descreva detalhadamente o ocorrido",
-      5: "Adicione fotos, vídeos ou documentos",
-      6: "Revise todos os dados antes de finalizar",
-    };
-    return subtitulos[etapa] || "";
-  }
-
-  renderEtapaForm(etapa, dados) {
-    switch (etapa) {
-      case 1:
-        return this.renderEtapa1(dados);
-      case 2:
-        return this.renderEtapa2(dados);
-      case 3:
-        return this.renderEtapa3(dados);
-      case 4:
-        return this.renderEtapa4(dados);
-      case 5:
-        return this.renderEtapa5(dados);
-      case 6:
-        return this.renderEtapa6(dados);
-      default:
-        return "<p>Etapa não encontrada</p>";
-    }
-  }
-
-  renderEtapa1(dados) {
-    const opcoesForma = [
-      { value: "", label: "Selecione..." },
-      { value: "Via CCO", label: "Via CCO" },
-      {
-        value: "Diretamente com a Guarda Municipal",
-        label: "Diretamente com a Guarda Municipal",
-      },
-      {
-        value: "Diretamente com a ocorrência",
-        label: "Diretamente com a ocorrência",
-      },
-    ];
-    return `
-      <div class="form-group">
-        <label for="forma_solicitacao">
-          <i class="fas fa-phone-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Forma de solicitação <span class="required">*</span>
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-list-ul input-icon-left"></i>
-          <select id="forma_solicitacao" class="form-control" required>
-            ${opcoesForma
-              .map(
-                (op) => `
-              <option value="${op.value}" ${dados.forma_solicitacao === op.value ? "selected" : ""}>
-                ${op.label}
-              </option>
-            `,
-              )
-              .join("")}
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="nome_solicitante">
-          <i class="fas fa-user" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Nome do solicitante
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-user input-icon-left"></i>
-          <input type="text" id="nome_solicitante" class="form-control" 
-            placeholder="Nome completo (deixe em branco para anônimo)" 
-            value="${dados.nome_solicitante || ""}">
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Deixe em branco para registrar ocorrência anônima
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="cpf_solicitante">
-          <i class="fas fa-id-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          CPF do Solicitante
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-id-card input-icon-left"></i>
-          <input type="text" id="cpf_solicitante" class="form-control" 
-            placeholder="123.456.789-00" 
-            value="${dados.cpf_solicitante || ""}"
-            maxlength="14">
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Opcional - para identificação do solicitante
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="rg_solicitante">
-          <i class="fas fa-address-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          RG do Solicitante
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-address-card input-icon-left"></i>
-          <input type="text" id="rg_solicitante" class="form-control" 
-            placeholder="RG do solicitante" 
-            value="${dados.rg_solicitante || ""}">
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Opcional - apenas se informado pelo solicitante
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="telefone_solicitante">
-          <i class="fas fa-phone" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Telefone do solicitante
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-phone input-icon-left"></i>
-          <input type="tel" id="telefone_solicitante" class="form-control" 
-            placeholder="(44) 99999-9999" 
-            value="${dados.telefone_solicitante || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="endereco_solicitante">
-          <i class="fas fa-home" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Endereço informado pelo solicitante
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-map-marker-alt input-icon-left"></i>
-          <input type="text" id="endereco_solicitante" class="form-control" 
-            placeholder="Rua, número, bairro" 
-            value="${dados.endereco_solicitante || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="codigo_municipal">
-          <i class="fas fa-hashtag" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Código do próprio municipal
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-hashtag input-icon-left"></i>
-          <input type="text" id="codigo_municipal" class="form-control" 
-            placeholder="Código do imóvel" 
-            value="${dados.codigo_municipal || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="complemento">
-          <i class="fas fa-pen" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Complemento
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-pen input-icon-left"></i>
-          <input type="text" id="complemento" class="form-control" 
-            placeholder="Apto, bloco, ponto de referência" 
-            value="${dados.complemento || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="bairro_solicitante">
-          <i class="fas fa-location-dot" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Bairro
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-location-dot input-icon-left"></i>
-          <input type="text" id="bairro_solicitante" class="form-control" 
-            placeholder="Bairro" 
-            value="${dados.bairro_solicitante || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="identificacao_adicional">
-          <i class="fas fa-info-circle" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Identificação adicional do solicitante
-        </label>
-        <textarea id="identificacao_adicional" class="form-control" rows="3" 
-          placeholder="Informações adicionais para identificar o solicitante">${dados.identificacao_adicional || ""}</textarea>
-      </div>
-    `;
-  }
-
-  renderEtapa2(dados) {
-    const brasiliaNow = this.obterDataHoraBrasilia();
-    let dataInicio = dados.data_hora_inicio;
-    if (!dataInicio || dataInicio === "") {
-      dataInicio = this.formatarDataHoraInput(brasiliaNow);
-    } else {
-      try {
-        const dateObj = new Date(dataInicio);
-        if (!isNaN(dateObj.getTime())) {
-          dataInicio = this.formatarDataHoraInput(dateObj);
-        } else {
-          dataInicio = this.formatarDataHoraInput(brasiliaNow);
-        }
-      } catch (e) {
-        dataInicio = this.formatarDataHoraInput(brasiliaNow);
-      }
-    }
-    const dataFim = dados.data_hora_encerramento || "";
-    const tipoOptions = this.TIPOS_OCORRENCIA.map(
-      (op) =>
-        `<option value="${op.value}" ${dados.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`,
-    ).join("");
-    return `
-      <div class="form-group">
-        <label for="codigo_operacional">
-          <i class="fas fa-barcode" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Código operacional
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-barcode input-icon-left"></i>
-          <input type="text" id="codigo_operacional" class="form-control" 
-            placeholder="Código da ocorrência" 
-            value="${dados.codigo_operacional || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="tipo_ocorrencia">
-          <i class="fas fa-tag" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Tipo de Ocorrência <span class="required">*</span>
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-list input-icon-left"></i>
-          <select id="tipo_ocorrencia" class="form-control" required>
-            <option value="">Selecione o tipo...</option>
-            ${tipoOptions}
-          </select>
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Classifique a natureza da ocorrência
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="local_ocorrencia">
-          <i class="fas fa-map-marker-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Local da ocorrência <span class="required">*</span>
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-map-marker-alt input-icon-left"></i>
-          <input type="text" id="local_ocorrencia" class="form-control" 
-            placeholder="Endereço completo" required 
-            value="${dados.local_ocorrencia || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="rodovia">
-          <i class="fas fa-road" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Rodovia (se aplicável)
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-road input-icon-left"></i>
-          <input type="text" id="rodovia" class="form-control" 
-            placeholder="BR-123, km 45" 
-            value="${dados.rodovia || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="bairro_ocorrencia">
-          <i class="fas fa-location-dot" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Bairro
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-location-dot input-icon-left"></i>
-          <input type="text" id="bairro_ocorrencia" class="form-control" 
-            placeholder="Bairro" 
-            value="${dados.bairro_ocorrencia || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="referencia">
-          <i class="fas fa-info-circle" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Referência
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-info-circle input-icon-left"></i>
-          <input type="text" id="referencia" class="form-control" 
-            placeholder="Ponto de referência próximo" 
-            value="${dados.referencia || ""}">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="data_hora_inicio">
-          <i class="fas fa-calendar-plus" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Data e hora do início (Horário de Brasília) <span class="required">*</span>
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-calendar input-icon-left"></i>
-          <input type="datetime-local" id="data_hora_inicio" class="form-control" required 
-            value="${dataInicio}">
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Fuso horário: Brasília (UTC-3) - Preenchido automaticamente
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="data_hora_encerramento">
-          <i class="fas fa-calendar-check" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Data e hora do encerramento
-        </label>
-        <div class="input-wrapper">
-          <i class="fas fa-calendar-check input-icon-left"></i>
-          <input type="datetime-local" id="data_hora_encerramento" class="form-control" 
-            value="${dataFim}">
-        </div>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Deixe em branco se ainda não encerrou
-        </div>
-      </div>
-    `;
-  }
-
-  renderEtapa3(dados) {
-    const envolvidos = dados.envolvidos || [];
-    let html = `
-      <div style="margin-bottom:16px;">
-        <p style="color:var(--cinza-medio);font-size:14px;">
-          <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-          Cadastre os envolvidos na ocorrência. Você pode adicionar quantos forem necessários.
-        </p>
-      </div>
-      <div id="listaEnvolvidos">
-    `;
-    if (envolvidos.length === 0) {
-      html += `
-        <div class="lista-vazia">
-          <i class="fas fa-users"></i>
-          <p>Nenhum envolvido cadastrado</p>
-          <p class="sub">Clique no botão abaixo para adicionar</p>
-        </div>
-      `;
-    } else {
-      envolvidos.forEach((env, index) => {
-        html += `
-          <div class="envolvido-item-modern">
-            <div class="header">
-              <span class="badge badge-azul">
-                <i class="fas fa-user" style="margin-right:4px;"></i>
-                ${this.getTipoEnvolvidoLabel(env.tipo)}
-              </span>
-              <span class="nome">${env.nome_completo || "Nome não informado"}</span>
-              <button type="button" class="remove-btn" onclick="app.removerEnvolvido(${index})" style="margin-left:auto;background:none;border:none;color:var(--erro);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-                <i class="fas fa-trash-alt"></i>
-              </button>
-            </div>
-            <div class="detalhes-grid">
-              ${
-                env.cpf
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-id-card"></i>
-                  <span class="label">CPF:</span>
-                  <span class="valor">${env.cpf}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.rg
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-address-card"></i>
-                  <span class="label">RG:</span>
-                  <span class="valor">${env.rg}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.telefone
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-phone"></i>
-                  <span class="label">Tel:</span>
-                  <span class="valor">${env.telefone}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.data_nascimento
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-calendar-alt"></i>
-                  <span class="label">Nasc:</span>
-                  <span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.endereco
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-map-marker-alt"></i>
-                  <span class="label">End:</span>
-                  <span class="valor">${env.endereco}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.bairro
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-location-dot"></i>
-                  <span class="label">Bairro:</span>
-                  <span class="valor">${env.bairro}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.cidade
-                  ? `
-                <div class="campo">
-                  <i class="fas fa-city"></i>
-                  <span class="label">Cidade:</span>
-                  <span class="valor">${env.cidade}</span>
-                </div>
-              `
-                  : ""
-              }
-              ${
-                env.observacoes
-                  ? `
-                <div class="campo" style="grid-column: 1 / -1;">
-                  <i class="fas fa-pencil-alt"></i>
-                  <span class="label">Obs:</span>
-                  <span class="valor">${env.observacoes}</span>
-                </div>
-              `
-                  : ""
-              }
-            </div>
-          </div>
-        `;
-      });
-    }
-    html += `
-      </div>
-      <button type="button" class="btn-add" onclick="app.adicionarEnvolvido()">
-        <i class="fas fa-plus-circle"></i> Adicionar Envolvido
-      </button>
-    `;
-    return html;
-  }
-
-  renderEtapa4(dados) {
-    return `
-      <div class="form-group">
-        <label for="observacoes">
-          <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Observações e Relato dos Fatos <span class="required">*</span>
-        </label>
-        <textarea id="observacoes" class="form-control" rows="8" 
-          placeholder="Descreva detalhadamente o ocorrido..." required>${dados.observacoes || ""}</textarea>
-        <div class="input-hint">
-          <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-          Seja o mais detalhado possível
-        </div>
-      </div>
-    `;
-  }
-
-  renderEtapa5(dados) {
-    const anexos = dados.anexos || [];
-    return `
-      <div style="margin-bottom:16px;">
-        <p style="color:var(--cinza-medio);font-size:14px;">
-          <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-          Adicione fotos, vídeos ou documentos como evidência.
-        </p>
-      </div>
-      <div class="file-upload" onclick="document.getElementById('fileInput').click()">
-        <div class="icon">
-          <i class="fas fa-cloud-upload-alt"></i>
-        </div>
-        <div class="text">
-          <strong>Clique para adicionar anexos</strong><br>
-          <span style="font-size:13px;color:var(--cinza-medio);">Fotos, vídeos ou documentos</span>
-        </div>
-        <input type="file" id="fileInput" multiple accept="image/*,video/*,application/pdf" style="display:none;">
-      </div>
-      <div id="listaAnexos" style="margin-top:12px;">
-        ${
-          anexos.length === 0
-            ? `
-          <div style="text-align:center;padding:20px;color:var(--cinza-medio);font-size:14px;">
-            <i class="fas fa-paperclip" style="margin-right:4px;"></i>
-            Nenhum anexo adicionado
-          </div>
-        `
-            : `
-          <div class="file-list">
-            ${anexos
-              .map(
-                (anexo, index) => `
-              <div class="file-item">
-                <div class="file-info">
-                  <div class="icon">
-                    <i class="fas ${this.getIconAnexo(anexo.tipo)}"></i>
-                  </div>
-                  <div>
-                    <div class="name">${anexo.nome}</div>
-                    <div class="size">${this.formatarTamanho(anexo.tamanho)}</div>
-                  </div>
-                </div>
-                <div class="file-actions">
-                  <button type="button" class="remove-btn" onclick="app.removerAnexo(${index})">
-                    <i class="fas fa-times"></i>
-                  </button>
-                </div>
-              </div>
-            `,
-              )
-              .join("")}
-          </div>
-        `
-        }
-      </div>
-      <button type="button" class="btn-add" onclick="document.getElementById('fileInput').click()">
-        <i class="fas fa-plus-circle"></i> Adicionar Anexos
-      </button>
-    `;
-  }
-
-  renderEtapa6(dados) {
-    const envolvidos = dados.envolvidos || [];
-    const anexos = dados.anexos || [];
-    const camposSolicitante = [
-      { label: "Forma", valor: dados.forma_solicitacao },
-      { label: "Solicitante", valor: dados.nome_solicitante },
-      { label: "CPF do Solicitante", valor: dados.cpf_solicitante },
-      { label: "RG do Solicitante", valor: dados.rg_solicitante },
-      { label: "Telefone", valor: dados.telefone_solicitante },
-      { label: "Endereço", valor: dados.endereco_solicitante },
-      { label: "Código Municipal", valor: dados.codigo_municipal },
-      { label: "Complemento", valor: dados.complemento },
-      { label: "Bairro", valor: dados.bairro_solicitante },
-      {
-        label: "Identificação Adicional",
-        valor: dados.identificacao_adicional,
-      },
-    ];
-    const camposOcorrencia = [
-      {
-        label: "Tipo",
-        valor: dados.tipo_ocorrencia
-          ? this.getTipoLabel(dados.tipo_ocorrencia)
-          : null,
-      },
-      { label: "Local", valor: dados.local_ocorrencia },
-      { label: "Rodovia", valor: dados.rodovia },
-      { label: "Bairro", valor: dados.bairro_ocorrencia },
-      { label: "Referência", valor: dados.referencia },
-      { label: "Código Operacional", valor: dados.codigo_operacional },
-    ];
-    const camposSolicitantePreenchidos = camposSolicitante.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
-    const camposOcorrenciaPreenchidos = camposOcorrencia.filter(
-      (c) => c.valor && c.valor.toString().trim() !== "",
-    );
-    return `
-      <div style="margin-bottom:16px;">
-        <p style="color:var(--cinza-medio);font-size:14px;">
-          <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
-          Revise todos os dados antes de finalizar a ocorrência.
-        </p>
-      </div>
-      ${
-        camposSolicitantePreenchidos.length > 0
-          ? `
-        <div class="card-revisao">
-          <h4>
-            <i class="fas fa-phone-alt"></i>
-            Origem da Solicitação
-          </h4>
-          ${camposSolicitantePreenchidos
-            .map(
-              (c) => `
-            <div class="campo">
-              <span class="rotulo">${c.label}:</span>
-              <span class="valor">${c.valor}</span>
-            </div>
-          `,
-            )
-            .join("")}
-        </div>
-      `
-          : ""
-      }
-      ${
-        camposOcorrenciaPreenchidos.length > 0 || dados.data_hora_inicio
-          ? `
-        <div class="card-revisao">
-          <h4>
-            <i class="fas fa-map-marker-alt"></i>
-            Dados da Ocorrência
-          </h4>
-          ${camposOcorrenciaPreenchidos
-            .map(
-              (c) => `
-            <div class="campo">
-              <span class="rotulo">${c.label}:</span>
-              <span class="valor">${c.valor}</span>
-            </div>
-          `,
-            )
-            .join("")}
-          <div class="campo">
-            <span class="rotulo">Início:</span>
-            <span class="valor">${dados.data_hora_inicio ? new Date(dados.data_hora_inicio).toLocaleString("pt-BR") : "Não informado"}</span>
-          </div>
-          ${
-            dados.data_hora_encerramento
-              ? `
-            <div class="campo">
-              <span class="rotulo">Encerramento:</span>
-              <span class="valor">${new Date(dados.data_hora_encerramento).toLocaleString("pt-BR")}</span>
-            </div>
-          `
-              : ""
-          }
-        </div>
-      `
-          : ""
-      }
-      <div class="card-revisao">
-        <h4>
-          <i class="fas fa-users"></i>
-          Envolvidos (${envolvidos.length})
-        </h4>
-        ${
-          envolvidos.length === 0
-            ? `
-          <p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>
-        `
-            : `
-          ${envolvidos
-            .map(
-              (env) => `
-            <div class="envolvido-item">
-              <span class="badge badge-azul" style="font-size:10px;">${this.getTipoEnvolvidoLabel(env.tipo)}</span>
-              <strong>${env.nome_completo}</strong>
-              ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - ${env.cpf}</span>` : ""}
-            </div>
-          `,
-            )
-            .join("")}
-        `
-        }
-      </div>
-      ${
-        dados.observacoes && dados.observacoes.trim() !== ""
-          ? `
-        <div class="card-revisao">
-          <h4>
-            <i class="fas fa-pencil-alt"></i>
-            Observações
-          </h4>
-          <p style="font-size:14px;white-space:pre-wrap;">${dados.observacoes}</p>
-        </div>
-      `
-          : ""
-      }
-      <div class="card-revisao">
-        <h4>
-          <i class="fas fa-paperclip"></i>
-          Anexos (${anexos.length})
-        </h4>
-        ${
-          anexos.length === 0
-            ? `
-          <p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>
-        `
-            : `
-          ${anexos
-            .map(
-              (anexo) => `
-            <div style="font-size:14px;padding:4px 0;">
-              <i class="fas ${this.getIconAnexo(anexo.tipo)}" style="color:var(--azul-bandeira);"></i>
-              ${anexo.nome} (${this.formatarTamanho(anexo.tamanho)})
-            </div>
-          `,
-            )
-            .join("")}
-        `
-        }
-      </div>
-      <div class="alert-finalizar">
-        <p>
-          <i class="fas fa-info-circle"></i>
-          Ao finalizar, a ocorrência será numerada e não poderá mais ser editada.
-        </p>
-      </div>
-    `;
-  }
-
-  configurarEventosFormulario() {
-    document
-      .querySelectorAll(
-        "#formOcorrencia input, #formOcorrencia select, #formOcorrencia textarea",
-      )
-      .forEach((input) => {
-        input.addEventListener("change", () => {
-          this.salvarDadosEtapa();
-        });
-        input.addEventListener("input", () => {
-          this.salvarDadosEtapa();
-        });
-      });
-    const cpfInput = document.getElementById("cpf_solicitante");
-    if (cpfInput) {
-      cpfInput.addEventListener("input", function (e) {
-        let value = this.value.replace(/\D/g, "");
-        if (value.length > 11) value = value.slice(0, 11);
-        let formatted = "";
-        if (value.length > 0) {
-          formatted = value.replace(
-            /(\d{3})(\d{3})(\d{3})(\d{2})/,
-            "$1.$2.$3-$4",
-          );
-          if (value.length <= 3) formatted = value;
-          else if (value.length <= 6)
-            formatted = value.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-          else if (value.length <= 9)
-            formatted = value.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-        }
-        this.value = formatted;
-      });
-    }
-    const fileInput = document.getElementById("fileInput");
-    if (fileInput) {
-      fileInput.addEventListener("change", (e) => {
-        this.processarAnexos(e.target.files);
-        fileInput.value = "";
-      });
-    }
-  }
-
-  salvarDadosEtapa() {
-    const etapa = this.novaOcorrencia.etapa;
-    const dados = this.novaOcorrencia.dados;
-    switch (etapa) {
-      case 1:
-        dados.forma_solicitacao =
-          document.getElementById("forma_solicitacao")?.value || "";
-        dados.nome_solicitante =
-          document.getElementById("nome_solicitante")?.value || "";
-        dados.cpf_solicitante =
-          document.getElementById("cpf_solicitante")?.value || "";
-        dados.rg_solicitante =
-          document.getElementById("rg_solicitante")?.value || "";
-        dados.telefone_solicitante =
-          document.getElementById("telefone_solicitante")?.value || "";
-        dados.endereco_solicitante =
-          document.getElementById("endereco_solicitante")?.value || "";
-        dados.codigo_municipal =
-          document.getElementById("codigo_municipal")?.value || "";
-        dados.complemento = document.getElementById("complemento")?.value || "";
-        dados.bairro_solicitante =
-          document.getElementById("bairro_solicitante")?.value || "";
-        dados.identificacao_adicional =
-          document.getElementById("identificacao_adicional")?.value || "";
-        break;
-      case 2:
-        dados.codigo_operacional =
-          document.getElementById("codigo_operacional")?.value || "";
-        dados.tipo_ocorrencia =
-          document.getElementById("tipo_ocorrencia")?.value || "";
-        dados.local_ocorrencia =
-          document.getElementById("local_ocorrencia")?.value || "";
-        dados.rodovia = document.getElementById("rodovia")?.value || "";
-        dados.bairro_ocorrencia =
-          document.getElementById("bairro_ocorrencia")?.value || "";
-        dados.referencia = document.getElementById("referencia")?.value || "";
-        dados.data_hora_inicio =
-          document.getElementById("data_hora_inicio")?.value || "";
-        dados.data_hora_encerramento =
-          document.getElementById("data_hora_encerramento")?.value || "";
-        break;
-      case 4:
-        dados.observacoes = document.getElementById("observacoes")?.value || "";
-        break;
-    }
-  }
-
-  proximaEtapa() {
-    console.log("🔄 Tentando avançar da etapa:", this.novaOcorrencia.etapa);
-    if (!this.validarEtapa()) {
-      return;
-    }
-    this.salvarDadosEtapa();
-    if (this.novaOcorrencia.etapa < 6) {
-      this.novaOcorrencia.etapa++;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
-
-  etapaAnterior() {
-    this.salvarDadosEtapa();
-    if (this.novaOcorrencia.etapa > 1) {
-      this.novaOcorrencia.etapa--;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
-
-  validarEtapa() {
-    const etapa = this.novaOcorrencia.etapa;
-    let isValid = true;
-    let mensagem = "";
-    console.log("🔍 Validando etapa:", etapa);
-    switch (etapa) {
-      case 1:
-        const forma = document.getElementById("forma_solicitacao")?.value;
-        if (!forma) {
-          mensagem = "Selecione a forma de solicitação";
-          isValid = false;
-        }
-        break;
-      case 2:
-        const local = document.getElementById("local_ocorrencia")?.value;
-        const dataInicio = document.getElementById("data_hora_inicio")?.value;
-        const tipo = document.getElementById("tipo_ocorrencia")?.value;
-        if (!local) {
-          mensagem = "Informe o local da ocorrência";
-          isValid = false;
-        } else if (!dataInicio) {
-          mensagem = "Informe a data e hora do início";
-          isValid = false;
-        } else if (!tipo) {
-          mensagem = "Selecione o tipo de ocorrência";
-          isValid = false;
-        }
-        break;
-      case 3:
-        break;
-      case 4:
-        const observacoes = document.getElementById("observacoes")?.value;
-        if (!observacoes || observacoes.trim().length < 10) {
-          mensagem = "Descreva o ocorrido com pelo menos 10 caracteres";
-          isValid = false;
-        }
-        break;
-      case 5:
-        break;
-      case 6:
-        break;
-      default:
-        break;
-    }
-    if (!isValid) {
-      this.showToast(mensagem, "warning");
-    }
-    return isValid;
-  }
-
-  adicionarEnvolvido() {
-    const container = document.getElementById("novaOcorrenciaContent");
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-user-plus"></i>
-            Adicionar Envolvido
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body">
-          <form id="formEnvolvido">
-            <div class="form-group">
-              <label for="env_tipo">Tipo <span class="required">*</span></label>
-              <select id="env_tipo" class="form-control" required>
-                <option value="">Selecione...</option>
-                <option value="autor">Autor</option>
-                <option value="vitima">Vítima</option>
-                <option value="testemunha">Testemunha</option>
-                <option value="solicitante">Solicitante</option>
-                <option value="outro">Outro</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="env_nome">Nome Completo <span class="required">*</span></label>
-              <input type="text" id="env_nome" class="form-control" placeholder="Nome completo" required>
-            </div>
-            <div class="form-group">
-              <label for="env_cpf">CPF</label>
-              <input type="text" id="env_cpf" class="form-control" placeholder="123.456.789-00">
-            </div>
-            <div class="form-group">
-              <label for="env_telefone">Telefone</label>
-              <input type="text" id="env_telefone" class="form-control" placeholder="(44) 99999-9999">
-            </div>
-            <div class="form-group">
-              <label for="env_rg">RG</label>
-              <input type="text" id="env_rg" class="form-control" placeholder="RG">
-            </div>
-            <div class="form-group">
-              <label for="env_data_nascimento">Data de Nascimento</label>
-              <input type="date" id="env_data_nascimento" class="form-control">
-            </div>
-            <div class="form-group">
-              <label for="env_endereco">Endereço</label>
-              <input type="text" id="env_endereco" class="form-control" placeholder="Endereço">
-            </div>
-            <div class="form-group">
-              <label for="env_bairro">Bairro</label>
-              <input type="text" id="env_bairro" class="form-control" placeholder="Bairro">
-            </div>
-            <div class="form-group">
-              <label for="env_cidade">Cidade</label>
-              <input type="text" id="env_cidade" class="form-control" placeholder="Cidade">
-            </div>
-            <div class="form-group">
-              <label for="env_nome_pai">Nome do Pai</label>
-              <input type="text" id="env_nome_pai" class="form-control" placeholder="Nome do pai">
-            </div>
-            <div class="form-group">
-              <label for="env_nome_mae">Nome da Mãe</label>
-              <input type="text" id="env_nome_mae" class="form-control" placeholder="Nome da mãe">
-            </div>
-            <div class="form-group">
-              <label for="env_observacoes">Observações</label>
-              <textarea id="env_observacoes" class="form-control" rows="2" placeholder="Observações adicionais"></textarea>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">
-            Cancelar
-          </button>
-          <button type="button" class="btn-primary" onclick="app.salvarEnvolvido()">
-            <i class="fas fa-save" style="margin-right:6px;"></i> Salvar
-          </button>
-        </div>
-      </div>
-    `;
-    container.appendChild(overlay);
-  }
-
-  salvarEnvolvido() {
-    const tipo = document.getElementById("env_tipo")?.value;
-    const nome = document.getElementById("env_nome")?.value;
-    if (!tipo || !nome) {
-      this.showToast("Preencha o tipo e o nome do envolvido", "warning");
-      return;
-    }
-    const envolvido = {
-      tipo: tipo,
-      nome_completo: nome,
-      cpf: document.getElementById("env_cpf")?.value || "",
-      telefone: document.getElementById("env_telefone")?.value || "",
-      rg: document.getElementById("env_rg")?.value || "",
-      data_nascimento:
-        document.getElementById("env_data_nascimento")?.value || "",
-      endereco: document.getElementById("env_endereco")?.value || "",
-      bairro: document.getElementById("env_bairro")?.value || "",
-      cidade: document.getElementById("env_cidade")?.value || "",
-      nome_pai: document.getElementById("env_nome_pai")?.value || "",
-      nome_mae: document.getElementById("env_nome_mae")?.value || "",
-      observacoes: document.getElementById("env_observacoes")?.value || "",
-    };
-    this.novaOcorrencia.dados.envolvidos.push(envolvido);
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-    this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-    this.showToast("Envolvido adicionado com sucesso!", "success");
-  }
-
-  removerEnvolvido(index) {
-    this.novaOcorrencia.dados.envolvidos.splice(index, 1);
-    this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-    this.showToast("Envolvido removido", "info");
-  }
-
-  processarAnexos(files) {
-    const anexos = this.novaOcorrencia.dados.anexos || [];
-    for (const file of files) {
-      if (file.size > 10485760) {
-        this.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
-        continue;
-      }
-      const tipo = this.determinarTipoAnexo(file);
-      anexos.push({
-        nome: file.name,
-        tipo: tipo,
-        tamanho: file.size,
-        arquivo: file,
-      });
-    }
-    this.novaOcorrencia.dados.anexos = anexos;
-    this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-    this.showToast(`${files.length} anexo(s) adicionado(s)`, "success");
-  }
-
-  determinarTipoAnexo(file) {
-    const type = file.type;
-    if (type.startsWith("image/")) return "image";
-    if (type.startsWith("video/")) return "video";
-    if (type === "application/pdf" || type.includes("document"))
-      return "document";
-    if (type.startsWith("audio/")) return "audio";
-    return "document";
-  }
-
-  removerAnexo(index) {
-    this.novaOcorrencia.dados.anexos.splice(index, 1);
-    this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-    this.showToast("Anexo removido", "info");
-  }
-
-  async finalizarOcorrencia() {
-    this.salvarDadosEtapa();
-    const dados = this.novaOcorrencia.dados;
-    if (!dados.forma_solicitacao) {
-      this.showToast("Selecione a forma de solicitação", "warning");
-      this.novaOcorrencia.etapa = 1;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    if (!dados.tipo_ocorrencia) {
-      this.showToast("Selecione o tipo de ocorrência", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    if (!dados.local_ocorrencia || dados.local_ocorrencia.trim() === "") {
-      this.showToast("Informe o local da ocorrência", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    if (!dados.data_hora_inicio || dados.data_hora_inicio === "") {
-      this.showToast("Informe a data e hora do início", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    if (!dados.observacoes || dados.observacoes.trim().length < 10) {
-      this.showToast(
-        "Descreva o ocorrido com pelo menos 10 caracteres",
-        "warning",
-      );
-      this.novaOcorrencia.etapa = 4;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    try {
-      const dateObj = new Date(dados.data_hora_inicio);
-      if (isNaN(dateObj.getTime())) {
-        this.showToast("Data e hora de início inválida", "warning");
-        this.novaOcorrencia.etapa = 2;
-        this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-        return;
-      }
-    } catch (e) {
-      this.showToast("Data e hora de início inválida", "warning");
-      this.novaOcorrencia.etapa = 2;
-      this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-      return;
-    }
-    if (dados.data_hora_encerramento) {
-      try {
-        const dateObj = new Date(dados.data_hora_encerramento);
-        if (isNaN(dateObj.getTime())) {
-          this.showToast("Data e hora de encerramento inválida", "warning");
-          this.novaOcorrencia.etapa = 2;
-          this.renderizarEtapa(
-            document.getElementById("novaOcorrenciaContent"),
-          );
-          return;
-        }
-        const inicio = new Date(dados.data_hora_inicio);
-        const fim = new Date(dados.data_hora_encerramento);
-        if (fim < inicio) {
-          this.showToast(
-            "Data de encerramento deve ser posterior ao início",
-            "warning",
-          );
-          this.novaOcorrencia.etapa = 2;
-          this.renderizarEtapa(
-            document.getElementById("novaOcorrenciaContent"),
-          );
-          return;
-        }
-      } catch (e) {
-        this.showToast("Data e hora de encerramento inválida", "warning");
-        this.novaOcorrencia.etapa = 2;
-        this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-        return;
-      }
-    }
-    if (dados.envolvidos.length === 0) {
-      if (!confirm("Nenhum envolvido cadastrado. Deseja continuar assim?")) {
-        this.novaOcorrencia.etapa = 3;
-        this.renderizarEtapa(document.getElementById("novaOcorrenciaContent"));
-        return;
-      }
-    }
-    const confirmado = await this.confirmar(
-      "Deseja finalizar esta ocorrência? Após finalizar, não será mais possível editar.",
-    );
-    if (!confirmado) return;
-    const envolvidos = dados.envolvidos || [];
-    const anexos = dados.anexos || [];
-    const dadosParaSalvar = { ...dados };
-    delete dadosParaSalvar.envolvidos;
-    delete dadosParaSalvar.anexos;
-    if (dadosParaSalvar.data_hora_inicio) {
-      try {
-        const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
-        if (!isNaN(dateObj.getTime())) {
-          const timezoneOffset = dateObj.getTimezoneOffset();
-          const adjustedDate = new Date(
-            dateObj.getTime() - timezoneOffset * 60000,
-          );
-          dadosParaSalvar.data_hora_inicio = adjustedDate.toISOString();
-          console.log(
-            "📅 Data/Hora Início (sem conversão):",
-            dadosParaSalvar.data_hora_inicio,
-          );
-        } else {
-          const agora = new Date();
-          const offset = agora.getTimezoneOffset();
-          const adjusted = new Date(agora.getTime() - offset * 60000);
-          dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
-        }
-      } catch (e) {
-        const agora = new Date();
-        const offset = agora.getTimezoneOffset();
-        const adjusted = new Date(agora.getTime() - offset * 60000);
-        dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
-      }
-    } else {
-      const agora = new Date();
-      const offset = agora.getTimezoneOffset();
-      const adjusted = new Date(agora.getTime() - offset * 60000);
-      dadosParaSalvar.data_hora_inicio = adjusted.toISOString();
-    }
-    if (dadosParaSalvar.data_hora_encerramento) {
-      try {
-        const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
-        if (!isNaN(dateObj.getTime())) {
-          const timezoneOffset = dateObj.getTimezoneOffset();
-          const adjustedDate = new Date(
-            dateObj.getTime() - timezoneOffset * 60000,
-          );
-          dadosParaSalvar.data_hora_encerramento = adjustedDate.toISOString();
-        } else {
-          dadosParaSalvar.data_hora_encerramento = null;
-        }
-      } catch (e) {
-        dadosParaSalvar.data_hora_encerramento = null;
-      }
-    } else {
-      dadosParaSalvar.data_hora_encerramento = null;
-    }
-    const localizacao = await this.obterLocalizacao();
-    const result = await ocorrenciaManager.criar({
-      ...dadosParaSalvar,
-      status: navigator.onLine ? "synced" : "pending_sync",
-      latitude: localizacao.latitude,
-      longitude: localizacao.longitude,
-    });
-    if (!result.success) {
-      this.showToast("Erro ao salvar ocorrência: " + result.error, "error");
-      return;
-    }
-    const ocorrenciaId = result.data.id;
-    let erros = [];
-    if (envolvidos.length > 0) {
-      const envResult = await ocorrenciaManager.salvarEnvolvidos(
-        ocorrenciaId,
-        envolvidos,
-      );
-      if (!envResult.success) {
-        erros.push("Erro ao salvar envolvidos: " + envResult.error);
-      }
-    }
-    if (anexos.length > 0) {
-      const anexoResult = await ocorrenciaManager.salvarAnexos(
-        ocorrenciaId,
-        anexos,
-      );
-      if (!anexoResult.success) {
-        erros.push("Erro ao salvar anexos: " + anexoResult.error);
-      }
-    }
-    if (erros.length > 0) {
-      this.showToast(
-        "Ocorrência salva, mas com erros: " + erros.join(" | "),
-        "warning",
-      );
-    } else {
-      this.showToast("Ocorrência finalizada com sucesso!", "success");
-    }
-    await authManager.logCriarOcorrencia(authManager.getUserId(), ocorrenciaId);
-    if (this.rascunhoId) {
-      try {
-        const client = supabaseClient.getClient();
-        if (client) {
-          await client.from("ocorrencias").delete().eq("id", this.rascunhoId);
-          await client
-            .from("envolvidos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
-          await client
-            .from("anexos")
-            .delete()
-            .eq("ocorrencia_id", this.rascunhoId);
-        }
-        this.rascunhoId = null;
-        this.dadosRascunho = null;
-      } catch (e) {
-        console.warn("Erro ao limpar rascunho:", e);
-      }
-    }
-    this.novaOcorrencia = {
-      etapa: 1,
-      id: null,
-      dados: {
-        forma_solicitacao: "",
-        nome_solicitante: "",
-        cpf_solicitante: "",
-        rg_solicitante: "",
-        telefone_solicitante: "",
-        endereco_solicitante: "",
-        codigo_municipal: "",
-        complemento: "",
-        bairro_solicitante: "",
-        identificacao_adicional: "",
-        codigo_operacional: "",
-        local_ocorrencia: "",
-        rodovia: "",
-        bairro_ocorrencia: "",
-        referencia: "",
-        data_hora_inicio: "",
-        data_hora_encerramento: "",
-        tipo_ocorrencia: "",
-        envolvidos: [],
-        observacoes: "",
-        anexos: [],
-      },
-    };
-    this.alteracoesNaoSalvas = false;
-    setTimeout(() => this.navigateTo("dashboard"), 1500);
-  }
-
-  async renderUsuarios(container) {
-    if (!authManager.isSupervisor()) {
-      container.innerHTML = `
-        <div class="container">
-          <h2 style="color:var(--azul-bandeira);"><i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários</h2>
-          <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-            <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-              <i class="fas fa-lock"></i>
-            </div>
-            <p style="font-weight:500;">Acesso restrito a supervisores</p>
-            <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-              Voltar
-            </button>
-          </div>
-        </div>
-      `;
-      return;
-    }
-    const result = await authManager.listarUsuarios();
-    if (!result.success) {
-      container.innerHTML = `
-        <div class="container">
-          <h2 style="color:var(--azul-bandeira);"><i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários</h2>
-          <p style="color:var(--erro);">Erro ao carregar usuários: ${result.error}</p>
-          <button onclick="app.loadPageContent('usuarios')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-            Tentar novamente
-          </button>
-        </div>
-      `;
-      return;
-    }
-    const usuarios = result.data || [];
-    let html = `
-      <div class="container">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;">
-            <i class="fas fa-users" style="margin-right:8px;"></i>Gerenciar Usuários
-          </h2>
-          <button class="btn-primary" onclick="app.modalCriarUsuario()" style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;">
-            <i class="fas fa-plus" style="margin-right:4px;"></i> Novo
-          </button>
-        </div>
-        <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:14px;">
-          ${usuarios.length} usuário(s) cadastrado(s)
-        </p>
-        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
-          <input type="text" id="filtroSearchUser" placeholder="Buscar por nome, CPF ou matrícula..." style="flex:1;min-width:150px;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco-fumaca);">
-          <button class="btn-secondary" onclick="app.filtrarUsuarios()" style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-search"></i>
-          </button>
-          <button class="btn-secondary" onclick="app.limparFiltroUsuarios()" style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;">
-            <i class="fas fa-undo"></i>
-          </button>
-        </div>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Matrícula</th>
-                <th>Perfil</th>
-                <th>Status</th>
-                <th style="text-align:center;">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-    `;
-    if (usuarios.length === 0) {
-      html += `
-        <tr>
-          <td colspan="5" style="padding:20px;text-align:center;color:var(--cinza-medio);">
-            Nenhum usuário encontrado
-          </td>
-        </tr>
-      `;
-    } else {
-      usuarios.forEach((user) => {
-        const statusClass =
-          user.status === "ativo"
-            ? "synced"
-            : user.status === "inativo"
-              ? "cancelled"
-              : "draft";
-        const statusLabel =
-          user.status === "ativo"
-            ? "Ativo"
-            : user.status === "inativo"
-              ? "Inativo"
-              : user.status === "bloqueado"
-                ? "Bloqueado"
-                : user.status;
-        const perfilLabel =
-          user.perfil === "supervisor"
-            ? "Supervisor"
-            : user.perfil === "guarda"
-              ? "Guarda"
-              : user.perfil;
-        const ehAtual = user.id === authManager.getUserId();
-        const cpfExibido = this.formatarCPFSeguro(user.cpf);
-        html += `
-          <tr>
-            <td>
-              <div style="font-weight:500;">${user.nome_completo}</div>
-              <div style="font-size:10px;color:var(--cinza-medio);">${cpfExibido}</div>
-            </td>
-            <td>${user.matricula || "-"}</td>
-            <td><span class="badge ${user.perfil === "supervisor" ? "badge-azul" : "badge-verde"}">${perfilLabel}</span></td>
-            <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
-            <td>
-              <div class="acoes">
-                <button class="btn-secondary info" onclick="app.modalEditarUsuario('${user.id}')" title="Editar">
-                  <i class="fas fa-edit"></i>
-                </button>
-                <button class="btn-secondary ${user.status === "ativo" ? "danger" : "success"}" onclick="app.toggleStatusUsuario('${user.id}')" title="${user.status === "ativo" ? "Desativar" : "Ativar"}">
-                  <i class="fas ${user.status === "ativo" ? "fa-user-slash" : "fa-user-check"}"></i>
-                </button>
-                ${
-                  !ehAtual
-                    ? `
-                  <button class="btn-secondary warning" onclick="app.resetarSenhaUsuario('${user.id}')" title="Resetar senha">
-                    <i class="fas fa-key"></i>
-                  </button>
-                `
-                    : ""
-                }
-                <button class="btn-secondary info" onclick="app.verLogsUsuario('${user.id}')" title="Ver logs">
-                  <i class="fas fa-history"></i>
-                </button>
-              </div>
-            </td>
-          </tr>
-        `;
-      });
-    }
-    html += `
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-    container.innerHTML = html;
-  }
-
-  async filtrarUsuarios() {
-    const search = document.getElementById("filtroSearchUser")?.value || "";
-    const result = await authManager.listarUsuarios({ search });
-    if (!result.success) {
-      this.showToast("Erro ao filtrar usuários", "error");
-      return;
-    }
-    this.renderUsuarios(document.getElementById("page-usuarios"));
-  }
-
-  async limparFiltroUsuarios() {
-    const input = document.getElementById("filtroSearchUser");
-    if (input) input.value = "";
-    this.renderUsuarios(document.getElementById("page-usuarios"));
-  }
-
-  modalCriarUsuario() {
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-user-plus" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Criar Usuário
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body">
-          <form id="formCriarUsuario">
-            <div class="form-group">
-              <label for="new_nome">Nome Completo <span class="required">*</span></label>
-              <input type="text" id="new_nome" class="form-control" placeholder="Nome completo" required>
-            </div>
-            <div class="form-group">
-              <label for="new_cpf">CPF <span class="required">*</span></label>
-              <input type="text" id="new_cpf" class="form-control" placeholder="123.456.789-00" required maxlength="14">
-            </div>
-            <div class="form-group">
-              <label for="new_matricula">Matrícula</label>
-              <input type="text" id="new_matricula" class="form-control" placeholder="Matrícula">
-            </div>
-            <div class="form-group">
-              <label for="new_email">Email</label>
-              <input type="email" id="new_email" class="form-control" placeholder="email@exemplo.com">
-            </div>
-            <div class="form-group">
-              <label for="new_telefone">Telefone</label>
-              <input type="text" id="new_telefone" class="form-control" placeholder="(44) 99999-9999">
-            </div>
-            <div class="form-group">
-              <label for="new_perfil">Perfil <span class="required">*</span></label>
-              <select id="new_perfil" class="form-control" required>
-                <option value="guarda">Guarda</option>
-                <option value="supervisor">Supervisor</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="new_senha">Senha (opcional)</label>
-              <input type="text" id="new_senha" class="form-control" placeholder="Deixe em branco para gerar automática">
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Se não preencher, uma senha temporária será gerada
-              </div>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-          <button type="button" class="btn-primary" onclick="app.confirmarCriarUsuario()">
-            <i class="fas fa-save" style="margin-right:6px;"></i> Criar
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    const cpfInput = document.getElementById("new_cpf");
-    if (cpfInput) {
-      cpfInput.addEventListener("input", function (e) {
-        let value = this.value.replace(/\D/g, "");
-        if (value.length > 11) value = value.slice(0, 11);
-        let formatted = "";
-        if (value.length > 0)
-          formatted = value.replace(
-            /(\d{3})(\d{3})(\d{3})(\d{2})/,
-            "$1.$2.$3-$4",
-          );
-        if (value.length <= 3) formatted = value;
-        else if (value.length <= 6)
-          formatted = value.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-        else if (value.length <= 9)
-          formatted = value.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-        this.value = formatted;
-      });
-    }
-  }
-
-  async confirmarCriarUsuario() {
-    const nome = document.getElementById("new_nome")?.value?.trim();
-    const cpf = document.getElementById("new_cpf")?.value?.trim();
-    const matricula = document.getElementById("new_matricula")?.value?.trim();
-    const email = document.getElementById("new_email")?.value?.trim();
-    const telefone = document.getElementById("new_telefone")?.value?.trim();
-    const perfil = document.getElementById("new_perfil")?.value;
-    const senha = document.getElementById("new_senha")?.value?.trim();
-    if (!nome || !cpf) {
-      this.showToast("Preencha nome e CPF", "warning");
-      return;
-    }
-    const result = await authManager.criarUsuario({
-      nome,
-      cpf,
-      matricula,
-      email,
-      telefone,
-      perfil,
-      senha: senha || undefined,
-    });
-    if (!result.success) {
-      this.showToast("Erro ao criar usuário: " + result.error, "error");
-      return;
-    }
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-    let msg = "Usuário criado com sucesso!";
-    if (result.senha_temporaria) {
-      msg += ` Senha temporária: ${result.senha_temporaria}`;
-    }
-    this.showToast(msg, "success");
-    this.loadPageContent("usuarios");
-  }
-
-  async modalEditarUsuario(id) {
-    const result = await authManager.listarUsuarios({ search: "" });
-    if (!result.success) {
-      this.showToast("Erro ao carregar dados do usuário", "error");
-      return;
-    }
-    const user = result.data.find((u) => u.id === id);
-    if (!user) {
-      this.showToast("Usuário não encontrado", "error");
-      return;
-    }
-    const isSelf = user.id === authManager.getUserId();
-    const isSupervisor = authManager.isSupervisor();
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-user-edit" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Editar Usuário
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body">
-          <form id="formEditarUsuario">
-            <div class="form-group">
-              <label for="edit_nome">Nome Completo <span class="required">*</span></label>
-              <input type="text" id="edit_nome" class="form-control" value="${user.nome_completo || ""}" required>
-            </div>
-            <div class="form-group">
-              <label for="edit_cpf">CPF</label>
-              <input type="text" id="edit_cpf" class="form-control" value="${user.cpf || ""}" disabled style="opacity:0.7;">
-            </div>
-            ${
-              isSupervisor
-                ? `
-              <div class="form-group">
-                <label for="edit_matricula">Matrícula</label>
-                <input type="text" id="edit_matricula" class="form-control" value="${user.matricula || ""}">
-              </div>
-              <div class="form-group">
-                <label for="edit_perfil">Perfil</label>
-                <select id="edit_perfil" class="form-control">
-                  <option value="guarda" ${user.perfil === "guarda" ? "selected" : ""}>Guarda</option>
-                  <option value="supervisor" ${user.perfil === "supervisor" ? "selected" : ""}>Supervisor</option>
-                </select>
-              </div>
-            `
-                : `
-              <div class="form-group">
-                <label>Matrícula</label>
-                <input type="text" class="form-control" value="${user.matricula || ""}" disabled style="opacity:0.7;">
-              </div>
-              <div class="form-group">
-                <label>Perfil</label>
-                <input type="text" class="form-control" value="${user.perfil === "supervisor" ? "Supervisor" : "Guarda"}" disabled style="opacity:0.7;">
-              </div>
-            `
-            }
-            <div class="form-group">
-              <label for="edit_email">Email</label>
-              <input type="email" id="edit_email" class="form-control" value="${user.email || ""}">
-            </div>
-            <div class="form-group">
-              <label for="edit_telefone">Telefone</label>
-              <input type="text" id="edit_telefone" class="form-control" value="${user.telefone || ""}">
-            </div>
-            ${
-              isSupervisor && !isSelf
-                ? `
-              <div class="form-group">
-                <label for="edit_status">Status</label>
-                <select id="edit_status" class="form-control">
-                  <option value="ativo" ${user.status === "ativo" ? "selected" : ""}>Ativo</option>
-                  <option value="inativo" ${user.status === "inativo" ? "selected" : ""}>Inativo</option>
-                  <option value="bloqueado" ${user.status === "bloqueado" ? "selected" : ""}>Bloqueado</option>
-                </select>
-              </div>
-            `
-                : `
-              <div class="form-group">
-                <label>Status</label>
-                <input type="text" class="form-control" value="${user.status === "ativo" ? "Ativo" : user.status === "inativo" ? "Inativo" : user.status === "bloqueado" ? "Bloqueado" : user.status}" disabled style="opacity:0.7;">
-              </div>
-            `
-            }
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-          <button type="button" class="btn-primary" onclick="app.confirmarEditarUsuario('${id}')">
-            <i class="fas fa-save" style="margin-right:6px;"></i> Salvar
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  async confirmarEditarUsuario(id) {
-    const nome = document.getElementById("edit_nome")?.value?.trim();
-    const email = document.getElementById("edit_email")?.value?.trim();
-    const telefone = document.getElementById("edit_telefone")?.value?.trim();
-    if (!nome) {
-      this.showToast("Nome é obrigatório", "warning");
-      return;
-    }
-    const dados = { nome_completo: nome };
-    if (email !== undefined) dados.email = email;
-    if (telefone !== undefined) dados.telefone = telefone;
-    if (authManager.isSupervisor() && id !== authManager.getUserId()) {
-      const matricula = document
-        .getElementById("edit_matricula")
-        ?.value?.trim();
-      const perfil = document.getElementById("edit_perfil")?.value;
-      const status = document.getElementById("edit_status")?.value;
-      if (matricula !== undefined) dados.matricula = matricula;
-      if (perfil !== undefined) dados.perfil = perfil;
-      if (status !== undefined) dados.status = status;
-    }
-    const result = await authManager.atualizarUsuario(id, dados);
-    if (!result.success) {
-      this.showToast("Erro ao atualizar: " + result.error, "error");
-      return;
-    }
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-    this.showToast("Usuário atualizado com sucesso!", "success");
-    if (id === authManager.getUserId()) {
-      this.atualizarHeader();
-    }
-    this.loadPageContent("usuarios");
-  }
-
-  async toggleStatusUsuario(id) {
-    const result = await authManager.listarUsuarios({ search: "" });
-    if (!result.success) {
-      this.showToast("Erro ao carregar dados", "error");
-      return;
-    }
-    const user = result.data.find((u) => u.id === id);
-    if (!user) return;
-    const novoStatus = user.status === "ativo" ? "inativo" : "ativo";
-    const confirmado = await this.confirmar(
-      `Deseja ${novoStatus === "ativo" ? "ativar" : "desativar"} o usuário ${user.nome_completo}?`,
-    );
-    if (!confirmado) return;
-    const res = await authManager.ativarDesativarUsuario(id, novoStatus);
-    if (!res.success) {
-      this.showToast("Erro: " + res.error, "error");
-      return;
-    }
-    this.showToast(
-      `Usuário ${novoStatus === "ativo" ? "ativado" : "desativado"} com sucesso!`,
-      "success",
-    );
-    this.loadPageContent("usuarios");
-  }
-
-  async resetarSenhaUsuario(id) {
-    const confirmado = await this.confirmar(
-      "Deseja resetar a senha deste usuário? Uma nova senha temporária será gerada.",
-    );
-    if (!confirmado) return;
-    const result = await authManager.resetarSenha(id);
-    if (!result.success) {
-      this.showToast("Erro ao resetar senha: " + result.error, "error");
-      return;
-    }
-    this.showToast(
-      `Senha resetada! Senha temporária: ${result.senha_temporaria}`,
-      "success",
-    );
-    this.loadPageContent("usuarios");
-  }
-
-  async verLogsUsuario(id) {
-    const result = await authManager.listarLogsAcesso({
-      usuario_id: id,
-      limit: 50,
-    });
-    if (!result.success) {
-      this.showToast("Erro ao carregar logs", "error");
-      return;
-    }
-    const logs = result.data || [];
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-history" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Logs de Acesso
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
-          ${
-            logs.length === 0
-              ? `
-            <p style="color:var(--cinza-medio);text-align:center;padding:20px;">Nenhum log encontrado</p>
-          `
-              : `
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="background:var(--cinza-claro);">
-                  <th style="padding:6px 8px;text-align:left;">Data/Hora</th>
-                  <th style="padding:6px 8px;text-align:left;">Ação</th>
-                  <th style="padding:6px 8px;text-align:left;">IP</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${logs
-                  .map(
-                    (log) => `
-                  <tr style="border-bottom:1px solid var(--cinza-claro);">
-                    <td style="padding:6px 8px;">${this.formatarDataHoraLocal(log.data_hora)}</td>
-                    <td style="padding:6px 8px;">${log.acao || "login"}</td>
-                    <td style="padding:6px 8px;">${log.ip || "-"}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-              </tbody>
-            </table>
-          `
-          }
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  async renderPerfil(container) {
-    const user = authManager.getUser();
-    if (!user) {
-      container.innerHTML = `<p>Usuário não encontrado</p>`;
-      return;
-    }
-    const isSupervisor = authManager.isSupervisor();
-    const podeEditarMatricula = isSupervisor;
-    container.innerHTML = `
-      <div class="container">
-        <h2 style="color:var(--azul-bandeira);"><i class="fas fa-user" style="margin-right:8px;"></i>Meu Perfil</h2>
-        <div class="card" style="margin-bottom:16px;">
-          <div style="text-align:center;padding:16px;">
-            <div class="avatar" style="width:72px;height:72px;border-radius:50%;background:var(--gradiente-principal);color:var(--branco);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;margin:0 auto 12px;">
-              ${user.nome_completo?.charAt(0) || "U"}
-            </div>
-            <h3 style="margin:0;">${user.nome_completo}</h3>
-            <p style="color:var(--cinza-medio);font-size:14px;">${user.perfil === "supervisor" ? "Supervisor" : "Guarda"}</p>
-            <p style="color:var(--cinza-medio);font-size:13px;">
-              <i class="fas fa-id-card"></i> ${user.matricula || "Sem matrícula"}
-            </p>
-          </div>
-        </div>
-        <form id="formPerfil" style="margin-top:8px;">
-          <div class="form-group">
-            <label for="perfil_nome">Nome Completo <span class="required">*</span></label>
-            <input type="text" id="perfil_nome" class="form-control" value="${user.nome_completo || ""}" required>
-          </div>
-          <div class="form-group">
-            <label for="perfil_cpf">CPF</label>
-            <input type="text" id="perfil_cpf" class="form-control" value="${user.cpf || ""}" disabled style="opacity:0.7;">
-          </div>
-          <div class="form-group">
-            <label for="perfil_matricula">Matrícula</label>
-            <input type="text" id="perfil_matricula" class="form-control" value="${user.matricula || ""}" ${podeEditarMatricula ? "" : 'disabled style="opacity:0.7;"'}>
-          </div>
-          <div class="form-group">
-            <label for="perfil_email">Email</label>
-            <input type="email" id="perfil_email" class="form-control" value="${user.email || ""}">
-          </div>
-          <div class="form-group">
-            <label for="perfil_telefone">Telefone</label>
-            <input type="text" id="perfil_telefone" class="form-control" value="${user.telefone || ""}">
-          </div>
-          <div class="form-group">
-            <label for="perfil_perfil">Perfil</label>
-            <input type="text" id="perfil_perfil" class="form-control" value="${user.perfil === "supervisor" ? "Supervisor" : "Guarda"}" disabled style="opacity:0.7;">
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
-            <button type="button" class="btn-primary" onclick="app.salvarPerfil()" style="flex:1;">
-              <i class="fas fa-save" style="margin-right:6px;"></i> Salvar Alterações
-            </button>
-            <button type="button" class="btn-secondary" onclick="app.modalAlterarSenha()" style="flex:1;">
-              <i class="fas fa-key" style="margin-right:6px;"></i> Alterar Senha
-            </button>
-          </div>
-        </form>
-      </div>
-    `;
-  }
-
-  async salvarPerfil() {
-    const nome = document.getElementById("perfil_nome")?.value?.trim();
-    const email = document.getElementById("perfil_email")?.value?.trim();
-    const telefone = document.getElementById("perfil_telefone")?.value?.trim();
-    const matricula = document
-      .getElementById("perfil_matricula")
-      ?.value?.trim();
-    if (!nome) {
-      this.showToast("Nome é obrigatório", "warning");
-      return;
-    }
-    const dados = { nome_completo: nome };
-    if (email !== undefined) dados.email = email;
-    if (telefone !== undefined) dados.telefone = telefone;
-    if (authManager.isSupervisor() && matricula !== undefined) {
-      dados.matricula = matricula;
-    }
-    const result = await authManager.atualizarUsuario(
-      authManager.getUserId(),
-      dados,
-    );
-    if (!result.success) {
-      this.showToast("Erro ao atualizar perfil: " + result.error, "error");
-      return;
-    }
-    this.showToast("Perfil atualizado com sucesso!", "success");
-    this.atualizarHeader();
-    this.loadPageContent("perfil");
-  }
-
-  modalAlterarSenha() {
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:400px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-key" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Alterar Senha
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body">
-          <form id="formAlterarSenha">
-            <div class="form-group">
-              <label for="senha_atual">Senha Atual <span class="required">*</span></label>
-              <input type="password" id="senha_atual" class="form-control" placeholder="Digite sua senha atual" required>
-            </div>
-            <div class="form-group">
-              <label for="nova_senha">Nova Senha <span class="required">*</span></label>
-              <input type="password" id="nova_senha" class="form-control" placeholder="Nova senha" required minlength="6">
-            </div>
-            <div class="form-group">
-              <label for="confirmar_senha">Confirmar Nova Senha <span class="required">*</span></label>
-              <input type="password" id="confirmar_senha" class="form-control" placeholder="Confirme a nova senha" required>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-          <button type="button" class="btn-primary" onclick="app.confirmarAlterarSenha()">
-            <i class="fas fa-check" style="margin-right:6px;"></i> Alterar
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  async confirmarAlterarSenha() {
-    const senhaAtual = document.getElementById("senha_atual")?.value;
-    const novaSenha = document.getElementById("nova_senha")?.value;
-    const confirmarSenha = document.getElementById("confirmar_senha")?.value;
-    if (!senhaAtual || !novaSenha || !confirmarSenha) {
+  async handleLogin() {
+    const cpf = document.getElementById("loginCpf").value.trim();
+    const senha = document.getElementById("loginSenha").value;
+    const btn = document.getElementById("loginBtn");
+    const errorEl = document.getElementById("loginError");
+
+    if (!cpf || !senha) {
       this.showToast("Preencha todos os campos", "warning");
       return;
     }
-    if (novaSenha.length < 6) {
-      this.showToast(
-        "A nova senha deve ter pelo menos 6 caracteres",
-        "warning",
+
+    btn.disabled = true;
+    btn.classList.add("loading");
+    errorEl.style.display = "none";
+
+    try {
+      const result = await authManager.login(cpf, senha);
+
+      if (!result.success) {
+        errorEl.style.display = "block";
+        errorEl.textContent = result.error;
+        this.showToast(result.error, "error");
+        return;
+      }
+
+      this.atualizarHeader();
+      await this.carregarRascunho();
+      sessionManager.resetSession();
+
+      // Registrar log pericial de login
+      await this.registrarLogPericial(
+        "LOGIN",
+        "usuarios",
+        authManager.getUserId(),
       );
-      return;
+
+      if (result.primeiro_acesso) {
+        this.showPrimeiroAcesso();
+        this.showToast("Primeiro acesso! Defina sua nova senha.", "warning");
+        return;
+      }
+
+      this.showToast("Login realizado com sucesso!", "success");
+      this.navigateTo("dashboard");
+    } catch (error) {
+      this.showToast("Erro ao realizar login", "error");
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove("loading");
     }
-    if (novaSenha !== confirmarSenha) {
-      this.showToast("As senhas não coincidem", "warning");
-      return;
-    }
-    const user = authManager.getUser();
-    const client = supabaseClient.getClient();
-    if (!client) {
-      this.showToast("Erro ao conectar", "error");
-      return;
-    }
-    const { data: senhaValida } = await client.rpc("verificar_senha", {
-      p_cpf: user.cpf,
-      p_senha: senhaAtual,
-    });
-    if (!senhaValida) {
-      this.showToast("Senha atual incorreta", "warning");
-      return;
-    }
-    const { data: hashData } = await client.rpc("criar_hash_senha", {
-      p_senha: novaSenha,
-    });
-    const result = await authManager.atualizarUsuario(user.id, {
-      senha_hash: hashData,
-    });
-    if (!result.success) {
-      this.showToast("Erro ao alterar senha: " + result.error, "error");
-      return;
-    }
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-    this.showToast("Senha alterada com sucesso!", "success");
   }
 
   showPrimeiroAcesso() {
@@ -9040,12 +989,14 @@ class App {
         </div>
       </div>
     `;
+
     document
       .getElementById("formPrimeiroAcesso")
       ?.addEventListener("submit", async (e) => {
         e.preventDefault();
         await this.handlePrimeiroAcesso();
       });
+
     this.showPage("login");
   }
 
@@ -9053,6 +1004,7 @@ class App {
     const input = document.getElementById(id);
     const btn = input.parentElement.querySelector(".toggle-password");
     const icon = btn.querySelector("i");
+
     if (input.type === "password") {
       input.type = "text";
       icon.className = "fas fa-eye-slash";
@@ -9066,22 +1018,35 @@ class App {
     const novaSenha = document.getElementById("novaSenha").value;
     const confirmar = document.getElementById("confirmarSenha").value;
     const btn = document.getElementById("btnPrimeiroAcesso");
+
     if (novaSenha.length < 6) {
       this.showToast("A senha deve ter pelo menos 6 caracteres", "warning");
       return;
     }
+
     if (novaSenha !== confirmar) {
       this.showToast("As senhas não coincidem", "warning");
       return;
     }
+
     btn.disabled = true;
     btn.classList.add("loading");
+
     try {
       const result = await authManager.primeiroAcesso(novaSenha);
+
       if (!result.success) {
         this.showToast(result.error, "error");
         return;
       }
+
+      // Registrar log pericial de primeiro acesso
+      await this.registrarLogPericial(
+        "PRIMEIRO_ACESSO",
+        "usuarios",
+        authManager.getUserId(),
+      );
+
       this.showToast("Senha definida com sucesso!", "success");
       setTimeout(() => this.navigateTo("dashboard"), 1500);
     } catch (error) {
@@ -9092,194 +1057,58 @@ class App {
     }
   }
 
-  setupListeners() {
-    authManager.onAuthChange((event, data) => {
-      console.log("🔄 Evento de autenticação:", event);
-      if (event === "login") {
-        this.atualizarHeader();
-        this.carregarRascunho();
-        sessionManager.resetSession();
-        this.route();
-      } else if (event === "logout") {
-        this.route();
-      }
-    });
-    document
-      .querySelectorAll(".nav-item[data-page='dashboard']")
-      .forEach((item) => {
-        item.addEventListener("click", () => {
-          if (
-            this.currentPage === "nova-ocorrencia" &&
-            this.alteracoesNaoSalvas
-          ) {
-            this.paginaDestino = "dashboard";
-            this.paramsDestino = null;
-            this.perguntarSalvarRascunho("dashboard");
-          } else {
-            this.navigateTo("dashboard");
-          }
-        });
-      });
-    document
-      .querySelectorAll(".nav-item[data-page='mural']")
-      .forEach((item) => {
-        item.addEventListener("click", () => {
-          if (
-            this.currentPage === "nova-ocorrencia" &&
-            this.alteracoesNaoSalvas
-          ) {
-            this.paginaDestino = "mural";
-            this.paramsDestino = null;
-            this.perguntarSalvarRascunho("mural");
-          } else {
-            this.navigateTo("mural");
-          }
-        });
-      });
-    document
-      .querySelectorAll(".nav-item[data-page='nova-ocorrencia']")
-      .forEach((item) => {
-        item.addEventListener("click", () => {
-          if (
-            this.currentPage === "nova-ocorrencia" &&
-            this.alteracoesNaoSalvas
-          ) {
-            this.showToast("Você já está na página de nova ocorrência", "info");
-            return;
-          }
-          this.navigateTo("nova-ocorrencia");
-        });
-      });
-    document
-      .querySelectorAll(".nav-item[data-page='ocorrencias']")
-      .forEach((item) => {
-        item.addEventListener("click", () => {
-          if (
-            this.currentPage === "nova-ocorrencia" &&
-            this.alteracoesNaoSalvas
-          ) {
-            this.paginaDestino = "ocorrencias";
-            this.paramsDestino = null;
-            this.perguntarSalvarRascunho("ocorrencias");
-          } else {
-            this.navigateTo("ocorrencias");
-          }
-        });
-      });
-    const navMais = document.getElementById("navMais");
-    if (navMais) {
-      navMais.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log("🔘 Botão 'Mais' clicado - abrindo bottom sheet");
-        this.toggleBottomSheet();
-      });
-    } else {
-      console.warn("⚠️ Elemento #navMais não encontrado no DOM");
+  // ============================================
+  // LOGOUT
+  // ============================================
+
+  async handleLogout() {
+    const confirmado = await utils.confirmar(
+      "Deseja realmente sair do sistema?",
+    );
+    if (!confirmado) return;
+
+    // Registrar log pericial de logout
+    if (authManager.isLoggedIn()) {
+      await this.registrarLogPericial(
+        "LOGOUT",
+        "usuarios",
+        authManager.getUserId(),
+      );
     }
-    document.querySelectorAll(".nav-item[data-page='mais']").forEach((item) => {
-      item.addEventListener("click", () => {
-        this.toggleBottomSheet();
-      });
-    });
-    const overlay = document.getElementById("bottomSheetOverlay");
-    if (overlay) {
-      overlay.addEventListener("click", () => this.closeBottomSheet());
-    }
-    window.addEventListener("beforeunload", (e) => {
-      if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
-        e.preventDefault();
-        e.returnValue =
-          "Você tem alterações não salvas. Deseja realmente sair?";
-        return e.returnValue;
-      }
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") this.closeBottomSheet();
-    });
-    const loginForm = document.getElementById("loginForm");
-    if (loginForm) {
-      loginForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        await this.handleLogin();
-      });
-    }
-    const toggleBtn = document.querySelector(".toggle-password");
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", (e) => {
-        const input = document.getElementById("loginSenha");
-        const icon = e.currentTarget.querySelector("i");
-        if (input.type === "password") {
-          input.type = "text";
-          icon.className = "fas fa-eye-slash";
-        } else {
-          input.type = "password";
-          icon.className = "fas fa-eye";
-        }
-      });
-    }
+
+    await authManager.logout();
+    this.route();
+    this.showToast("Logout realizado com sucesso!", "info");
   }
 
-  async handleLogin() {
-    const cpf = document.getElementById("loginCpf").value.trim();
-    const senha = document.getElementById("loginSenha").value;
-    const btn = document.getElementById("loginBtn");
-    const errorEl = document.getElementById("loginError");
-    if (!cpf || !senha) {
-      this.showToast("Preencha todos os campos", "warning");
-      return;
-    }
-    btn.disabled = true;
-    btn.classList.add("loading");
-    errorEl.style.display = "none";
-    try {
-      const result = await authManager.login(cpf, senha);
-      if (!result.success) {
-        errorEl.style.display = "block";
-        errorEl.textContent = result.error;
-        this.showToast(result.error, "error");
-        return;
-      }
-      this.atualizarHeader();
-      await this.carregarRascunho();
-      sessionManager.resetSession();
-      if (result.primeiro_acesso) {
-        this.showPrimeiroAcesso();
-        this.showToast("Primeiro acesso! Defina sua nova senha.", "warning");
-        return;
-      }
-      this.showToast("Login realizado com sucesso!", "success");
-      this.navigateTo("dashboard");
-    } catch (error) {
-      this.showToast("Erro ao realizar login", "error");
-    } finally {
-      btn.disabled = false;
-      btn.classList.remove("loading");
-    }
+  // ============================================
+  // TOASTS E MODAIS
+  // ============================================
+
+  showToast(message, type = "info", duration = 4000) {
+    return ui.showToast(message, type, duration);
   }
 
-  showToast(message, type = "info") {
-    const container = document.getElementById("toastContainer");
-    if (!container) return;
-    const toast = document.createElement("div");
-    toast.className = `toast ${type}`;
-    const iconMap = {
-      success: "fas fa-check-circle",
-      error: "fas fa-exclamation-circle",
-      warning: "fas fa-exclamation-triangle",
-      info: "fas fa-info-circle",
-    };
-    toast.innerHTML = `<i class="${iconMap[type] || iconMap.info}" style="margin-right:8px;"></i> ${message}`;
-    container.appendChild(toast);
-    setTimeout(() => {
-      toast.classList.add("out");
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
+  confirmar(mensagem, titulo = "Confirmar") {
+    return utils.confirmar(mensagem, titulo);
+  }
+
+  inputModal(
+    mensagem,
+    titulo = "Informe o motivo",
+    placeholder = "Digite o motivo...",
+  ) {
+    return utils.inputModal(mensagem, titulo, placeholder);
+  }
+
+  confirmarInputModal() {
+    return utils.confirmarInputModal();
   }
 
   mostrarErro(mensagem) {
     const container = document.getElementById("page-login");
     if (!container) return;
+
     container.innerHTML = `
       <div class="login-screen">
         <div class="login-card" style="max-width:400px;">
@@ -9297,8 +1126,265 @@ class App {
         </div>
       </div>
     `;
+
     this.showPage("login");
   }
+
+  // ============================================
+  // LISTENERS
+  // ============================================
+
+  setupListeners() {
+    // Auth listeners
+    authManager.onAuthChange((event, data) => {
+      console.log("🔄 Evento de autenticação:", event);
+      if (event === "login") {
+        this.atualizarHeader();
+        this.carregarRascunho();
+        sessionManager.resetSession();
+        this.route();
+      } else if (event === "logout") {
+        this.route();
+      }
+    });
+
+    // Bottom nav listeners
+    document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
+      item.addEventListener("click", () => {
+        const page = item.dataset.page;
+
+        if (page === "nova-ocorrencia") {
+          if (this.currentPage === "nova-ocorrencia") {
+            this.showToast("Você já está na página de nova ocorrência", "info");
+            return;
+          }
+        }
+
+        if (
+          this.currentPage === "nova-ocorrencia" &&
+          this.alteracoesNaoSalvas
+        ) {
+          this.paginaDestino = page;
+          this.paramsDestino = null;
+          this.perguntarSalvarRascunho(page);
+        } else {
+          this.navigateTo(page);
+        }
+      });
+    });
+
+    // Bottom sheet
+    const navMais = document.getElementById("navMais");
+    if (navMais) {
+      navMais.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ui.toggleBottomSheet();
+      });
+    }
+
+    // Login form
+    const loginForm = document.getElementById("loginForm");
+    if (loginForm) {
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        await this.handleLogin();
+      });
+    }
+
+    // Toggle password
+    const toggleBtn = document.querySelector(".toggle-password");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (e) => {
+        const input = document.getElementById("loginSenha");
+        const icon = e.currentTarget.querySelector("i");
+
+        if (input.type === "password") {
+          input.type = "text";
+          icon.className = "fas fa-eye-slash";
+        } else {
+          input.type = "password";
+          icon.className = "fas fa-eye";
+        }
+      });
+    }
+
+    // Gestos de deslize (swipe) para mobile
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isSwiping = false;
+
+    document.addEventListener(
+      "touchstart",
+      (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+        isSwiping = false;
+      },
+      { passive: true },
+    );
+
+    document.addEventListener(
+      "touchmove",
+      (e) => {
+        const touchEndX = e.changedTouches[0].screenX;
+        const touchEndY = e.changedTouches[0].screenY;
+        const diffX = touchEndX - touchStartX;
+        const diffY = touchEndY - touchStartY;
+
+        // Verificar se é um swipe horizontal (mais horizontal que vertical)
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+          isSwiping = true;
+          // Impedir scroll durante swipe
+          e.preventDefault();
+        }
+      },
+      { passive: false },
+    );
+
+    document.addEventListener(
+      "touchend",
+      (e) => {
+        if (!isSwiping) return;
+
+        const touchEndX = e.changedTouches[0].screenX;
+        const diffX = touchEndX - touchStartX;
+
+        // Swipe para esquerda (próxima página)
+        if (diffX < -50) {
+          this.handleSwipeLeft();
+        }
+        // Swipe para direita (página anterior)
+        else if (diffX > 50) {
+          this.handleSwipeRight();
+        }
+
+        isSwiping = false;
+      },
+      { passive: true },
+    );
+
+    // Before unload - avisar sobre alterações não salvas
+    window.addEventListener("beforeunload", (e) => {
+      if (this.currentPage === "nova-ocorrencia" && this.alteracoesNaoSalvas) {
+        e.preventDefault();
+        e.returnValue =
+          "Você tem alterações não salvas. Deseja realmente sair?";
+        return e.returnValue;
+      }
+    });
+
+    // Escape para fechar bottom sheet
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") ui.closeBottomSheet();
+    });
+
+    // Evento de localização atualizada
+    document.addEventListener("localizacao_atualizada", (e) => {
+      // Atualizar interfaces que dependem de localização
+      this.atualizarLocalizacaoUI(e.detail);
+    });
+  }
+
+  // ============================================
+  // GESTOS DE DESLIZE (SWIPE)
+  // ============================================
+
+  handleSwipeLeft() {
+    // Navegar para a próxima aba (apenas em páginas com tabs)
+    const currentPage = this.currentPage;
+    const swipePages = ["consulta", "mural", "ocorrencias"];
+
+    if (!swipePages.includes(currentPage)) return;
+
+    const pageOrder = ["consulta", "mural", "ocorrencias"];
+    const currentIndex = pageOrder.indexOf(currentPage);
+
+    if (currentIndex < pageOrder.length - 1) {
+      const nextPage = pageOrder[currentIndex + 1];
+      this.navigateTo(nextPage);
+      this.showToast(`→ ${this.getPageLabel(nextPage)}`, "info");
+    }
+  }
+
+  handleSwipeRight() {
+    // Navegar para a aba anterior
+    const currentPage = this.currentPage;
+    const swipePages = ["consulta", "mural", "ocorrencias"];
+
+    if (!swipePages.includes(currentPage)) return;
+
+    const pageOrder = ["consulta", "mural", "ocorrencias"];
+    const currentIndex = pageOrder.indexOf(currentPage);
+
+    if (currentIndex > 0) {
+      const prevPage = pageOrder[currentIndex - 1];
+      this.navigateTo(prevPage);
+      this.showToast(`← ${this.getPageLabel(prevPage)}`, "info");
+    }
+  }
+
+  getPageLabel(page) {
+    const labels = {
+      consulta: "Consulta Operacional",
+      mural: "Mural",
+      ocorrencias: "Ocorrências",
+    };
+    return labels[page] || page;
+  }
+
+  // ============================================
+  // GEOLOCALIZAÇÃO
+  // ============================================
+
+  obterLocalizacao() {
+    return utils.obterLocalizacao();
+  }
+
+  obterIP() {
+    return utils.obterIP();
+  }
+
+  obterLocalizacaoAtual() {
+    return this.ultimaLocalizacao || null;
+  }
+
+  atualizarLocalizacaoUI(localizacao) {
+    // Atualizar elementos que mostram localização
+    const elementos = document.querySelectorAll("[data-localizacao]");
+    elementos.forEach((el) => {
+      if (localizacao) {
+        el.textContent = `${localizacao.latitude.toFixed(6)}, ${localizacao.longitude.toFixed(6)}`;
+        el.style.display = "block";
+      } else {
+        el.style.display = "none";
+      }
+    });
+  }
+
+  // ============================================
+  // DATA/HORA COM FUSO CORRIGIDO
+  // ============================================
+
+  async obterDataHoraPrecisa(forceRefresh = false) {
+    return utils.obterDataHoraPrecisa(forceRefresh);
+  }
+
+  async obterDataHoraBrasiliaISO(forceRefresh = false) {
+    return utils.obterDataHoraBrasiliaISO(forceRefresh);
+  }
+
+  async obterDataAtualISO(forceRefresh = false) {
+    return utils.obterDataAtualISO(forceRefresh);
+  }
+
+  async obterDataHoraInput(forceRefresh = false) {
+    return utils.obterDataHoraInput(forceRefresh);
+  }
+
+  // ============================================
+  // REGISTRO DE LOGS PERICIAIS
+  // ============================================
 
   async registrarLogPericial(
     acao,
@@ -9309,8 +1395,12 @@ class App {
   ) {
     try {
       const user = authManager.getUser();
-      const loc = await this.obterLocalizacao();
+      const loc =
+        this.obterLocalizacaoAtual() || (await this.obterLocalizacao());
       const client = supabaseClient.getClient();
+
+      if (!client) return;
+
       const logData = {
         usuario_id: user?.id,
         acao: acao,
@@ -9320,49 +1410,127 @@ class App {
         dados_novos: dadosNov,
         ip_address: await this.obterIP(),
         user_agent: navigator.userAgent,
-        latitude: loc.latitude?.toString(),
-        longitude: loc.longitude?.toString(),
+        latitude: loc?.latitude?.toString(),
+        longitude: loc?.longitude?.toString(),
         criado_em: new Date().toISOString(),
       };
-      await client.from("logs_periciais").insert([logData]);
+
+      const { error } = await client.from("logs_periciais").insert([logData]);
+      if (error) {
+        console.warn("Erro ao registrar log pericial:", error);
+      }
     } catch (error) {
       console.error("Erro ao registrar log pericial:", error);
     }
   }
 
-  async obterIP() {
-    try {
-      const response = await fetch("https://api.ipify.org?format=json");
-      const data = await response.json();
-      return data.ip;
-    } catch (error) {
-      return null;
+  // ============================================
+  // UTILITÁRIOS
+  // ============================================
+
+  formatarDataHoraLocal(date) {
+    return utils.formatarDataHoraLocal(date);
+  }
+
+  formatarCPFSeguro(cpf) {
+    return utils.formatarCPFSeguro(cpf);
+  }
+
+  /**
+   * @deprecated Use obterDataHoraPrecisa() em vez deste método
+   */
+  obterDataHoraBrasilia() {
+    return utils.obterDataHoraPrecisa();
+  }
+
+  getStatusClass(status) {
+    return utils.getStatusClass(status);
+  }
+
+  getStatusLabel(status) {
+    return utils.getStatusLabel(status);
+  }
+
+  getTipoLabel(value) {
+    return utils.getTipoLabel(value, this.TIPOS_OCORRENCIA);
+  }
+
+  getTipoEnvolvidoLabel(tipo) {
+    return utils.getTipoEnvolvidoLabel(tipo);
+  }
+
+  getIconAnexo(tipo) {
+    return utils.getIconAnexo(tipo);
+  }
+
+  formatarTamanho(bytes) {
+    return utils.formatarTamanho(bytes);
+  }
+
+  // ============================================
+  // BUSCA COM DEBOUNCE
+  // ============================================
+
+  executarBusca(termo, tipo) {
+    // Implementação da busca com debounce
+    // Pode ser sobrescrita pelos módulos específicos
+    console.log(`🔍 Buscando "${termo}" em ${tipo}...`);
+
+    // Disparar evento de busca
+    const event = new CustomEvent("busca_executada", {
+      detail: { termo, tipo },
+    });
+    document.dispatchEvent(event);
+  }
+
+  // ============================================
+  // DESTRUIÇÃO
+  // ============================================
+
+  destroy() {
+    // Parar GPS
+    if (this.gpsWatchId) {
+      navigator.geolocation.clearWatch(this.gpsWatchId);
+      this.gpsWatchId = null;
     }
+
+    // Limpar cache
+    // utils.clearAllCache(); // Opcional
+
+    console.log("🧹 App destruído");
   }
 }
+
+// ============================================
+// INSTÂNCIA GLOBAL
+// ============================================
 
 const app = new App();
 window.app = app;
 
+// ============================================
+// INICIALIZAÇÃO
+// ============================================
+
 function iniciarApp() {
   console.log("🚀 Iniciando app...");
-  console.log("🔍 Verificando authManager global:");
-  console.log("  - authManager existe?", typeof authManager !== "undefined");
-  console.log("  - authManager.isLoggedIn?", typeof authManager?.isLoggedIn);
+
   if (typeof authManager === "undefined") {
     console.error("❌ authManager não definido!");
     setTimeout(iniciarApp, 500);
     return;
   }
+
   if (typeof authManager.isLoggedIn !== "function") {
     console.error("❌ authManager.isLoggedIn não é uma função!");
-    console.log("🔍 authManager:", authManager);
     setTimeout(iniciarApp, 500);
     return;
   }
+
   app.init();
 }
 
+// Aguardar DOM carregar
 if (
   document.readyState === "complete" ||
   document.readyState === "interactive"

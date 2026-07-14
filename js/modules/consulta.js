@@ -18,15 +18,8 @@
  * - Ranking de reincidentes
  *
  * Depende de: authManager (global), supabaseClient (global),
- *             ocorrenciaManager (global), utils, ui
+ *             ocorrenciaManager (global)
  */
-
-// ============================================
-// IMPORTAÇÕES
-// ============================================
-
-// Importar funções do utils
-import * as utils from "./utils.js";
 
 // ============================================
 // CONSTANTES
@@ -38,6 +31,169 @@ const MAX_IMAGE_WIDTH = 800;
 const IMAGE_QUALITY = 0.7;
 const REINCIDENCIA_LIMITE_ADVERTENCIA = 2;
 const REINCIDENCIA_LIMITE_MULTA = 4;
+
+// ============================================
+// FUNÇÕES INTERNAS (FALLBACK)
+// ============================================
+
+/**
+ * Função interna para obter data/hora formatada sem timezone
+ * @returns {string} Data no formato YYYY-MM-DD HH:MM:SS
+ */
+function obterDataHoraLocalFormatada() {
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  const horas = String(agora.getHours()).padStart(2, "0");
+  const minutos = String(agora.getMinutes()).padStart(2, "0");
+  const segundos = String(agora.getSeconds()).padStart(2, "0");
+  return `${ano}-${mes}-${dia} ${horas}:${minutos}:${segundos}`;
+}
+
+/**
+ * Função interna para comprimir imagem
+ * @param {File} file - Arquivo de imagem
+ * @param {number} maxWidth - Largura máxima
+ * @param {number} quality - Qualidade da imagem
+ * @returns {Promise<File>}
+ */
+function comprimirImagemInterna(
+  file,
+  maxWidth = MAX_IMAGE_WIDTH,
+  quality = IMAGE_QUALITY,
+) {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      resolve(file);
+      return;
+    }
+
+    // Se o arquivo já é pequeno, não comprime
+    if (file.size < MAX_IMAGE_SIZE && file.type === "image/jpeg") {
+      resolve(file);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name, {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          },
+          "image/jpeg",
+          quality,
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Função interna para gerar hash SHA-256 de um arquivo
+ * @param {File|Blob} file - Arquivo para gerar hash
+ * @returns {Promise<string|null>}
+ */
+async function gerarHashArquivoInterna(file) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (error) {
+    console.warn("Erro ao gerar hash do arquivo:", error);
+    return null;
+  }
+}
+
+/**
+ * Função interna para obter localização via GPS
+ * @returns {Promise<{latitude: number|null, longitude: number|null}>}
+ */
+function obterLocalizacaoInterna() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ latitude: null, longitude: null });
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      () => {
+        resolve({ latitude: null, longitude: null });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      },
+    );
+  });
+}
+
+/**
+ * Função interna para aplicar máscara de CPF
+ * @param {string} value - Valor atual do campo
+ * @returns {string} Valor com máscara aplicada
+ */
+function aplicarMascaraCPFInterna(value) {
+  const limpo = value.replace(/\D/g, "");
+  if (limpo.length > 11) return value;
+  if (limpo.length === 0) return "";
+  if (limpo.length <= 3) return limpo;
+  if (limpo.length <= 6) return limpo.replace(/(\d{3})(\d{1,3})/, "$1.$2");
+  if (limpo.length <= 9)
+    return limpo.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+  return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
+}
+
+/**
+ * Função interna para aplicar máscara de placa
+ * @param {string} value - Valor atual do campo
+ * @returns {string} Valor com máscara aplicada (uppercase)
+ */
+function aplicarMascaraPlacaInterna(value) {
+  let upper = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (upper.length > 7) upper = upper.slice(0, 7);
+  if (upper.length === 0) return "";
+  if (upper.length <= 3) return upper;
+  if (upper.length <= 4) return `${upper.slice(0, 3)}${upper.slice(3)}`;
+  if (upper.length <= 6)
+    return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
+  return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4, 5)}${upper.slice(5, 7)}`;
+}
 
 // ============================================
 // ESTADO DO MÓDULO
@@ -1173,14 +1329,14 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
     document.getElementById("formCondutorCpf");
   if (cpfInput) {
     cpfInput.addEventListener("input", function (e) {
-      this.value = utils.aplicarMascaraCPF(this.value);
+      this.value = aplicarMascaraCPFInterna(this.value);
     });
   }
 
   const placaInput = document.getElementById("formPlaca");
   if (placaInput) {
     placaInput.addEventListener("input", function (e) {
-      this.value = utils.aplicarMascaraPlaca(this.value);
+      this.value = aplicarMascaraPlacaInterna(this.value);
     });
   }
 
@@ -1357,6 +1513,7 @@ export async function salvarAbordagemComAnexos() {
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) throw new Error("Erro ao conectar ao servidor");
 
+    // Processar anexos
     const files = estado.arquivosTemp || [];
     let anexosUrls = [];
 
@@ -1365,30 +1522,17 @@ export async function salvarAbordagemComAnexos() {
       anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
     }
 
+    // Obter localização (GPS contínuo ou fallback)
     let localizacao =
       typeof window.app !== "undefined"
         ? window.app.obterLocalizacaoAtual()
         : null;
     if (!localizacao) {
-      localizacao = await utils.obterLocalizacao();
+      localizacao = await obterLocalizacaoInterna();
     }
 
-    // ========================================
-    // CORREÇÃO PRINCIPAL: Formatar data sem timezone
-    // ========================================
-    const agora = new Date();
-    const dataHoraFormatada =
-      agora.getFullYear() +
-      "-" +
-      String(agora.getMonth() + 1).padStart(2, "0") +
-      "-" +
-      String(agora.getDate()).padStart(2, "0") +
-      " " +
-      String(agora.getHours()).padStart(2, "0") +
-      ":" +
-      String(agora.getMinutes()).padStart(2, "0") +
-      ":" +
-      String(agora.getSeconds()).padStart(2, "0");
+    // CORREÇÃO: Formatar data sem timezone para o PostgreSQL
+    const dataHoraFormatada = obterDataHoraLocalFormatada();
 
     const dados = {
       criado_por: user.id,
@@ -1404,6 +1548,7 @@ export async function salvarAbordagemComAnexos() {
       longitude: localizacao?.longitude || null,
     };
 
+    // Prazo
     const temPrazo = document.getElementById("formTemPrazo")?.checked || false;
     if (temPrazo) {
       dados.prazo = document.getElementById("formPrazo")?.value || null;
@@ -1411,6 +1556,7 @@ export async function salvarAbordagemComAnexos() {
       dados.status_regularizacao = "pendente";
     }
 
+    // Campos específicos
     if (isVeiculo) {
       dados.placa = identificador;
       dados.marca_modelo =
@@ -1436,6 +1582,7 @@ export async function salvarAbordagemComAnexos() {
 
     if (error) throw error;
 
+    // Limpar arquivos temporários
     estado.arquivosTemp = [];
     const previewArea = document.getElementById("abordagemPreviewArea");
     if (previewArea) previewArea.innerHTML = "";
@@ -1448,9 +1595,11 @@ export async function salvarAbordagemComAnexos() {
       showToast("Abordagem registrada com sucesso!", "success");
     }
 
+    // Recarregar feed e ranking
     await carregarFeedConsultas();
     await carregarRankingReincidentes();
 
+    // Limpar campo de busca
     const buscaInput = document.getElementById("inputBuscaConsulta");
     if (buscaInput) buscaInput.value = "";
   } catch (error) {
@@ -1473,14 +1622,14 @@ async function processarAnexosAbordagem(files) {
 
   for (const file of filesToProcess) {
     try {
-      let fileProcessado = await utils.comprimirImagem(
+      let fileProcessado = await comprimirImagemInterna(
         file,
         MAX_IMAGE_WIDTH,
         IMAGE_QUALITY,
       );
 
       if (fileProcessado.size > MAX_IMAGE_SIZE) {
-        fileProcessado = await utils.comprimirImagem(file, 600, 0.6);
+        fileProcessado = await comprimirImagemInterna(file, 600, 0.6);
         if (fileProcessado.size > MAX_IMAGE_SIZE) {
           if (typeof window.app !== "undefined" && window.app.showToast) {
             window.app.showToast(
@@ -1500,7 +1649,7 @@ async function processarAnexosAbordagem(files) {
       // Gerar hash da imagem
       let hash = null;
       try {
-        hash = await utils.gerarHashArquivo(fileProcessado);
+        hash = await gerarHashArquivoInterna(fileProcessado);
       } catch (e) {}
 
       anexos.push({

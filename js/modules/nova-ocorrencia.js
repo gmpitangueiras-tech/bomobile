@@ -24,6 +24,7 @@
  * - Botão "Agora" para preenchimento rápido de data/hora
  * - Máscaras automáticas (CPF, telefone)
  * - Validação otimizada
+ * - Speech-to-Text com inicialização garantida
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
@@ -141,6 +142,7 @@ let estado = {
   assinaturaCanvas: null,
   assinaturaCtx: null,
   isDrawing: false,
+  sttInicializado: false,
 };
 
 // ============================================
@@ -208,6 +210,7 @@ export async function renderNovaOcorrencia(container, appInstance) {
     };
     estado.modeloSelecionado = "";
     appInstance.alteracoesNaoSalvas = false;
+    estado.sttInicializado = false;
   }
 
   // Renderizar modo de entrada (normal ou rápido)
@@ -235,6 +238,9 @@ export async function renderNovaOcorrencia(container, appInstance) {
   window._novaOcorrenciaCameraRapida = () => abrirCameraRapida(appInstance);
   window._novaOcorrenciaModoNormal = () => setModo(MODE_NORMAL, appInstance);
   window._novaOcorrenciaModoRapido = () => setModo(MODE_RAPIDO, appInstance);
+  window._novaOcorrenciaRemoverAudio = () => removerAudio(appInstance);
+  window._novaOcorrenciaRemoverAssinatura = () =>
+    removerAssinatura(appInstance);
 }
 
 // ============================================
@@ -276,7 +282,7 @@ function renderizarModoEntrada(container, appInstance) {
 }
 
 function renderizarModoRapido(appInstance) {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = new Date().toISOString().slice(0, 16);
 
   return `
     <div style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-media);">
@@ -324,7 +330,7 @@ function renderizarModoRapido(appInstance) {
           <div style="display:flex;gap:8px;">
             <div style="flex:1;position:relative;">
               <i class="fas fa-calendar input-icon-left" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:14px;z-index:2;"></i>
-              <input type="datetime-local" id="rapido_data_hora" class="form-control" required style="width:100%;padding:10px 12px 10px 36px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;">
+              <input type="datetime-local" id="rapido_data_hora" class="form-control" required style="width:100%;padding:10px 12px 10px 36px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;" value="${hoje}">
             </div>
             <button type="button" onclick="document.getElementById('rapido_data_hora').value = '${new Date().toISOString().slice(0, 16)}'" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
               <i class="fas fa-clock"></i> Agora
@@ -346,7 +352,12 @@ function renderizarModoRapido(appInstance) {
           <label for="rapido_observacoes" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
             Relato dos Fatos <span class="required">*</span>
           </label>
-          <textarea id="rapido_observacoes" class="form-control" rows="4" placeholder="Descreva resumidamente o ocorrido..." required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:80px;resize:vertical;"></textarea>
+          <div style="position:relative;">
+            <textarea id="rapido_observacoes" class="form-control" rows="4" placeholder="Descreva resumidamente o ocorrido..." required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:80px;resize:vertical;padding-right:45px;"></textarea>
+            <button type="button" id="btnSttRapido" class="btn-stt" title="Falar relato" style="position:absolute; right:10px; bottom:10px; width:44px; height:44px; border-radius:50%; background:var(--azul-muito-claro); color:var(--azul-bandeira); border:2px solid var(--azul-claro); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5; transition:all 0.3s ease;">
+              <i class="fas fa-microphone" style="font-size:18px;"></i>
+            </button>
+          </div>
         </div>
 
         <div style="display:flex;gap:8px;margin-top:16px;">
@@ -462,6 +473,7 @@ window._novaOcorrenciaFinalizarRapido = async function () {
     assinatura: null,
     audio: null,
   };
+  estado.sttInicializado = false;
 
   setTimeout(() => appInstance.navigateTo("dashboard"), 1500);
 };
@@ -615,14 +627,23 @@ async function toggleGravacaoAudio(appInstance) {
   }
 }
 
-window._novaOcorrenciaRemoverAudio = function () {
+function removerAudio(appInstance) {
   estado.dados.audio = null;
   const previewArea = document.getElementById("audioPreviewArea");
   if (previewArea) {
     previewArea.innerHTML = "";
   }
-  if (window.app) window.app.alteracoesNaoSalvas = true;
-};
+  if (appInstance) appInstance.alteracoesNaoSalvas = true;
+}
+
+function removerAssinatura(appInstance) {
+  estado.dados.assinatura = null;
+  const previewArea = document.getElementById("assinaturaPreviewArea");
+  if (previewArea) {
+    previewArea.innerHTML = "";
+  }
+  if (appInstance) appInstance.alteracoesNaoSalvas = true;
+}
 
 // ============================================
 // ASSINATURA DIGITAL
@@ -842,15 +863,6 @@ function iniciarAssinatura(appInstance) {
   }, 100);
 }
 
-window._novaOcorrenciaRemoverAssinatura = function () {
-  estado.dados.assinatura = null;
-  const previewArea = document.getElementById("assinaturaPreviewArea");
-  if (previewArea) {
-    previewArea.innerHTML = "";
-  }
-  if (window.app) window.app.alteracoesNaoSalvas = true;
-};
-
 // ============================================
 // CÂMERA RÁPIDA
 // ============================================
@@ -960,27 +972,64 @@ function renderizarEtapa(container, appInstance) {
 
   // Registrar funções para botões da etapa atual
   if (etapa === 5) {
-    window._novaOcorrenciaRemoverAudio =
-      window._novaOcorrenciaRemoverAudio ||
-      function () {
-        estado.dados.audio = null;
-        const previewArea = document.getElementById("audioPreviewArea");
-        if (previewArea) previewArea.innerHTML = "";
-        if (appInstance) appInstance.alteracoesNaoSalvas = true;
-      };
-    window._novaOcorrenciaRemoverAssinatura =
-      window._novaOcorrenciaRemoverAssinatura ||
-      function () {
-        estado.dados.assinatura = null;
-        const previewArea = document.getElementById("assinaturaPreviewArea");
-        if (previewArea) previewArea.innerHTML = "";
-        if (appInstance) appInstance.alteracoesNaoSalvas = true;
-      };
+    window._novaOcorrenciaRemoverAudio = () => removerAudio(appInstance);
+    window._novaOcorrenciaRemoverAssinatura = () =>
+      removerAssinatura(appInstance);
+  }
+
+  // Inicializar Speech-to-Text quando estiver na etapa 4 ou modo rápido
+  if (etapa === 4) {
+    setTimeout(() => {
+      inicializarSpeechToText(appInstance);
+    }, 300);
+  }
+
+  // Inicializar Speech-to-Text no modo rápido
+  if (estado.modo === MODE_RAPIDO) {
+    setTimeout(() => {
+      inicializarSpeechToTextRapido(appInstance);
+    }, 500);
   }
 }
 
 // ============================================
-// MODELOS DE OCORRÊNCIA
+// INICIALIZAR SPEECH-TO-TEXT
+// ============================================
+
+function inicializarSpeechToText(appInstance) {
+  if (estado.sttInicializado) {
+    console.log("ℹ️ STT já inicializado para esta etapa");
+    return;
+  }
+
+  if (window.utils && window.utils.initSpeechToText) {
+    console.log("🎤 Inicializando Speech-to-Text para observações");
+    window.utils.initSpeechToText(
+      "observacoes",
+      "btnSttObservacoes",
+      appInstance,
+    );
+    estado.sttInicializado = true;
+  } else {
+    console.warn("⚠️ utils.initSpeechToText não disponível");
+  }
+}
+
+function inicializarSpeechToTextRapido(appInstance) {
+  if (window.utils && window.utils.initSpeechToText) {
+    console.log("🎤 Inicializando Speech-to-Text para modo rápido");
+    window.utils.initSpeechToText(
+      "rapido_observacoes",
+      "btnSttRapido",
+      appInstance,
+    );
+  } else {
+    console.warn("⚠️ utils.initSpeechToText não disponível para modo rápido");
+  }
+}
+
+// ============================================
+// MODELOS DE OCORRÊNCIA (BANNER)
 // ============================================
 
 function renderModelosOcorrencia(appInstance) {
@@ -1567,11 +1616,16 @@ function renderEtapa4(dados, appInstance) {
         <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
         Observações e Relato dos Fatos <span class="required">*</span>
       </label>
-      <textarea id="observacoes" class="form-control" rows="8" 
-        placeholder="Descreva detalhadamente o ocorrido..." required>${dados.observacoes || ""}</textarea>
+      <div class="stt-container" style="position:relative; width:100%;">
+        <textarea id="observacoes" class="form-control" rows="8" 
+          placeholder="Descreva detalhadamente o ocorrido..." required style="padding-right: 45px; width:100%;">${dados.observacoes || ""}</textarea>
+        <button type="button" id="btnSttObservacoes" class="btn-stt" title="Falar relato" style="position:absolute; right:10px; bottom:10px; width:44px; height:44px; border-radius:50%; background:var(--azul-muito-claro); color:var(--azul-bandeira); border:2px solid var(--azul-claro); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5; transition:all 0.3s ease;">
+          <i class="fas fa-microphone" style="font-size:18px;"></i>
+        </button>
+      </div>
       <div class="input-hint">
         <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-        Seja o mais detalhado possível. Mínimo 10 caracteres.
+        Mínimo 10 caracteres. Use o microfone para falar.
       </div>
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
         <button type="button" onclick="document.getElementById('observacoes').value += 'O solicitante informou que...'" class="btn-secondary" style="padding:4px 10px;font-size:10px;min-height:auto;width:auto;border-radius:12px;">
@@ -2315,23 +2369,45 @@ function removerEnvolvido(index, appInstance) {
 // ANEXOS - PROCESSAR
 // ============================================
 
-function processarAnexos(files, appInstance) {
+async function processarAnexos(files, appInstance) {
   const anexos = estado.dados.anexos || [];
 
   for (const file of files) {
-    if (file.size > 10485760) {
-      // 10MB
-      appInstance.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
-      continue;
-    }
+    try {
+      const tipo = determinarTipoAnexo(file);
 
-    const tipo = determinarTipoAnexo(file);
-    anexos.push({
-      nome: file.name,
-      tipo: tipo,
-      tamanho: file.size,
-      arquivo: file,
-    });
+      if (tipo === "image") {
+        appInstance.showToast(`Comprimindo ${file.name}...`, "info");
+        const fotoComprimida = await window.utils.comprimirImagem(
+          file,
+          800,
+          0.7,
+        );
+        const hash = await window.utils.gerarHashArquivo(fotoComprimida);
+
+        anexos.push({
+          nome: file.name,
+          tipo: tipo,
+          tamanho: fotoComprimida.size,
+          arquivo: fotoComprimida,
+          hash_pericial: hash,
+        });
+      } else {
+        if (file.size > 10485760) {
+          appInstance.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
+          continue;
+        }
+        anexos.push({
+          nome: file.name,
+          tipo: tipo,
+          tamanho: file.size,
+          arquivo: file,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao processar anexo:", error);
+      appInstance.showToast(`Erro ao processar ${file.name}`, "error");
+    }
   }
 
   estado.dados.anexos = anexos;
@@ -2536,8 +2612,21 @@ async function finalizarOcorrencia(appInstance) {
     dadosParaSalvar.data_hora_encerramento = null;
   }
 
-  // Obter localização
-  const localizacao = await appInstance.obterLocalizacao();
+  // Obter localização com fallback
+  let localizacao = await appInstance.obterLocalizacao({ timeout: 5000 });
+
+  if (
+    !localizacao.latitude &&
+    window.sessionManager &&
+    window.sessionManager.ultimaLocalizacao
+  ) {
+    console.log("📍 Usando última localização conhecida como fallback");
+    localizacao = window.sessionManager.ultimaLocalizacao;
+    appInstance.showToast(
+      "GPS instável. Usando última posição conhecida.",
+      "info",
+    );
+  }
 
   // Criar ocorrência
   const result = await ocorrenciaManager.criar({
@@ -2684,6 +2773,7 @@ async function finalizarOcorrencia(appInstance) {
     audio: null,
   };
   estado.modeloSelecionado = "";
+  estado.sttInicializado = false;
   appInstance.alteracoesNaoSalvas = false;
 
   setTimeout(() => appInstance.navigateTo("dashboard"), 1500);
@@ -2762,6 +2852,7 @@ const { aplicarMascaraCPF, aplicarMascaraTelefone } = window.utils || {};
 function aplicarMascaraCPFFallback(value) {
   const limpo = value.replace(/\D/g, "");
   if (limpo.length > 11) return value;
+  if (limpo.length === 0) return "";
   if (limpo.length <= 3) return limpo;
   if (limpo.length <= 6) return limpo.replace(/(\d{3})(\d{1,3})/, "$1.$2");
   if (limpo.length <= 9)
@@ -2772,6 +2863,7 @@ function aplicarMascaraCPFFallback(value) {
 function aplicarMascaraTelefoneFallback(value) {
   const limpo = value.replace(/\D/g, "");
   if (limpo.length > 11) return value;
+  if (limpo.length === 0) return "";
   if (limpo.length <= 2) return `(${limpo}`;
   if (limpo.length <= 6) return `(${limpo.slice(0, 2)}) ${limpo.slice(2)}`;
   if (limpo.length <= 10)

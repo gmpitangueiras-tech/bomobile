@@ -10,7 +10,29 @@
  * - Apenas supervisores podem visualizar logs
  * - IP do usuário é capturado automaticamente via api.ipify.org
  * - Informações do dispositivo (navegador, tipo) são registradas nos logs
+ *
+ * MELHORIAS APLICADAS:
+ * - Criptografia de dados sensíveis (CPF, RG, telefone) com AES-GCM
+ * - Integração com logs periciais
+ * - Hash de integridade para dados sensíveis
+ * - Validação de força de senha
+ * - Rate limiting para tentativas de login
+ * - Registro de tentativas de login falhas
+ * - Bloqueio temporário após múltiplas tentativas falhas
  */
+
+// ============================================
+// CONSTANTES
+// ============================================
+
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutos
+const SALT_ROUNDS = 10;
+const ENCRYPTION_KEY_LENGTH = 256;
+
+// ============================================
+// CLASSE AUTH MANAGER
+// ============================================
 
 class AuthManager {
   constructor() {
@@ -18,9 +40,205 @@ class AuthManager {
     this._isLoggedIn = false;
     this.initialized = false;
     this.listeners = [];
+    this.loginAttempts = {};
+    this.encryptionKey = null;
+    this.initializedEncryption = false;
   }
 
+  // ============================================
+  // CRIPTOGRAFIA
+  // ============================================
+
+  /**
+   * Inicializa a chave de criptografia
+   * @returns {Promise<void>}
+   */
+  async initEncryption() {
+    if (this.initializedEncryption) return;
+
+    try {
+      // Gerar ou recuperar chave do localStorage
+      let keyData = localStorage.getItem("encryption_key");
+
+      if (!keyData) {
+        // Gerar nova chave
+        const key = await crypto.subtle.generateKey(
+          {
+            name: "AES-GCM",
+            length: ENCRYPTION_KEY_LENGTH,
+          },
+          true,
+          ["encrypt", "decrypt"],
+        );
+
+        // Exportar chave para armazenamento
+        const exported = await crypto.subtle.exportKey("raw", key);
+        keyData = btoa(String.fromCharCode(...new Uint8Array(exported)));
+        localStorage.setItem("encryption_key", keyData);
+        this.encryptionKey = key;
+      } else {
+        // Importar chave existente
+        const keyBuffer = Uint8Array.from(atob(keyData), (c) =>
+          c.charCodeAt(0),
+        );
+        this.encryptionKey = await crypto.subtle.importKey(
+          "raw",
+          keyBuffer,
+          "AES-GCM",
+          true,
+          ["encrypt", "decrypt"],
+        );
+      }
+
+      this.initializedEncryption = true;
+      console.log("🔐 Criptografia inicializada");
+    } catch (error) {
+      console.error("❌ Erro ao inicializar criptografia:", error);
+      this.initializedEncryption = false;
+    }
+  }
+
+  /**
+   * Criptografa um texto
+   * @param {string} text - Texto a ser criptografado
+   * @returns {Promise<string>} Texto criptografado (base64)
+   */
+  async encryptData(text) {
+    if (!text) return null;
+
+    try {
+      await this.initEncryption();
+      if (!this.encryptionKey) return text;
+
+      const encoder = new TextEncoder();
+      const data = encoder.encode(text);
+
+      // Gerar IV aleatório
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+
+      const encrypted = await crypto.subtle.encrypt(
+        {
+          name: "AES-GCM",
+          iv: iv,
+        },
+        this.encryptionKey,
+        data,
+      );
+
+      // Combinar IV + dados criptografados
+      const combined = new Uint8Array(iv.length + encrypted.byteLength);
+      combined.set(iv, 0);
+      combined.set(new Uint8Array(encrypted), iv.length);
+
+      return btoa(String.fromCharCode(...combined));
+    } catch (error) {
+      console.error("❌ Erro ao criptografar dados:", error);
+      return text; // Fallback: retorna sem criptografia
+    }
+  }
+
+  /**
+   * Descriptografa um texto
+   * @param {string} encryptedText - Texto criptografado (base64)
+   * @returns {Promise<string>} Texto descriptografado
+   */
+  async decryptData(encryptedText) {
+    if (!encryptedText) return null;
+
+    try {
+      await this.initEncryption();
+      if (!this.encryptionKey) return encryptedText;
+
+      const combined = Uint8Array.from(atob(encryptedText), (c) =>
+        c.charCodeAt(0),
+      );
+
+      // Extrair IV (primeiros 12 bytes)
+      const iv = combined.slice(0, 12);
+      const data = combined.slice(12);
+
+      const decrypted = await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: iv,
+        },
+        this.encryptionKey,
+        data,
+      );
+
+      const decoder = new TextDecoder();
+      return decoder.decode(decrypted);
+    } catch (error) {
+      console.error("❌ Erro ao descriptografar dados:", error);
+      return encryptedText; // Fallback: retorna como está
+    }
+  }
+
+  /**
+   * Gera hash de integridade para dados sensíveis
+   * @param {string} data - Dados para gerar hash
+   * @returns {Promise<string>} Hash SHA-256
+   */
+  async generateIntegrityHash(data) {
+    if (!data) return null;
+
+    try {
+      const encoder = new TextEncoder();
+      const dataBuffer = encoder.encode(data);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (error) {
+      console.error("❌ Erro ao gerar hash de integridade:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Processa dados sensíveis para armazenamento (criptografa e gera hash)
+   * @param {Object} data - Dados a serem processados
+   * @param {Array} sensitiveFields - Campos sensíveis
+   * @returns {Promise<Object>} Dados processados
+   */
+  async processSensitiveData(
+    data,
+    sensitiveFields = ["cpf", "rg", "telefone"],
+  ) {
+    const processed = { ...data };
+
+    for (const field of sensitiveFields) {
+      if (data[field]) {
+        // Criptografar
+        processed[`${field}_encrypted`] = await this.encryptData(data[field]);
+        // Gerar hash para verificação de integridade
+        processed[`${field}_hash`] = await this.generateIntegrityHash(
+          data[field],
+        );
+        // Manter campo original se necessário (para compatibilidade)
+        // Mas podemos removê-lo para maior segurança
+        // processed[field] = data[field]; // Manter por enquanto
+      }
+    }
+
+    return processed;
+  }
+
+  /**
+   * Verifica integridade de dados sensíveis
+   * @param {string} value - Valor atual
+   * @param {string} storedHash - Hash armazenado
+   * @returns {Promise<boolean>} True se íntegro
+   */
+  async verifyIntegrity(value, storedHash) {
+    if (!value || !storedHash) return true;
+    const currentHash = await this.generateIntegrityHash(value);
+    return currentHash === storedHash;
+  }
+
+  // ============================================
   // Getter para isLoggedIn
+  // ============================================
+
   get isLoggedIn() {
     return this._isLoggedIn;
   }
@@ -30,10 +248,17 @@ class AuthManager {
     return this._isLoggedIn;
   }
 
+  // ============================================
+  // INICIALIZAÇÃO
+  // ============================================
+
   async init() {
     if (this.initialized) return this._isLoggedIn;
 
     try {
+      // Inicializar criptografia
+      await this.initEncryption();
+
       if (!supabaseClient.isInitialized()) {
         await supabaseClient.init();
       }
@@ -136,10 +361,7 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      // Obter IP automaticamente
       const ip = await this.obterIP();
-
-      // Obter informações do dispositivo
       const infoDispositivo = this.obterInfoDispositivo();
 
       const logData = {
@@ -168,16 +390,11 @@ class AuthManager {
         .single();
 
       if (error) {
-        console.warn(
-          "⚠️ Erro ao registrar log de acesso (não crítico):",
-          error,
-        );
+        console.warn("⚠️ Erro ao registrar log de acesso:", error);
         return { success: false, error: error.message, nonCritical: true };
       }
 
-      console.log(
-        `✅ Log de acesso registrado: ${acao} - Usuário ${usuarioId}`,
-      );
+      console.log(`✅ Log de acesso registrado: ${acao}`);
       return { success: true, data };
     } catch (error) {
       console.warn("⚠️ Erro não crítico ao registrar log de acesso:", error);
@@ -279,14 +496,123 @@ class AuthManager {
   }
 
   // ============================================
+  // VALIDAÇÃO DE SENHA
+  // ============================================
+
+  /**
+   * Valida a força da senha
+   * @param {string} senha - Senha a ser validada
+   * @returns {Object} { valid: boolean, errors: string[] }
+   */
+  validarForcaSenha(senha) {
+    const errors = [];
+
+    if (senha.length < 8) {
+      errors.push("A senha deve ter pelo menos 8 caracteres");
+    }
+    if (!/[a-z]/.test(senha)) {
+      errors.push("A senha deve conter pelo menos uma letra minúscula");
+    }
+    if (!/[A-Z]/.test(senha)) {
+      errors.push("A senha deve conter pelo menos uma letra maiúscula");
+    }
+    if (!/[0-9]/.test(senha)) {
+      errors.push("A senha deve conter pelo menos um número");
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(senha)) {
+      errors.push("A senha deve conter pelo menos um caractere especial");
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors,
+      score: Math.max(0, 5 - errors.length),
+    };
+  }
+
+  // ============================================
+  // RATE LIMITING
+  // ============================================
+
+  /**
+   * Verifica se o usuário está bloqueado por tentativas falhas
+   * @param {string} cpf - CPF do usuário
+   * @returns {Object} { blocked: boolean, remainingTime: number }
+   */
+  checkLoginAttempts(cpf) {
+    const key = cpf.replace(/\D/g, "");
+    const record = this.loginAttempts[key];
+
+    if (!record) {
+      return { blocked: false, remainingTime: 0 };
+    }
+
+    if (record.lockedUntil && Date.now() < record.lockedUntil) {
+      const remainingTime = Math.ceil(
+        (record.lockedUntil - Date.now()) / 60000,
+      );
+      return { blocked: true, remainingTime };
+    }
+
+    // Se o bloqueio expirou, resetar contador
+    if (record.lockedUntil && Date.now() >= record.lockedUntil) {
+      delete this.loginAttempts[key];
+      return { blocked: false, remainingTime: 0 };
+    }
+
+    return { blocked: false, remainingTime: 0 };
+  }
+
+  /**
+   * Registra uma tentativa de login falha
+   * @param {string} cpf - CPF do usuário
+   */
+  registerFailedAttempt(cpf) {
+    const key = cpf.replace(/\D/g, "");
+    if (!this.loginAttempts[key]) {
+      this.loginAttempts[key] = { attempts: 0, lockedUntil: null };
+    }
+
+    this.loginAttempts[key].attempts++;
+
+    if (this.loginAttempts[key].attempts >= MAX_LOGIN_ATTEMPTS) {
+      this.loginAttempts[key].lockedUntil = Date.now() + LOCKOUT_DURATION;
+      console.log(
+        `🔒 Usuário ${cpf} bloqueado por ${LOCKOUT_DURATION / 60000} minutos`,
+      );
+    }
+  }
+
+  /**
+   * Limpa as tentativas de login após sucesso
+   * @param {string} cpf - CPF do usuário
+   */
+  clearLoginAttempts(cpf) {
+    const key = cpf.replace(/\D/g, "");
+    delete this.loginAttempts[key];
+  }
+
+  // ============================================
   // AUTENTICAÇÃO
   // ============================================
 
   async login(cpf, senha) {
     try {
       const cpfClean = cpf.replace(/[^0-9]/g, "");
-      if (cpfClean.length !== 11)
+      if (cpfClean.length !== 11) {
         return { success: false, error: "CPF inválido" };
+      }
+
+      // Verificar rate limiting
+      const attemptCheck = this.checkLoginAttempts(cpfClean);
+      if (attemptCheck.blocked) {
+        return {
+          success: false,
+          error: `Muitas tentativas falhas. Aguarde ${attemptCheck.remainingTime} minutos.`,
+          blocked: true,
+          remainingTime: attemptCheck.remainingTime,
+        };
+      }
 
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
@@ -297,7 +623,11 @@ class AuthManager {
         .eq("cpf", cpfClean)
         .maybeSingle();
 
-      if (!usuario) return { success: false, error: "CPF não encontrado" };
+      if (!usuario) {
+        this.registerFailedAttempt(cpfClean);
+        return { success: false, error: "CPF não encontrado" };
+      }
+
       if (usuario.status === "inativo" || usuario.status === "bloqueado") {
         return { success: false, error: "Usuário inativo ou bloqueado" };
       }
@@ -307,10 +637,23 @@ class AuthManager {
         p_senha: senha,
       });
 
-      if (!senhaValida) return { success: false, error: "Senha incorreta" };
+      if (!senhaValida) {
+        this.registerFailedAttempt(cpfClean);
+        return { success: false, error: "Senha incorreta" };
+      }
+
+      // Limpar tentativas após sucesso
+      this.clearLoginAttempts(cpfClean);
 
       this.user = usuario;
       this._isLoggedIn = true;
+
+      // Processar dados sensíveis para armazenamento local
+      const sensitiveData = await this.processSensitiveData(usuario, [
+        "cpf",
+        "rg",
+        "telefone",
+      ]);
 
       localStorage.setItem(
         "auth_user",
@@ -320,16 +663,27 @@ class AuthManager {
           cpf: usuario.cpf,
           perfil: usuario.perfil,
           matricula: usuario.matricula,
+          // Armazenar dados criptografados
+          sensitive: {
+            cpf_encrypted: sensitiveData.cpf_encrypted,
+            cpf_hash: sensitiveData.cpf_hash,
+            rg_encrypted: sensitiveData.rg_encrypted,
+            rg_hash: sensitiveData.rg_hash,
+            telefone_encrypted: sensitiveData.telefone_encrypted,
+            telefone_hash: sensitiveData.telefone_hash,
+          },
         }),
       );
 
       // ===== REGISTRAR LOG DE LOGIN =====
       await this.logLogin(usuario.id);
-      if (window.app && typeof window.app.registrarLogPericial === 'function') {
-        await window.app.registrarLogPericial('LOGIN', 'usuarios', usuario.id);
+
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial("LOGIN", "usuarios", usuario.id);
       }
 
-      // ===== ATUALIZAR ÚLTIMO LOGIN COM TRY/CATCH =====
+      // ===== ATUALIZAR ÚLTIMO LOGIN =====
       try {
         await client
           .from("usuarios")
@@ -361,8 +715,19 @@ class AuthManager {
 
   async primeiroAcesso(novaSenha, telefone = null, email = null) {
     try {
-      if (!this.user)
+      if (!this.user) {
         return { success: false, error: "Usuário não autenticado" };
+      }
+
+      // Validar força da senha
+      const validacao = this.validarForcaSenha(novaSenha);
+      if (!validacao.valid) {
+        return {
+          success: false,
+          error: `Senha fraca: ${validacao.errors.join(", ")}`,
+          validationErrors: validacao.errors,
+        };
+      }
 
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
@@ -404,6 +769,11 @@ class AuthManager {
     // ===== REGISTRAR LOG DE LOGOUT =====
     if (usuarioId) {
       await this.logLogout(usuarioId);
+
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial("LOGOUT", "usuarios", usuarioId);
+      }
     }
 
     this._isLoggedIn = false;
@@ -464,10 +834,6 @@ class AuthManager {
   // PERMISSÕES
   // ============================================
 
-  /**
-   * Verifica se o usuário pode editar uma ocorrência
-   * Regra: Apenas o CRIADOR (se for rascunho) ou SUPERVISOR podem editar
-   */
   podeEditar(ocorrencia) {
     if (!this.user) return false;
     if (this.isSupervisor()) {
@@ -478,19 +844,11 @@ class AuthManager {
     );
   }
 
-  /**
-   * Verifica se o usuário pode visualizar uma ocorrência
-   * Regra: Todos os usuários autenticados podem visualizar TODAS as ocorrências
-   */
   podeVisualizar(ocorrencia) {
     if (!this.user) return false;
     return true;
   }
 
-  /**
-   * Verifica se o usuário pode finalizar uma ocorrência
-   * Regra: O CRIADOR (se for rascunho) ou SUPERVISOR podem finalizar
-   */
   podeFinalizar(ocorrencia) {
     if (!this.user) return false;
     if (this.isSupervisor()) {
@@ -501,22 +859,12 @@ class AuthManager {
     );
   }
 
-  /**
-   * Verifica se o usuário pode cancelar uma ocorrência
-   * Regra: Apenas SUPERVISOR pode cancelar
-   */
   podeCancelar(ocorrencia) {
     if (!this.user) return false;
     if (!this.isSupervisor()) return false;
     return ocorrencia.status !== "cancelled";
   }
 
-  /**
-   * Verifica se o usuário pode solicitar retificação
-   * Regra:
-   *   - Supervisor pode solicitar para qualquer ocorrência finalizada
-   *   - Guarda pode solicitar apenas para suas próprias ocorrências finalizadas
-   */
   podeSolicitarRetificacao(ocorrencia) {
     if (!this.user) return false;
     if (
@@ -531,52 +879,28 @@ class AuthManager {
     return ocorrencia.criado_por === this.user.id;
   }
 
-  /**
-   * Verifica se o usuário pode aprovar uma retificação
-   * Regra: Apenas SUPERVISOR pode aprovar retificações pendentes
-   */
   podeAprovarRetificacao(ocorrencia) {
     if (!this.user) return false;
     return this.isSupervisor() && ocorrencia.status === "pending_rectification";
   }
 
-  /**
-   * Verifica se o usuário pode rejeitar uma retificação
-   * Regra: Apenas SUPERVISOR pode rejeitar
-   */
   podeRejeitarRetificacao(ocorrencia) {
     if (!this.user) return false;
     return this.isSupervisor() && ocorrencia.status === "pending_rectification";
   }
 
-  /**
-   * Verifica se o usuário pode ver o histórico
-   * Regra: Todos os autenticados podem ver
-   */
   podeVerHistorico(ocorrencia) {
     return this.isLoggedIn();
   }
 
-  /**
-   * Verifica se o usuário pode acessar relatórios
-   * Regra: Apenas supervisores
-   */
   podeAcessarRelatorios() {
     return this.isSupervisor();
   }
 
-  /**
-   * Verifica se o usuário pode gerenciar usuários
-   * Regra: Apenas supervisores
-   */
   podeGerenciarUsuarios() {
     return this.isSupervisor();
   }
 
-  /**
-   * Verifica se o usuário pode ver logs
-   * Regra: Apenas supervisores
-   */
   podeVerLogs() {
     return this.isSupervisor();
   }
@@ -585,11 +909,6 @@ class AuthManager {
   // GERENCIAMENTO DE USUÁRIOS
   // ============================================
 
-  /**
-   * Lista todos os usuários (apenas supervisor)
-   * @param {object} filtros - { perfil, status, search }
-   * @returns {Promise<Object>}
-   */
   async listarUsuarios(filtros = {}) {
     if (!this.isSupervisor()) {
       return {
@@ -625,11 +944,6 @@ class AuthManager {
     }
   }
 
-  /**
-   * Cria um novo usuário (apenas supervisor)
-   * @param {object} dados - { nome, cpf, matricula, email, telefone, perfil, senha }
-   * @returns {Promise<Object>}
-   */
   async criarUsuario(dados) {
     if (!this.isSupervisor()) {
       return {
@@ -647,7 +961,6 @@ class AuthManager {
         return { success: false, error: "CPF inválido" };
       }
 
-      // Verificar se CPF já existe
       const { data: existe } = await client
         .from("usuarios")
         .select("cpf")
@@ -658,11 +971,16 @@ class AuthManager {
         return { success: false, error: "CPF já cadastrado" };
       }
 
-      // Se senha não for fornecida, gerar uma temporária
       const senhaTemp = dados.senha || this.gerarSenhaTemporaria();
       const { data: hashData } = await client.rpc("criar_hash_senha", {
         p_senha: senhaTemp,
       });
+
+      // Processar dados sensíveis
+      const sensitiveData = await this.processSensitiveData(dados, [
+        "cpf",
+        "telefone",
+      ]);
 
       const novoUsuario = {
         id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
@@ -677,6 +995,11 @@ class AuthManager {
         senha_hash: hashData,
         criado_por: this.user.id,
         criado_em: new Date().toISOString(),
+        // Campos criptografados
+        cpf_encrypted: sensitiveData.cpf_encrypted,
+        cpf_hash: sensitiveData.cpf_hash,
+        telefone_encrypted: sensitiveData.telefone_encrypted,
+        telefone_hash: sensitiveData.telefone_hash,
       };
 
       const { data, error } = await client
@@ -687,10 +1010,17 @@ class AuthManager {
 
       if (error) throw error;
 
-      // ===== REGISTRAR LOG DE CRIAÇÃO DE USUÁRIO =====
       await this.logCriarUsuario(this.user.id, data.id);
 
-      // Retornar a senha temporária (para o supervisor repassar ao usuário)
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial(
+          "CRIAR_USUARIO",
+          "usuarios",
+          data.id,
+        );
+      }
+
       return {
         success: true,
         data,
@@ -702,20 +1032,11 @@ class AuthManager {
     }
   }
 
-  /**
-   * Atualiza dados de um usuário
-   * - Supervisor pode editar qualquer usuário (todos os campos)
-   * - Guarda pode editar apenas seu próprio perfil (apenas nome, telefone, email)
-   * @param {string} id - ID do usuário
-   * @param {object} dados - Dados a atualizar
-   * @returns {Promise<Object>}
-   */
   async atualizarUsuario(id, dados) {
     try {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      // Se não for supervisor, verifica se está editando a si mesmo
       if (!this.isSupervisor()) {
         if (id !== this.user.id) {
           return {
@@ -723,7 +1044,6 @@ class AuthManager {
             error: "Permissão negada. Você só pode editar seu próprio perfil.",
           };
         }
-        // Guarda só pode editar campos permitidos
         const camposPermitidos = ["nome_completo", "telefone", "email"];
         const dadosFiltrados = {};
         for (const campo of camposPermitidos) {
@@ -734,9 +1054,24 @@ class AuthManager {
         dados = dadosFiltrados;
       }
 
-      // Se for supervisor, pode editar todos os campos, mas não pode alterar senha_hash diretamente
-      // (use resetarSenha para isso)
+      // Se for supervisor, pode editar todos os campos
       delete dados.senha_hash;
+
+      // Processar dados sensíveis se presentes
+      if (dados.cpf || dados.telefone) {
+        const sensitiveData = await this.processSensitiveData(dados, [
+          "cpf",
+          "telefone",
+        ]);
+        if (dados.cpf) {
+          dados.cpf_encrypted = sensitiveData.cpf_encrypted;
+          dados.cpf_hash = sensitiveData.cpf_hash;
+        }
+        if (dados.telefone) {
+          dados.telefone_encrypted = sensitiveData.telefone_encrypted;
+          dados.telefone_hash = sensitiveData.telefone_hash;
+        }
+      }
 
       const { data, error } = await client
         .from("usuarios")
@@ -751,10 +1086,13 @@ class AuthManager {
 
       if (error) throw error;
 
-      // ===== REGISTRAR LOG DE EDIÇÃO DE USUÁRIO =====
       await this.logEditarUsuario(this.user.id, id);
 
-      // Se o usuário atualizou a si mesmo, atualizar o objeto local
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial("EDITAR_USUARIO", "usuarios", id);
+      }
+
       if (id === this.user.id) {
         this.user = { ...this.user, ...dados };
         localStorage.setItem(
@@ -777,12 +1115,6 @@ class AuthManager {
     }
   }
 
-  /**
-   * Ativa ou desativa um usuário (apenas supervisor)
-   * @param {string} id - ID do usuário
-   * @param {string} status - 'ativo' ou 'inativo'
-   * @returns {Promise<Object>}
-   */
   async ativarDesativarUsuario(id, status) {
     if (!this.isSupervisor()) {
       return {
@@ -816,8 +1148,16 @@ class AuthManager {
 
       if (error) throw error;
 
-      // ===== REGISTRAR LOG DE ATIVAÇÃO/DESATIVAÇÃO =====
       await this.logAtivarDesativarUsuario(this.user.id, id);
+
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial(
+          "ALTERAR_STATUS_USUARIO",
+          "usuarios",
+          id,
+        );
+      }
 
       console.log(`✅ Usuário ${id} alterado para status: ${status}`);
       return { success: true, data };
@@ -827,12 +1167,6 @@ class AuthManager {
     }
   }
 
-  /**
-   * Reseta a senha de um usuário (apenas supervisor)
-   * Gera uma nova senha temporária e marca como primeiro acesso
-   * @param {string} id - ID do usuário
-   * @returns {Promise<Object>}
-   */
   async resetarSenha(id) {
     if (!this.isSupervisor()) {
       return {
@@ -865,8 +1199,12 @@ class AuthManager {
 
       if (error) throw error;
 
-      // ===== REGISTRAR LOG DE RESET DE SENHA =====
       await this.logResetarSenha(this.user.id, id);
+
+      // Registrar log pericial
+      if (window.app && typeof window.app.registrarLogPericial === "function") {
+        await window.app.registrarLogPericial("RESETAR_SENHA", "usuarios", id);
+      }
 
       console.log(`✅ Senha resetada para usuário ${id}`);
       return {
@@ -880,31 +1218,22 @@ class AuthManager {
     }
   }
 
-  /**
-   * Gera uma senha temporária aleatória
-   * @returns {string}
-   */
   gerarSenhaTemporaria() {
     const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()";
     let senha = "";
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       senha += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    // Garantir pelo menos um número e uma letra maiúscula
-    senha = "Temp" + senha + "123";
+    // Garantir pelo menos uma letra maiúscula, uma minúscula, um número e um especial
+    senha = "Temp" + senha + "123!";
     return senha;
   }
 
   // ============================================
-  // LISTAGEM DE LOGS DE ACESSO (APENAS SUPERVISOR)
+  // LISTAGEM DE LOGS DE ACESSO
   // ============================================
 
-  /**
-   * Lista logs de acesso (apenas supervisor)
-   * @param {object} filtros - { usuario_id, acao, data_inicio, data_fim, limit }
-   * @returns {Promise<Object>}
-   */
   async listarLogsAcesso(filtros = {}) {
     if (!this.isSupervisor()) {
       return {
@@ -948,11 +1277,6 @@ class AuthManager {
     }
   }
 
-  /**
-   * Obtém estatísticas de logs (apenas supervisor)
-   * @param {object} filtros - { data_inicio, data_fim }
-   * @returns {Promise<Object>}
-   */
   async getLogStats(filtros = {}) {
     if (!this.isSupervisor()) {
       return {
@@ -978,21 +1302,17 @@ class AuthManager {
       const { data, error } = await query;
       if (error) throw error;
 
-      // Agrupar por ação
       const porAcao = {};
       const porUsuario = {};
       const porDia = {};
 
       data.forEach((log) => {
-        // Por ação
         if (!porAcao[log.acao]) porAcao[log.acao] = 0;
         porAcao[log.acao]++;
 
-        // Por usuário
         if (!porUsuario[log.usuario_id]) porUsuario[log.usuario_id] = 0;
         porUsuario[log.usuario_id]++;
 
-        // Por dia
         const dia = log.data_hora.slice(0, 10);
         if (!porDia[dia]) porDia[dia] = 0;
         porDia[dia]++;
@@ -1048,9 +1368,10 @@ class AuthManager {
   }
 }
 
-// ========== CRIA A INSTÂNCIA GLOBAL (APENAS UMA VEZ) ==========
-// Verifica se já existe uma instância, se não, cria uma nova
-// Usa a abordagem mais segura para evitar sobrescrita
+// ============================================
+// CRIA A INSTÂNCIA GLOBAL
+// ============================================
+
 (function () {
   if (typeof window.authManager === "undefined") {
     console.log("🔐 Criando instância global do AuthManager");
@@ -1059,13 +1380,11 @@ class AuthManager {
     console.log("🔐 AuthManager já existe, reutilizando instância");
   }
 
-  // Adiciona a variável 'authManager' ao escopo global (window)
   if (typeof window.authManager !== "undefined") {
     window.authManager = window.authManager;
   }
 })();
 
-// Torna acessível via 'authManager' no escopo global
 const authManager = window.authManager;
 
 console.log("🔐 AuthManager carregado");

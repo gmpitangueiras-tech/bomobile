@@ -22,7 +22,7 @@
 // CONSTANTES
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v3";
+const CACHE_NAME = "guarda-pitangueiras-v3.1";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v1";
 const API_CACHE = "guarda-api-v1";
@@ -584,27 +584,6 @@ if (self.registration && self.registration.periodicSync) {
 self.addEventListener("error", (event) => {
   console.error("❌ Erro no Service Worker:", event.message);
   // Poderia enviar para um serviço de monitoramento
-});
-
-// ============================================
-// FORÇAR ATUALIZAÇÃO DOS CLIENTES
-// ============================================
-
-self.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'SKIP_WAITING') {
-        self.skipWaiting();
-    }
-});
-
-// Quando um novo Service Worker é instalado
-self.addEventListener('install', (event) => {
-    self.skipWaiting();
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            // Forçar revalidação
-            return cache.addAll(STATIC_ASSETS);
-        })
-    );
 });
 
 // ============================================

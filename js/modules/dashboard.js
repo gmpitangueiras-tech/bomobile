@@ -4,18 +4,12 @@
  *
  * Este módulo gerencia:
  * - Estatísticas gerais do sistema
+ * - Cards agrupados (Ocorrências e Abordagens)
+ * - Últimas 3 ocorrências com miniaturas
+ * - Últimas 3 abordagens
+ * - Detalhes de abordagens via modal
  * - Briefing do turno (últimas 12 horas)
- * - Lista de ocorrências com filtro por status
- * - Cards de status (total, pendentes, finalizadas, etc.)
- * - Badge de retificações pendentes (para supervisor)
  * - Navegação para outras páginas
- *
- * MELHORIAS APLICADAS:
- * - Pull-to-refresh (recarregar puxando para baixo)
- * - Dashboards personalizados (guarda vê suas ocorrências, supervisor vê geral)
- * - Cache de estatísticas
- * - Otimização de carregamento
- * - Animações suaves
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
@@ -34,6 +28,7 @@
 
 const CACHE_KEY_STATS = "dashboard_stats";
 const CACHE_KEY_OCORRENCIAS = "dashboard_ocorrencias";
+const CACHE_KEY_ABORDAGENS = "dashboard_abordagens";
 const CACHE_EXPIRY = 30000; // 30 segundos de cache
 const PULL_REFRESH_THRESHOLD = 80;
 
@@ -45,6 +40,7 @@ let estado = {
   filtroStatusAtual: null,
   statsData: null,
   ocorrenciasData: [],
+  abordagensData: { veiculos: [], pessoas: [] },
   briefingsData: null,
   pendentesRetificacoes: [],
   isRefreshing: false,
@@ -69,32 +65,33 @@ export async function renderDashboard(container, appInstance) {
 
   if (!user) {
     container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-          <i class="fas fa-user-slash"></i>
-        </div>
-        <p style="font-weight:500;">Usuário não autenticado</p>
-        <button onclick="window.app.navigateTo('login')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-          Fazer Login
-        </button>
-      </div>
-    `;
+            <div class="container" style="text-align:center;padding:40px 20px;">
+                <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+                    <i class="fas fa-user-slash"></i>
+                </div>
+                <p style="font-weight:500;">Usuário não autenticado</p>
+                <button onclick="window.app.navigateTo('login')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+                    Fazer Login
+                </button>
+            </div>
+        `;
     return;
   }
 
   // Mostrar loader com animação
   container.innerHTML = `
-    <div class="container" style="text-align:center;padding:40px 20px;">
-      <div class="spinner-azul" style="margin:0 auto;animation: spin 0.8s linear infinite;"></div>
-      <p style="margin-top:12px;color:var(--cinza-medio);">Carregando dashboard...</p>
-    </div>
-  `;
+        <div class="container" style="text-align:center;padding:40px 20px;">
+            <div class="spinner-azul" style="margin:0 auto;animation: spin 0.8s linear infinite;"></div>
+            <p style="margin-top:12px;color:var(--cinza-medio);">Carregando dashboard...</p>
+        </div>
+    `;
 
   try {
     // Carregar dados com cache
     await carregarStats();
     await carregarBriefings();
     await carregarOcorrencias();
+    await carregarAbordagens();
 
     renderizarDashboard(container, appInstance);
 
@@ -105,22 +102,24 @@ export async function renderDashboard(container, appInstance) {
     window._dashboardFiltrarStatus = (status) =>
       filtrarPorStatus(status, container, appInstance);
     window._dashboardVerDetalhes = (id) => verDetalhes(id, appInstance);
+    window._dashboardVerAbordagem = (id, tipo) =>
+      verAbordagem(id, tipo, appInstance);
     window._dashboardRecarregar = () => renderDashboard(container, appInstance);
     window._dashboardRefrescar = () => refreshDashboard(container, appInstance);
   } catch (error) {
     console.error("Erro ao renderizar dashboard:", error);
     container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
-          <i class="fas fa-exclamation-triangle"></i>
-        </div>
-        <h3>Erro ao carregar dashboard</h3>
-        <p style="color:var(--cinza-medio);">${error.message}</p>
-        <button onclick="window._dashboardRecarregar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
-          Tentar novamente
-        </button>
-      </div>
-    `;
+            <div class="container" style="text-align:center;padding:40px 20px;">
+                <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <h3>Erro ao carregar dashboard</h3>
+                <p style="color:var(--cinza-medio);">${error.message}</p>
+                <button onclick="window._dashboardRecarregar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
+                    Tentar novamente
+                </button>
+            </div>
+        `;
   }
 }
 
@@ -132,12 +131,10 @@ function configurarPullToRefresh(container, appInstance) {
   const dashboardContent = container.querySelector(".container");
   if (!dashboardContent) return;
 
-  // Remover listeners anteriores
   dashboardContent.removeEventListener("touchstart", handleTouchStart);
   dashboardContent.removeEventListener("touchmove", handleTouchMove);
   dashboardContent.removeEventListener("touchend", handleTouchEnd);
 
-  // Adicionar novos listeners
   dashboardContent.addEventListener("touchstart", handleTouchStart, {
     passive: true,
   });
@@ -148,7 +145,6 @@ function configurarPullToRefresh(container, appInstance) {
     passive: true,
   });
 
-  // Armazenar referências
   dashboardContent._pullRefreshApp = appInstance;
   dashboardContent._pullRefreshContainer = container;
 }
@@ -157,7 +153,6 @@ function handleTouchStart(e) {
   const container = this;
   const scrollTop = window.scrollY || document.documentElement.scrollTop;
 
-  // Só ativa pull-to-refresh se estiver no topo da página
   if (scrollTop <= 0) {
     estado.touchStartY = e.touches[0].clientY;
     estado.isPulling = true;
@@ -177,11 +172,7 @@ function handleTouchMove(e) {
   if (diff > 0) {
     estado.touchCurrentY = touchY;
     estado.pullProgress = Math.min(diff / PULL_REFRESH_THRESHOLD, 1);
-
-    // Mostrar indicador visual
     mostrarIndicadorPullRefresh(this, estado.pullProgress);
-
-    // Prevenir scroll durante o pull
     if (estado.pullProgress > 0.1) {
       e.preventDefault();
     }
@@ -195,15 +186,10 @@ function handleTouchEnd(e) {
   const appInstance = container._pullRefreshApp;
   const dashboardContainer = container._pullRefreshContainer;
 
-  // Se o pull atingiu o threshold, recarregar
   if (estado.pullProgress >= 1) {
-    // Mostrar loading
     mostrarIndicadorPullRefresh(container, 1, true);
-
-    // Recarregar dados
     refreshDashboard(dashboardContainer, appInstance);
   } else {
-    // Resetar indicador
     removerIndicadorPullRefresh(container);
   }
 
@@ -214,37 +200,36 @@ function handleTouchEnd(e) {
 }
 
 function mostrarIndicadorPullRefresh(container, progress, loading = false) {
-  // Verificar se já existe indicador
   let indicator = container.querySelector(".pull-refresh-indicator");
 
   if (!indicator) {
     indicator = document.createElement("div");
     indicator.className = "pull-refresh-indicator";
     indicator.style.cssText = `
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      text-align: center;
-      padding: 8px;
-      font-size: 12px;
-      color: var(--cinza-medio);
-      background: var(--branco);
-      transform: translateY(-100%);
-      transition: transform 0.2s ease;
-      border-bottom: 1px solid var(--cinza-claro);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    `;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            text-align: center;
+            padding: 8px;
+            font-size: 12px;
+            color: var(--cinza-medio);
+            background: var(--branco);
+            transform: translateY(-100%);
+            transition: transform 0.2s ease;
+            border-bottom: 1px solid var(--cinza-claro);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        `;
     container.parentNode.insertBefore(indicator, container);
   }
 
   if (loading) {
     indicator.innerHTML = `
-      <div class="spinner-small" style="width:16px;height:16px;border:2px solid var(--cinza-claro);border-top-color:var(--azul-bandeira);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-      <span>Atualizando...</span>
-    `;
+            <div class="spinner-small" style="width:16px;height:16px;border:2px solid var(--cinza-claro);border-top-color:var(--azul-bandeira);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+            <span>Atualizando...</span>
+        `;
     indicator.style.transform = "translateY(0)";
     indicator.style.background = "var(--azul-muito-claro)";
     indicator.style.color = "var(--azul-bandeira)";
@@ -287,16 +272,15 @@ async function refreshDashboard(container, appInstance) {
   estado.isRefreshing = true;
 
   try {
-    // Limpar cache
     localStorage.removeItem(CACHE_KEY_STATS);
     localStorage.removeItem(CACHE_KEY_OCORRENCIAS);
+    localStorage.removeItem(CACHE_KEY_ABORDAGENS);
 
-    // Recarregar dados
     await carregarStats();
     await carregarBriefings();
     await carregarOcorrencias();
+    await carregarAbordagens();
 
-    // Re-renderizar
     renderizarDashboard(container, appInstance);
 
     if (appInstance && appInstance.showToast) {
@@ -309,7 +293,6 @@ async function refreshDashboard(container, appInstance) {
     }
   } finally {
     estado.isRefreshing = false;
-    // Remover indicador
     const indicator = container.querySelector(".pull-refresh-indicator");
     if (indicator) {
       indicator.style.transform = "translateY(-100%)";
@@ -327,7 +310,6 @@ async function refreshDashboard(container, appInstance) {
 // ============================================
 
 async function carregarStats() {
-  // Tentar carregar do cache
   const cachedStats = getCachedData(CACHE_KEY_STATS);
   if (cachedStats) {
     estado.statsData = cachedStats;
@@ -366,7 +348,6 @@ async function carregarStats() {
     };
   }
 
-  // Carregar retificações pendentes (apenas supervisor)
   if (typeof authManager !== "undefined" && authManager.isSupervisor()) {
     try {
       const result = await ocorrenciaManager.buscarRetificacoesPendentes();
@@ -397,7 +378,6 @@ async function carregarBriefings() {
       Date.now() - 12 * 60 * 60 * 1000,
     ).toISOString();
 
-    // Buscar novas ocorrências (sem JOIN)
     const { data: novasOcorrencias, error: occError } = await client
       .from("ocorrencias")
       .select("id, tipo_ocorrencia, criado_em, local_ocorrencia")
@@ -407,7 +387,6 @@ async function carregarBriefings() {
 
     if (occError) throw occError;
 
-    // Buscar novos avisos
     const { data: novosAvisos, error: avisoError } = await client
       .from("mural_avisos")
       .select("id, titulo, tipo, criado_em")
@@ -416,7 +395,6 @@ async function carregarBriefings() {
 
     if (avisoError) throw avisoError;
 
-    // Buscar nomes dos criadores separadamente
     const ocorrenciasComNomes = await Promise.all(
       (novasOcorrencias || []).map(async (occ) => {
         let nomeCriador = "Desconhecido";
@@ -445,7 +423,6 @@ async function carregarBriefings() {
 }
 
 async function carregarOcorrencias() {
-  // Tentar carregar do cache
   const cachedOcorrencias = getCachedData(CACHE_KEY_OCORRENCIAS);
   if (cachedOcorrencias) {
     estado.ocorrenciasData = cachedOcorrencias;
@@ -454,21 +431,111 @@ async function carregarOcorrencias() {
   }
 
   try {
-    const filtros = { limit: estado.filtroStatusAtual ? 100 : 5 };
-    if (estado.filtroStatusAtual) {
-      filtros.status = estado.filtroStatusAtual;
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      estado.ocorrenciasData = [];
+      return;
     }
 
-    const result = await ocorrenciaManager.listar(filtros);
-    if (result.success) {
-      estado.ocorrenciasData = result.data || [];
-      setCachedData(CACHE_KEY_OCORRENCIAS, result.data);
-    } else {
+    const user = authManager.getUser();
+    if (!user) {
       estado.ocorrenciasData = [];
+      return;
     }
+
+    // Buscar ocorrências - CORRIGIDO
+    const { data: ocorrencias, error } = await client
+      .from("ocorrencias")
+      .select(
+        `
+                *,
+                usuarios!ocorrencias_criado_por_fkey(nome_completo, cpf)
+            `,
+      )
+      .eq("criado_por", user.id)
+      .eq("esta_ativa", true)
+      .order("criado_em", { ascending: false })
+      .limit(10);
+
+    if (error) throw error;
+
+    // Buscar anexos para cada ocorrência
+    const ocorrenciasComAnexos = await Promise.all(
+      (ocorrencias || []).map(async (occ) => {
+        try {
+          const { data: anexos } = await client
+            .from("anexos")
+            .select("id, nome_arquivo, tipo_arquivo, url, url_thumb")
+            .eq("ocorrencia_id", occ.id)
+            .order("criado_em", { ascending: true })
+            .limit(5);
+
+          return {
+            ...occ,
+            anexos: anexos || [],
+          };
+        } catch (e) {
+          return { ...occ, anexos: [] };
+        }
+      }),
+    );
+
+    estado.ocorrenciasData = ocorrenciasComAnexos || [];
+    setCachedData(CACHE_KEY_OCORRENCIAS, estado.ocorrenciasData);
   } catch (error) {
     console.warn("Erro ao carregar ocorrências:", error);
     estado.ocorrenciasData = [];
+  }
+}
+
+async function carregarAbordagens() {
+  const cachedAbordagens = getCachedData(CACHE_KEY_ABORDAGENS);
+  if (cachedAbordagens) {
+    estado.abordagensData = cachedAbordagens;
+    console.log("📋 Abordagens carregadas do cache");
+    return;
+  }
+
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      estado.abordagensData = { veiculos: [], pessoas: [] };
+      return;
+    }
+
+    const user = authManager.getUser();
+    if (!user) {
+      estado.abordagensData = { veiculos: [], pessoas: [] };
+      return;
+    }
+
+    const [veiculosResult, pessoasResult] = await Promise.all([
+      client
+        .from("abordagens_veiculos")
+        .select("*, usuarios(nome_completo)")
+        .eq("criado_por", user.id)
+        .order("criado_em", { ascending: false })
+        .limit(3),
+      client
+        .from("abordagens_pessoas")
+        .select("*, usuarios(nome_completo)")
+        .eq("criado_por", user.id)
+        .order("criado_em", { ascending: false })
+        .limit(3),
+    ]);
+
+    const abordagens = {
+      veiculos: veiculosResult.data || [],
+      pessoas: pessoasResult.data || [],
+    };
+
+    estado.abordagensData = abordagens;
+    setCachedData(CACHE_KEY_ABORDAGENS, abordagens);
+  } catch (error) {
+    console.warn("Erro ao carregar abordagens:", error);
+    estado.abordagensData = { veiculos: [], pessoas: [] };
   }
 }
 
@@ -516,96 +583,113 @@ function renderizarDashboard(container, appInstance) {
   const user =
     typeof authManager !== "undefined" ? authManager.getUser() : null;
   const stats = estado.statsData;
-  const ocorrencias = estado.ocorrenciasData;
+  const ocorrencias = estado.ocorrenciasData.slice(0, 3);
+  const abordagens = estado.abordagensData;
   const briefings = estado.briefingsData;
   const pendentesCount = estado.pendentesRetificacoes?.length || 0;
   const isSupervisor =
     typeof authManager !== "undefined" && authManager.isSupervisor();
-  const filtroAtivo = estado.filtroStatusAtual;
 
   const temNovidades =
     briefings?.ocorrencias?.length > 0 || briefings?.avisos?.length > 0;
-  const tituloFiltro = filtroAtivo ? getStatusLabel(filtroAtivo) : "Todas";
+
+  const totalAbordagens =
+    (abordagens.veiculos || []).length + (abordagens.pessoas || []).length;
 
   let html = `
-    <div class="container" style="padding-bottom:100px;" id="dashboardContainer">
-      ${temNovidades ? renderBriefing(briefings) : ""}
+        <div class="container" style="padding-bottom:100px;" id="dashboardContainer">
+            ${temNovidades ? renderBriefing(briefings) : ""}
 
-      <h2 style="margin-bottom:4px;color:var(--azul-bandeira);">
-        Olá, ${user?.nome_completo || "Guarda"}!
-      </h2>
-      <p style="color:var(--cinza-medio);margin-bottom:16px;font-size:13px;">
-        ${isSupervisor ? "👑 Visão geral do sistema" : "📋 Suas ocorrências"}
-        <span style="font-size:11px;color:var(--cinza-medio);margin-left:8px;">
-          (${new Date().toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "long",
-            year: "numeric",
-          })})
-        </span>
-      </p>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <div>
+                    <h2 style="margin-bottom:2px;color:var(--azul-bandeira);font-size:18px;">
+                        Olá, ${user?.nome_completo || "Guarda"}! 👋
+                    </h2>
+                    <p style="color:var(--cinza-medio);font-size:12px;margin:0;">
+                        ${new Date().toLocaleDateString("pt-BR", {
+                          day: "2-digit",
+                          month: "long",
+                          year: "numeric",
+                        })}
+                    </p>
+                </div>
+                <button onclick="window._dashboardRefrescar()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
 
-      <!-- Cards de Estatísticas -->
-      <div class="stats-grid">
-        <div class="stat-card" onclick="window._dashboardFiltrarStatus(null)" style="cursor:pointer;">
-          <div class="icon"><i class="fas fa-tasks"></i></div>
-          <div class="value">${stats?.total || 0}</div>
-          <div class="label">Total</div>
-        </div>
-        <div class="stat-card amarelo" onclick="window._dashboardFiltrarStatus('pending_sync')" style="cursor:pointer;">
-          <div class="icon"><i class="fas fa-clock"></i></div>
-          <div class="value">${stats?.pending || 0}</div>
-          <div class="label">Pendentes</div>
-        </div>
-        <div class="stat-card verde" onclick="window._dashboardFiltrarStatus('synced')" style="cursor:pointer;">
-          <div class="icon"><i class="fas fa-check-circle"></i></div>
-          <div class="value">${stats?.synced || 0}</div>
-          <div class="label">Finalizadas</div>
-        </div>
-        <div class="stat-card" style="border-left:3px solid var(--azul-bandeira);background:var(--azul-muito-claro);" onclick="window._dashboardFiltrarStatus('rectified')">
-          <div class="icon"><i class="fas fa-sync-alt" style="color:var(--azul-bandeira);"></i></div>
-          <div class="value" style="color:var(--azul-bandeira);">${stats?.rectified || 0}</div>
-          <div class="label" style="color:var(--azul-bandeira);">Retificadas</div>
-        </div>
-        <div class="stat-card" style="border-left:3px solid var(--aviso);background:#fef3c7;" onclick="window._dashboardFiltrarStatus('pending_rectification')">
-          <div class="icon"><i class="fas fa-clock" style="color:#92400e;"></i></div>
-          <div class="value" style="color:#92400e;">${stats?.pending_rectification || 0}</div>
-          <div class="label" style="color:#92400e;">Retif. Pendente</div>
-        </div>
-        <div class="stat-card vermelho" onclick="window._dashboardFiltrarStatus('cancelled')" style="cursor:pointer;">
-          <div class="icon"><i class="fas fa-times-circle"></i></div>
-          <div class="value">${stats?.cancelled || 0}</div>
-          <div class="label">Canceladas</div>
-        </div>
-      </div>
+            <!-- Cards de Estatísticas Agrupados -->
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;color:var(--cinza-medio);margin:0 0 8px 0;font-weight:600;">
+                    <i class="fas fa-chart-simple"></i> Estatísticas
+                </h3>
+                <div class="stats-grid">
+                    <div class="stat-card" onclick="window._dashboardFiltrarStatus(null)" style="cursor:pointer;">
+                        <div class="icon"><i class="fas fa-tasks"></i></div>
+                        <div class="value">${stats?.total || 0}</div>
+                        <div class="label">Total</div>
+                    </div>
+                    <div class="stat-card amarelo" onclick="window._dashboardFiltrarStatus('pending_sync')" style="cursor:pointer;">
+                        <div class="icon"><i class="fas fa-clock"></i></div>
+                        <div class="value">${stats?.pending || 0}</div>
+                        <div class="label">Pendentes</div>
+                    </div>
+                    <div class="stat-card verde" onclick="window._dashboardFiltrarStatus('synced')" style="cursor:pointer;">
+                        <div class="icon"><i class="fas fa-check-circle"></i></div>
+                        <div class="value">${stats?.synced || 0}</div>
+                        <div class="label">Finalizadas</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:4px;">
+                    <div class="stat-card" style="border-left:3px solid var(--azul-bandeira);background:var(--azul-muito-claro);padding:8px;min-height:50px;cursor:pointer;" onclick="window._dashboardFiltrarStatus('rectified')">
+                        <div class="icon"><i class="fas fa-sync-alt" style="color:var(--azul-bandeira);"></i></div>
+                        <div class="value" style="font-size:14px;color:var(--azul-bandeira);">${stats?.rectified || 0}</div>
+                        <div class="label" style="font-size:7px;color:var(--azul-bandeira);">Retificadas</div>
+                    </div>
+                    <div class="stat-card" style="border-left:3px solid var(--aviso);background:#fef3c7;padding:8px;min-height:50px;cursor:pointer;" onclick="window._dashboardFiltrarStatus('pending_rectification')">
+                        <div class="icon"><i class="fas fa-clock" style="color:#92400e;"></i></div>
+                        <div class="value" style="font-size:14px;color:#92400e;">${stats?.pending_rectification || 0}</div>
+                        <div class="label" style="font-size:7px;color:#92400e;">Retif. Pendente</div>
+                    </div>
+                    <div class="stat-card vermelho" onclick="window._dashboardFiltrarStatus('cancelled')" style="cursor:pointer;padding:8px;min-height:50px;">
+                        <div class="icon"><i class="fas fa-times-circle"></i></div>
+                        <div class="value" style="font-size:14px;">${stats?.cancelled || 0}</div>
+                        <div class="label" style="font-size:7px;">Canceladas</div>
+                    </div>
+                </div>
+            </div>
 
-      ${isSupervisor ? renderRetificacoesPendentes(pendentesCount, appInstance) : ""}
+            ${isSupervisor ? renderRetificacoesPendentes(pendentesCount, appInstance) : ""}
 
-      <!-- Estatísticas adicionais para supervisor -->
-      ${isSupervisor ? renderStatsAdicionais(stats) : ""}
+            <!-- Últimas Ocorrências -->
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <h3 style="font-size:14px;font-weight:700;margin:0;color:var(--azul-bandeira);">
+                        <i class="fas fa-file-alt" style="margin-right:6px;"></i>
+                        Últimas Ocorrências
+                    </h3>
+                    <button onclick="window.app.navigateTo('ocorrencias')" class="btn-secondary" style="padding:4px 12px;font-size:10px;min-height:auto;width:auto;border-radius:30px;">
+                        Ver todas <i class="fas fa-arrow-right" style="margin-left:4px;font-size:8px;"></i>
+                    </button>
+                </div>
+                ${renderOcorrenciasLista(ocorrencias, appInstance)}
+            </div>
 
-      <!-- Lista de Ocorrências -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;margin-bottom:8px;">
-        <h3 style="font-size:16px;font-weight:700;margin:0;">
-          <i class="fas fa-list-ul" style="margin-right:8px;"></i>
-          ${filtroAtivo ? `Ocorrências - ${tituloFiltro}` : "Últimas Ocorrências"}
-        </h3>
-        ${
-          filtroAtivo
-            ? `
-          <button onclick="window._dashboardFiltrarStatus(null)" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-            <i class="fas fa-times" style="margin-right:4px;"></i> Limpar Filtro
-          </button>
-        `
-            : ""
-        }
-      </div>
-
-      <div id="listaOcorrenciasContainer">
-        ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance)}
-      </div>
-    </div>
-  `;
+            <!-- Últimas Abordagens -->
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <h3 style="font-size:14px;font-weight:700;margin:0;color:var(--verde-bandeira);">
+                        <i class="fas fa-handshake" style="margin-right:6px;"></i>
+                        Últimas Abordagens (${totalAbordagens})
+                    </h3>
+                    <button onclick="window.app.navigateTo('consulta')" class="btn-secondary" style="padding:4px 12px;font-size:10px;min-height:auto;width:auto;border-radius:30px;">
+                        Ver todas <i class="fas fa-arrow-right" style="margin-left:4px;font-size:8px;"></i>
+                    </button>
+                </div>
+                ${renderAbordagensLista(abordagens, appInstance)}
+            </div>
+        </div>
+    `;
 
   container.innerHTML = html;
 
@@ -621,33 +705,6 @@ function renderizarDashboard(container, appInstance) {
 }
 
 // ============================================
-// RENDERIZAÇÃO: ESTATÍSTICAS ADICIONAIS
-// ============================================
-
-function renderStatsAdicionais(stats) {
-  const total = stats?.total || 1;
-  const finalizadas = stats?.synced || 0;
-  const taxa = ((finalizadas / total) * 100).toFixed(1);
-
-  return `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--verde-bandeira);">${taxa}%</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Resolutividade</div>
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--azul-bandeira);">${stats?.hoje || 0}</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Hoje</div>
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--roxo);">${stats?.draft || 0}</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Rascunhos</div>
-      </div>
-    </div>
-  `;
-}
-
-// ============================================
 // RENDERIZAÇÃO: BRIEFING
 // ============================================
 
@@ -658,51 +715,43 @@ function renderBriefing(briefings) {
   if (ocorrencias.length === 0 && avisos.length === 0) return "";
 
   return `
-    <div id="briefing-container" style="background:var(--gradiente-principal); border-radius:var(--border-radius); padding:16px; margin-bottom:20px; color:white; box-shadow:var(--sombra-media); animation: slideUp 0.5s ease-out;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <h3 style="margin:0; font-size:16px;">
-          <i class="fas fa-bolt" style="margin-right:8px;"></i>
-          Briefing do Turno
-        </h3>
-        <button onclick="this.parentElement.parentElement.remove()" style="background:none; border:none; color:white; opacity:0.7; font-size:18px; cursor:pointer;">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      <p style="font-size:12px; opacity:0.9; margin-bottom:12px;">
-        Veja o que aconteceu nas últimas 12 horas:
-      </p>
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${ocorrencias
-          .map(
-            (o) => `
-          <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px; cursor:pointer;" onclick="window._dashboardVerDetalhes('${o.id}')">
-            <i class="fas fa-file-alt" style="font-size:14px;"></i>
-            <span style="font-size:13px;">
-              Nova Ocorrência: <b>${o.tipo_ocorrencia || "Sem tipo"}</b>
-              ${o.local_ocorrencia ? ` - ${o.local_ocorrencia}` : ""}
-            </span>
-          </div>
-        `,
-          )
-          .join("")}
-        ${avisos
-          .map(
-            (a) => `
-          <div style="background:rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; display:flex; align-items:center; gap:10px; cursor:pointer;" onclick="window.app.navigateTo('mural')">
-            <i class="fas fa-bullhorn" style="font-size:14px;"></i>
-            <span style="font-size:13px;">
-              Mural: <b>${a.titulo}</b>
-            </span>
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
-      <button onclick="window.app.navigateTo('mural')" style="width:100%; margin-top:12px; background:white; color:var(--azul-bandeira); border:none; padding:8px; border-radius:8px; font-weight:700; font-size:12px; cursor:pointer;">
-        VER TUDO
-      </button>
-    </div>
-  `;
+        <div id="briefing-container" style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:14px;margin-bottom:16px;color:white;box-shadow:var(--sombra-media);animation:slideUp 0.5s ease-out;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;font-size:14px;">
+                    <i class="fas fa-bolt" style="margin-right:6px;"></i>
+                    Briefing do Turno
+                </h3>
+                <button onclick="this.parentElement.parentElement.remove()" style="background:none;border:none;color:white;opacity:0.7;font-size:16px;cursor:pointer;padding:0 4px;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <p style="font-size:11px;opacity:0.9;margin-bottom:8px;">
+                Veja o que aconteceu nas últimas 12 horas:
+            </p>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                ${ocorrencias
+                  .map(
+                    (o) => `
+                    <div style="background:rgba(255,255,255,0.12);padding:6px 10px;border-radius:6px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;" onclick="window._dashboardVerDetalhes('${o.id}')">
+                        <i class="fas fa-file-alt" style="font-size:12px;"></i>
+                        <span>Nova Ocorrência: <b>${o.tipo_ocorrencia || "Sem tipo"}</b></span>
+                    </div>
+                `,
+                  )
+                  .join("")}
+                ${avisos
+                  .map(
+                    (a) => `
+                    <div style="background:rgba(255,255,255,0.12);padding:6px 10px;border-radius:6px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;" onclick="window.app.navigateTo('mural')">
+                        <i class="fas fa-bullhorn" style="font-size:12px;"></i>
+                        <span>Mural: <b>${a.titulo}</b></span>
+                    </div>
+                `,
+                  )
+                  .join("")}
+            </div>
+        </div>
+    `;
 }
 
 // ============================================
@@ -713,120 +762,504 @@ function renderRetificacoesPendentes(count, appInstance) {
   if (count === 0) return "";
 
   return `
-    <div style="margin-top:12px;background:var(--branco);border-radius:var(--border-radius);padding:12px 16px;box-shadow:var(--sombra-suave);border-left:4px solid var(--aviso);display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="window.app.navigateTo('retificacoes')">
-      <div>
-        <span style="font-weight:600;font-size:14px;">
-          <i class="fas fa-sync-alt" style="color:var(--aviso);margin-right:8px;"></i>
-          Solicitações de Retificação Pendentes
-        </span>
-        <span style="font-size:12px;color:var(--cinza-medio);margin-left:8px;">
-          Aguardando sua análise
-        </span>
-      </div>
-      <span class="badge badge-pending" style="font-size:14px;padding:6px 14px;">
-        ${count}
-      </span>
-    </div>
-  `;
+        <div style="margin-bottom:12px;background:var(--branco);border-radius:var(--border-radius);padding:10px 14px;box-shadow:var(--sombra-suave);border-left:4px solid var(--aviso);display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="window.app.navigateTo('retificacoes')">
+            <div>
+                <span style="font-weight:600;font-size:13px;">
+                    <i class="fas fa-sync-alt" style="color:var(--aviso);margin-right:6px;"></i>
+                    Solicitações de Retificação Pendentes
+                </span>
+                <span style="font-size:11px;color:var(--cinza-medio);margin-left:6px;">
+                    Aguardando sua análise
+                </span>
+            </div>
+            <span class="badge badge-pending" style="font-size:13px;padding:4px 14px;">
+                ${count}
+            </span>
+        </div>
+    `;
 }
 
 // ============================================
-// RENDERIZAÇÃO: LISTA DE OCORRÊNCIAS
+// RENDERIZAÇÃO: OCORRÊNCIAS (COM MINIATURAS)
 // ============================================
 
-function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
+function renderOcorrenciasLista(ocorrencias, appInstance) {
   if (!ocorrencias || ocorrencias.length === 0) {
-    const mensagem = filtroAtivo
-      ? `Nenhuma ocorrência com status "${getStatusLabel(filtroAtivo)}" encontrada`
-      : "Nenhuma ocorrência encontrada";
-
     return `
-      <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);">
-        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-          <i class="fas fa-inbox"></i>
-        </div>
-        <p style="font-weight:500;">${mensagem}</p>
-        ${!filtroAtivo ? '<p style="font-size:13px;">Clique em "+" para criar sua primeira ocorrência</p>' : ""}
-        ${
-          filtroAtivo
-            ? `
-          <button onclick="window._dashboardFiltrarStatus(null)" class="btn-secondary" style="margin-top:12px;padding:6px 16px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-            <i class="fas fa-arrow-left" style="margin-right:6px;"></i>
-            Ver todas
-          </button>
-        `
-            : ""
+            <div style="text-align:center;padding:20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+                <i class="fas fa-inbox" style="font-size:24px;color:var(--cinza-claro);margin-bottom:6px;display:block;"></i>
+                <p style="color:var(--cinza-medio);font-size:13px;margin:0;">Nenhuma ocorrência recente</p>
+                <button onclick="window.app.navigateTo('nova-ocorrencia')" class="btn-primary" style="margin-top:8px;padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">
+                    <i class="fas fa-plus"></i> Nova Ocorrência
+                </button>
+            </div>
+        `;
+  }
+
+  return ocorrencias
+    .map((occ) => {
+      const numero =
+        occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
+      const statusClass = getStatusClass(occ.status);
+      const statusLabel = getStatusLabel(occ.status);
+      const data = formatarDataHoraLocal(occ.criado_em);
+      const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
+      const guardaNome = occ.criador?.nome_completo || "Desconhecido";
+
+      // Verificar se tem anexos com imagens
+      let temImagem = false;
+      let imagemUrl = null;
+      let totalAnexos = 0;
+
+      if (occ.anexos && occ.anexos.length > 0) {
+        totalAnexos = occ.anexos.length;
+        // Procurar primeira imagem
+        const imagem = occ.anexos.find(
+          (a) => a.tipo_arquivo === "image" || a.tipo === "image",
+        );
+        if (imagem) {
+          temImagem = true;
+          imagemUrl = imagem.url || imagem.url_thumb;
         }
-      </div>
-    `;
-  }
+      }
 
-  let html = "";
+      // Badge de anexos
+      let anexosBadge = "";
+      if (totalAnexos > 0) {
+        anexosBadge = `<span style="font-size:9px;color:var(--cinza-medio);background:var(--cinza-claro);padding:2px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:4px;">📎 ${totalAnexos}</span>`;
+      }
 
-  ocorrencias.forEach((occ) => {
-    const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
-    const statusClass = getStatusClass(occ.status);
-    const statusLabel = getStatusLabel(occ.status);
-    const data = formatarDataHoraLocal(occ.criado_em);
-    const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
-    const tipoBadge = occ.tipo_ocorrencia
-      ? `<span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}">${tipoLabel}</span>`
-      : "";
-    const versaoBadge =
-      occ.status === "rectified" && occ.numero_versao > 1
-        ? ` <span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;">v${occ.numero_versao}</span>`
+      // Badge de versão (retificação)
+      const versaoBadge =
+        occ.status === "rectified" && occ.numero_versao > 1
+          ? `<span style="font-size:8px;color:var(--azul-bandeira);background:var(--azul-muito-claro);padding:1px 6px;border-radius:4px;border:1px solid var(--azul-bandeira);">v${occ.numero_versao}</span>`
+          : "";
+
+      // Preview da observação
+      const previewObs = occ.observacoes
+        ? occ.observacoes.substring(0, 60) +
+          (occ.observacoes.length > 60 ? "..." : "")
         : "";
-    const guardaNome = occ.criador?.nome_completo || "Desconhecido";
-    const guardaCPF = occ.criador?.cpf || "";
-    const cpfExibido = formatarCPFSeguro(guardaCPF);
 
-    html += `
-      <div class="ocorrencia-item status-${occ.status}" onclick="window._dashboardVerDetalhes('${occ.id}')">
-        <div class="header">
-          <div>
-            <div class="numero">#${numero} ${tipoBadge} ${versaoBadge}</div>
-            <div class="data">${data}</div>
-          </div>
-          <span class="badge badge-${statusClass}">${statusLabel}</span>
-        </div>
-        <div class="local">
-          <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);"></i>
-          ${occ.local_ocorrencia || "Local não informado"}
-        </div>
-        <div class="guarda" style="font-size:11px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
-          <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
-          <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
-          ${
-            occ.hash_pericial
-              ? `
-            <span title="Hash Pericial" style="cursor:help;font-family:monospace;font-size:9px;">
-              🔒 ${occ.hash_pericial.substring(0, 12)}...
-            </span>
-          `
-              : ""
-          }
-        </div>
-      </div>
-    `;
-  });
+      return `
+            <div class="ocorrencia-item status-${occ.status}" onclick="window._dashboardVerDetalhes('${occ.id}')" style="margin-bottom:6px;padding:8px 10px;display:flex;gap:10px;align-items:flex-start;">
+                <!-- Miniatura da imagem -->
+                ${
+                  temImagem
+                    ? `
+                    <div style="width:60px;height:60px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--cinza-claro);position:relative;">
+                        <img src="${imagemUrl}" alt="Miniatura" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<div style=\\'display:flex;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);font-size:20px;\\'><i class=\\'fas fa-file-alt\\'></i></div>'">
+                        ${totalAnexos > 1 ? `<span style="position:absolute;bottom:2px;right:2px;background:rgba(0,0,0,0.7);color:white;font-size:8px;padding:1px 6px;border-radius:8px;">+${totalAnexos - 1}</span>` : ""}
+                    </div>
+                `
+                    : `
+                    <div style="width:60px;height:60px;border-radius:8px;flex-shrink:0;background:var(--azul-muito-claro);display:flex;align-items:center;justify-content:center;color:var(--azul-bandeira);font-size:20px;border:1px solid var(--cinza-claro);">
+                        <i class="fas fa-file-alt"></i>
+                    </div>
+                `
+                }
+                
+                <!-- Conteúdo -->
+                <div style="flex:1;min-width:0;">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:4px;">
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:700;color:var(--azul-bandeira);display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                                #${numero}
+                                <span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia}" style="font-size:8px;padding:1px 8px;">${tipoLabel}</span>
+                                ${versaoBadge}
+                            </div>
+                            <div style="font-size:10px;color:var(--cinza-medio);margin-top:1px;">
+                                <i class="fas fa-calendar-alt" style="margin-right:3px;"></i>${data}
+                            </div>
+                        </div>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;">
+                            <span class="badge badge-${statusClass}" style="font-size:9px;padding:2px 10px;">${statusLabel}</span>
+                            ${anexosBadge}
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:var(--cinza-escuro);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);font-size:10px;"></i>
+                        ${occ.local_ocorrencia || "Local não informado"}
+                    </div>
+                    <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;">
+                        <span><i class="fas fa-user" style="margin-right:3px;"></i>${guardaNome}</span>
+                        ${occ.hash_pericial ? `<span title="Hash Pericial" style="font-family:monospace;font-size:8px;cursor:help;">🔒 ${occ.hash_pericial.substring(0, 8)}...</span>` : ""}
+                    </div>
+                    ${
+                      previewObs
+                        ? `
+                        <div style="font-size:11px;color:var(--cinza-medio);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0.7;">
+                            ${previewObs}
+                        </div>
+                    `
+                        : ""
+                    }
+                </div>
+            </div>
+        `;
+    })
+    .join("");
+}
 
-  if (!filtroAtivo) {
-    html += `
-      <button class="btn-secondary" style="width:100%;padding:12px;border:none;border-radius:var(--border-radius);font-weight:600;cursor:pointer;background:var(--cinza-claro);color:var(--cinza-escuro);" onclick="window.app.navigateTo('ocorrencias')">
-        <i class="fas fa-arrow-right" style="margin-right:6px;"></i>
-        Ver todas as ocorrências
-      </button>
-    `;
-  } else {
-    html += `
-      <div style="text-align:center;padding:12px;color:var(--cinza-medio);font-size:13px;">
-        <i class="fas fa-filter" style="margin-right:4px;"></i>
-        ${ocorrencias.length} ocorrência(s) encontrada(s)
-      </div>
-    `;
+// ============================================
+// RENDERIZAÇÃO: ABORDAGENS
+// ============================================
+
+function renderAbordagensLista(abordagens, appInstance) {
+  const veiculos = abordagens.veiculos || [];
+  const pessoas = abordagens.pessoas || [];
+
+  const todasAbordagens = [
+    ...veiculos.map((v) => ({ ...v, tipo_abordagem: "veiculo" })),
+    ...pessoas.map((p) => ({ ...p, tipo_abordagem: "pessoa" })),
+  ]
+    .sort((a, b) => new Date(b.criado_em) - new Date(a.criado_em))
+    .slice(0, 3);
+
+  if (todasAbordagens.length === 0) {
+    return `
+            <div style="text-align:center;padding:20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+                <i class="fas fa-handshake" style="font-size:24px;color:var(--cinza-claro);margin-bottom:6px;display:block;"></i>
+                <p style="color:var(--cinza-medio);font-size:13px;margin:0;">Nenhuma abordagem recente</p>
+                <button onclick="window._consultaAbrirFormulario()" class="btn-secondary" style="margin-top:8px;padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--verde-bandeira);color:white;">
+                    <i class="fas fa-plus"></i> Nova Abordagem
+                </button>
+            </div>
+        `;
   }
 
-  return html;
+  return todasAbordagens
+    .map((item) => {
+      const isVeiculo = item.tipo_abordagem === "veiculo";
+      const data = formatarDataHoraLocal(item.criado_em);
+      const guardaNome = item.usuarios?.nome_completo || "Desconhecido";
+
+      let identificador, icone, badgeColor, detalhes;
+      if (isVeiculo) {
+        identificador = item.placa || "Placa não informada";
+        icone = "fa-motorcycle";
+        badgeColor = "badge-veiculo";
+        detalhes =
+          `${item.marca_modelo || ""} (${item.cor || "cor não informada"})`.trim();
+      } else {
+        identificador = item.nome || "Nome não informado";
+        icone = "fa-user";
+        badgeColor = "badge-pessoa";
+        detalhes = item.alcunha ? `(${item.alcunha})` : "";
+        if (item.cpf) detalhes += ` - CPF: ${item.cpf}`;
+      }
+
+      const fase = item.fase || "advertencia";
+      const faseLabel = fase === "multa" ? "💰 Multa" : "⚠️ Advertência";
+      const faseColor = fase === "multa" ? "var(--erro)" : "var(--aviso)";
+
+      return `
+            <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;margin-bottom:6px;box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};cursor:pointer;" onclick="window._dashboardVerAbordagem('${item.id}', '${item.tipo_abordagem}')">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            <span class="badge ${badgeColor}" style="font-size:8px;padding:1px 8px;">
+                                ${isVeiculo ? "🚗 Veículo" : "👤 Pessoa"}
+                            </span>
+                            <i class="fas ${icone}" style="color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};font-size:12px;"></i>
+                            <span style="font-weight:600;font-size:13px;color:var(--cinza-escuro);">${identificador}</span>
+                            ${detalhes ? `<span style="font-size:10px;color:var(--cinza-medio);">${detalhes}</span>` : ""}
+                        </div>
+                        <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
+                            <i class="fas fa-calendar-alt" style="margin-right:4px;"></i>${data}
+                        </div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;">
+                        <span style="font-size:9px;color:${faseColor};font-weight:600;">${faseLabel}</span>
+                        <span style="font-size:9px;color:var(--cinza-medio);">
+                            <i class="fas fa-user-shield"></i> ${guardaNome}
+                        </span>
+                    </div>
+                </div>
+                ${
+                  item.motivo
+                    ? `
+                    <div style="font-size:11px;color:var(--cinza-escuro);margin-top:4px;background:var(--cinza-claro);padding:4px 8px;border-radius:4px;opacity:0.8;">
+                        <strong>Motivo:</strong> ${item.motivo}
+                    </div>
+                `
+                    : ""
+                }
+                <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;">
+                    ${item.observacoes ? `<span style="font-size:9px;color:var(--cinza-medio);background:var(--azul-muito-claro);padding:2px 8px;border-radius:4px;">📝 Obs</span>` : ""}
+                    ${item.anexos && item.anexos.length > 0 ? `<span style="font-size:9px;color:var(--cinza-medio);background:var(--verde-muito-claro);padding:2px 8px;border-radius:4px;">📎 ${item.anexos.length} anexo(s)</span>` : ""}
+                    ${item.prazo ? `<span style="font-size:9px;color:var(--aviso);background:#fef3c7;padding:2px 8px;border-radius:4px;">📅 Prazo: ${new Date(item.prazo).toLocaleDateString("pt-BR")}</span>` : ""}
+                </div>
+            </div>
+        `;
+    })
+    .join("");
+}
+
+// ============================================
+// VER DETALHES DA ABORDAGEM (MODAL)
+// ============================================
+
+export async function verAbordagem(id, tipo, appInstance) {
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      appInstance.showToast("Erro ao conectar", "error");
+      return;
+    }
+
+    const tabela =
+      tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+    const { data: abordagem, error } = await client
+      .from(tabela)
+      .select("*, usuarios(nome_completo)")
+      .eq("id", id)
+      .single();
+
+    if (error) throw error;
+    if (!abordagem) {
+      appInstance.showToast("Abordagem não encontrada", "error");
+      return;
+    }
+
+    const isVeiculo = tipo === "veiculo";
+    const data = formatarDataHoraLocal(abordagem.criado_em);
+    const guardaNome = abordagem.usuarios?.nome_completo || "Desconhecido";
+    const fase = abordagem.fase || "advertencia";
+    const faseLabel = fase === "multa" ? "💰 Multa" : "⚠️ Advertência";
+
+    // Montar HTML do modal
+    let html = `
+            <div class="modal" style="max-width:500px;width:100%;max-height:95vh;overflow-y:auto;">
+                <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
+                    <div class="title" style="font-size:16px;font-weight:700;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
+                        <i class="fas ${isVeiculo ? "fa-motorcycle" : "fa-user"}" style="margin-right:8px;"></i>
+                        Detalhes da Abordagem
+                    </div>
+                    <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+                        style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding:14px 16px 4px 16px;max-height:70vh;overflow-y:auto;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                        <div>
+                            <h3 style="margin:0;font-size:15px;color:var(--cinza-escuro);">
+                                ${isVeiculo ? "🚗 Veículo" : "👤 Pessoa"}
+                                <span style="font-size:13px;font-weight:400;color:var(--cinza-medio);margin-left:6px;">
+                                    ${isVeiculo ? abordagem.placa : abordagem.nome}
+                                </span>
+                            </h3>
+                            <p style="margin:2px 0 0 0;font-size:11px;color:var(--cinza-medio);">
+                                <i class="fas fa-calendar-alt" style="margin-right:4px;"></i>${data}
+                            </p>
+                        </div>
+                        <span style="font-size:12px;font-weight:600;color:${fase === "multa" ? "var(--erro)" : "var(--aviso)"};">
+                            ${faseLabel}
+                        </span>
+                    </div>
+
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:10px;margin-bottom:10px;">
+                        <p style="font-size:12px;font-weight:600;color:var(--cinza-escuro);margin:0 0 6px 0;">
+                            <i class="fas fa-user-shield" style="margin-right:4px;"></i>
+                            Guarda Responsável
+                        </p>
+                        <p style="font-size:13px;margin:0;color:var(--cinza-escuro);">${guardaNome}</p>
+                    </div>
+        `;
+
+    // Dados específicos
+    if (isVeiculo) {
+      html += `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Placa</p>
+                        <p style="font-size:14px;font-weight:700;color:var(--azul-bandeira);margin:0;">${abordagem.placa || "N/A"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Marca/Modelo</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.marca_modelo || "Não informado"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Cor</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.cor || "Não informado"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Condutor</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.condutor_nome || "Não informado"}</p>
+                    </div>
+                </div>
+            `;
+    } else {
+      html += `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Nome</p>
+                        <p style="font-size:14px;font-weight:700;color:var(--verde-bandeira);margin:0;">${abordagem.nome || "N/A"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Alcunha</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.alcunha || "Nenhuma"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">CPF</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.cpf || "Não informado"}</p>
+                    </div>
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">RG</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.rg || "Não informado"}</p>
+                    </div>
+                </div>
+                ${
+                  abordagem.caracteristicas_fisicas
+                    ? `
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Características Físicas</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.caracteristicas_fisicas}</p>
+                    </div>
+                `
+                    : ""
+                }
+                ${
+                  abordagem.vestimentas
+                    ? `
+                    <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                        <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Vestimentas</p>
+                        <p style="font-size:13px;margin:0;">${abordagem.vestimentas}</p>
+                    </div>
+                `
+                    : ""
+                }
+            `;
+    }
+
+    // Campos comuns
+    html += `
+            <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Local da Abordagem</p>
+                <p style="font-size:13px;margin:0;">${abordagem.local_abordagem || "Não informado"}</p>
+                ${
+                  abordagem.latitude && abordagem.longitude
+                    ? `
+                    <p style="font-size:11px;color:var(--cinza-medio);margin:2px 0 0 0;">
+                        📍 ${parseFloat(abordagem.latitude).toFixed(6)}, ${parseFloat(abordagem.longitude).toFixed(6)}
+                    </p>
+                `
+                    : ""
+                }
+            </div>
+
+            <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Motivo</p>
+                <p style="font-size:13px;margin:0;">${abordagem.motivo || "Não informado"}</p>
+            </div>
+
+            ${
+              abordagem.observacoes
+                ? `
+                <div style="background:var(--azul-muito-claro);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                    <p style="font-size:10px;color:var(--cinza-medio);margin:0 0 2px 0;font-weight:600;">Observações</p>
+                    <p style="font-size:13px;margin:0;white-space:pre-wrap;">${abordagem.observacoes}</p>
+                </div>
+            `
+                : ""
+            }
+
+            ${
+              abordagem.prazo
+                ? `
+                <div style="background:#fef3c7;border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                    <p style="font-size:10px;color:#92400e;margin:0 0 2px 0;font-weight:600;">📅 Prazo para Regularização</p>
+                    <p style="font-size:13px;margin:0;color:#92400e;">
+                        ${new Date(abordagem.prazo).toLocaleDateString("pt-BR")}
+                        ${new Date(abordagem.prazo) < new Date() ? " (Vencido)" : ""}
+                    </p>
+                </div>
+            `
+                : ""
+            }
+
+            ${
+              abordagem.anexos && abordagem.anexos.length > 0
+                ? `
+                <div style="background:var(--verde-muito-claro);border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                    <p style="font-size:10px;color:var(--verde-escuro);margin:0 0 4px 0;font-weight:600;">📎 Anexos (${abordagem.anexos.length})</p>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                        ${abordagem.anexos
+                          .map(
+                            (a, i) => `
+                            <a href="${a.url}" target="_blank" style="font-size:11px;color:var(--azul-bandeira);padding:2px 8px;background:white;border-radius:4px;text-decoration:none;border:1px solid var(--cinza-claro);">
+                                ${a.nome || `Anexo ${i + 1}`}
+                            </a>
+                        `,
+                          )
+                          .join("")}
+                    </div>
+                </div>
+            `
+                : ""
+            }
+
+            ${
+              abordagem.reincidencia_count > 0
+                ? `
+                <div style="background:#fee2e2;border-radius:var(--border-radius);padding:8px;margin-bottom:10px;">
+                    <p style="font-size:12px;margin:0;color:#991b1b;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right:4px;"></i>
+                        ⚠️ Reincidente - ${abordagem.reincidencia_count} abordagem(ns) anterior(es)
+                    </p>
+                </div>
+            `
+                : ""
+            }
+        `;
+
+    html += `
+                </div>
+                <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
+                    <button type="button" onclick="window._consultaConverterBO('${tipo}', '${btoa(JSON.stringify(abordagem))}')" class="btn-primary" style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;">
+                        <i class="fas fa-file-export" style="margin-right:6px;"></i> Converter em BO
+                    </button>
+                    <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+                        style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        `;
+
+    // Criar overlay e exibir modal
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            z-index: 999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px;
+            animation: fadeIn 0.25s ease;
+        `;
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+  } catch (error) {
+    console.error("Erro ao carregar detalhes da abordagem:", error);
+    appInstance.showToast("Erro ao carregar detalhes", "error");
+  }
 }
 
 // ============================================
@@ -937,8 +1370,10 @@ export default {
   renderDashboard,
   filtrarPorStatus,
   verDetalhes,
+  verAbordagem,
   carregarStats,
   carregarOcorrencias,
+  carregarAbordagens,
   carregarBriefings,
   refreshDashboard,
 };

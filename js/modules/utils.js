@@ -16,14 +16,6 @@
  */
 
 // ============================================
-// IMPORTAÇÕES
-// ============================================
-
-// Usamos os objetos globais já disponíveis
-// (authManager, supabaseClient, CONFIG)
-// Não importamos diretamente para evitar dependência circular.
-
-// ============================================
 // CONSTANTES
 // ============================================
 
@@ -53,7 +45,7 @@ let horarioCache = {
 // ============================================
 
 /**
- * Obtém a data/hora atual com fuso horário correto (Brasília - UTC-3)
+ * Obtém a data/hora atual do dispositivo SEM ajuste de fuso
  * Prioridade: horário da internet (worldtimeapi) > horário do dispositivo
  * Com cache para evitar múltiplas requisições
  * @param {boolean} forceRefresh - Forçar atualização do cache
@@ -113,66 +105,90 @@ export async function obterDataHoraPrecisa(forceRefresh = false) {
     }
   }
 
-  // Fallback: horário do dispositivo com ajuste para Brasília (UTC-3)
+  // Fallback: usar a data do dispositivo SEM ajuste
   console.warn("⚠️ Falha ao obter horário da internet, usando dispositivo");
   const agora = new Date();
-  const timezoneOffset = agora.getTimezoneOffset();
-  const diffMinutos = FUSO_BRASILIA * 60 - timezoneOffset;
-  const dataAjustada = new Date(agora.getTime() + diffMinutos * 60000);
+
+  // Verificar se a data é válida
+  if (isNaN(agora.getTime())) {
+    console.error("❌ Data do dispositivo inválida, usando timestamp atual");
+    const timestamp = Date.now();
+    const emergencyDate = new Date(timestamp);
+    horarioCache = {
+      data: timestamp,
+      timestamp: now,
+      fonte: "emergencia",
+    };
+    return emergencyDate;
+  }
 
   horarioCache = {
-    data: dataAjustada.getTime(),
+    data: agora.getTime(),
     timestamp: now,
     fonte: "dispositivo",
   };
 
-  return dataAjustada;
+  return agora;
 }
 
 /**
- * Obtém data/hora atual no formato ISO
+ * Obtém data/hora atual no formato ISO (data do dispositivo SEM ajuste)
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
 export async function obterDataHoraBrasiliaISO(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
+  if (isNaN(date.getTime())) {
+    console.warn("⚠️ Data inválida, usando fallback");
+    return new Date().toISOString();
+  }
+  // Retornar a data exata do dispositivo, sem conversão
   return date.toISOString();
 }
 
 /**
- * Obtém a data atual no formato YYYY-MM-DD
+ * Obtém a data atual no formato YYYY-MM-DD (data do dispositivo SEM ajuste)
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
 export async function obterDataAtualISO(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
+  if (isNaN(date.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
   return date.toISOString().slice(0, 10);
 }
 
 /**
- * Obtém a hora atual formatada (HH:mm)
+ * Obtém a hora atual formatada (HH:mm) (hora do dispositivo SEM ajuste)
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
 export async function obterHoraAtual(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
+  if (isNaN(date.getTime())) {
+    return new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
   return date.toLocaleTimeString("pt-BR", {
-    timeZone: FUSO_BRASILIA,
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
 /**
- * Obtém a data/hora atual para input datetime-local
+ * Obtém a data/hora atual para input datetime-local (data do dispositivo SEM ajuste)
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
 export async function obterDataHoraInput(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
-  const offset = date.getTimezoneOffset();
-  const adjusted = new Date(date.getTime() - offset * 60000);
-  return adjusted.toISOString().slice(0, 16);
+  if (isNaN(date.getTime())) {
+    return new Date().toISOString().slice(0, 16);
+  }
+  return date.toISOString().slice(0, 16);
 }
 
 /**
@@ -188,7 +204,6 @@ export function formatarDataHoraLocal(date, includeSeconds = false) {
     if (isNaN(d.getTime())) return "Data inválida";
 
     const options = {
-      timeZone: FUSO_BRASILIA,
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
@@ -236,8 +251,7 @@ export function formatarDataHoraInput(date) {
  * @returns {number}
  */
 export function calcularDiferencaMinutos(dataInicio, dataFim) {
-  const inicio =
-    typeof dataInicio === "string" ? new Date(dataInicio) : dataInicio;
+  const inicio = typeof dataInicio === "string" ? new Date(dataInicio) : dataInicio;
   const fim = typeof dataFim === "string" ? new Date(dataFim) : dataFim;
   if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) return 0;
   return (fim.getTime() - inicio.getTime()) / (1000 * 60);
@@ -271,8 +285,7 @@ export function aplicarMascaraCPF(value) {
   if (limpo.length === 0) return "";
   if (limpo.length <= 3) return limpo;
   if (limpo.length <= 6) return limpo.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-  if (limpo.length <= 9)
-    return limpo.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+  if (limpo.length <= 9) return limpo.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
   return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
 }
 
@@ -287,8 +300,7 @@ export function aplicarMascaraTelefone(value) {
   if (limpo.length === 0) return "";
   if (limpo.length <= 2) return `(${limpo}`;
   if (limpo.length <= 6) return `(${limpo.slice(0, 2)}) ${limpo.slice(2)}`;
-  if (limpo.length <= 10)
-    return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
+  if (limpo.length <= 10) return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
   return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 7)}-${limpo.slice(7, 11)}`;
 }
 
@@ -303,8 +315,7 @@ export function aplicarMascaraPlaca(value) {
   if (upper.length === 0) return "";
   if (upper.length <= 3) return upper;
   if (upper.length <= 4) return `${upper.slice(0, 3)}${upper.slice(3)}`;
-  if (upper.length <= 6)
-    return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
+  if (upper.length <= 6) return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
   return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4, 5)}${upper.slice(5, 7)}`;
 }
 
@@ -319,8 +330,7 @@ export function formatarCPFSeguro(cpf, forceFull = false) {
   const limpo = cpf.replace(/\D/g, "");
   if (limpo.length !== 11) return cpf;
 
-  const isSupervisor =
-    typeof authManager !== "undefined" && authManager.isSupervisor();
+  const isSupervisor = typeof authManager !== "undefined" && authManager.isSupervisor();
   if (isSupervisor || forceFull) {
     return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
   }
@@ -517,7 +527,7 @@ export function gerarUUID() {
   if (crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
     const r = (Math.random() * 16) | 0;
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
@@ -704,7 +714,7 @@ export function clearAllCache() {
  */
 export function debounce(func, delay = 300) {
   let timeoutId;
-  return function (...args) {
+  return function(...args) {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => func.apply(this, args), delay);
   };
@@ -718,7 +728,7 @@ export function debounce(func, delay = 300) {
  */
 export function throttle(func, limit = 300) {
   let inThrottle;
-  return function (...args) {
+  return function(...args) {
     if (!inThrottle) {
       func.apply(this, args);
       inThrottle = true;
@@ -838,7 +848,7 @@ export function inputModal(
       if (textarea) textarea.focus();
     }, 300);
 
-    window._confirmarInputModal = function () {
+    window._confirmarInputModal = function() {
       const textarea = document.getElementById("inputModalMotivo");
       if (!textarea) return;
       const valor = textarea.value.trim();
@@ -914,6 +924,11 @@ export function calcularDataAnterior(dataInicio, dataFim) {
  */
 export async function obterPrimeiroDiaMes(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
+  if (isNaN(date.getTime())) {
+    const fallback = new Date();
+    fallback.setDate(1);
+    return fallback.toISOString().slice(0, 10);
+  }
   const data = new Date(date);
   data.setDate(1);
   return data.toISOString().slice(0, 10);

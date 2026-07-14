@@ -587,6 +587,27 @@ self.addEventListener("error", (event) => {
 });
 
 // ============================================
+// FORÇAR ATUALIZAÇÃO DOS CLIENTES
+// ============================================
+
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
+});
+
+// Quando um novo Service Worker é instalado
+self.addEventListener('install', (event) => {
+    self.skipWaiting();
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            // Forçar revalidação
+            return cache.addAll(STATIC_ASSETS);
+        })
+    );
+});
+
+// ============================================
 // LOG DE EVENTOS IMPORTANTES
 // ============================================
 

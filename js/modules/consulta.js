@@ -1313,7 +1313,6 @@ export async function salvarAbordagemComAnexos() {
     };
     reincidencia = await contarReincidencias(registro, isVeiculo);
 
-    // Sugerir fase automaticamente
     if (reincidencia >= REINCIDENCIA_LIMITE_MULTA) {
       const faseSelect = document.getElementById("formFase");
       if (faseSelect) {
@@ -1358,9 +1357,7 @@ export async function salvarAbordagemComAnexos() {
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) throw new Error("Erro ao conectar ao servidor");
 
-    // Processar anexos
     const files = estado.arquivosTemp || [];
-    let anexos = [];
     let anexosUrls = [];
 
     if (files.length > 0) {
@@ -1368,7 +1365,6 @@ export async function salvarAbordagemComAnexos() {
       anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
     }
 
-    // Obter localização (GPS contínuo ou fallback)
     let localizacao =
       typeof window.app !== "undefined"
         ? window.app.obterLocalizacaoAtual()
@@ -1377,8 +1373,23 @@ export async function salvarAbordagemComAnexos() {
       localizacao = await utils.obterLocalizacao();
     }
 
-    // Montar dados - CORRIGIDO: usar data do dispositivo sem ajuste de fuso
-    const agora = new Date().toISOString();
+    // ========================================
+    // CORREÇÃO PRINCIPAL: Formatar data sem timezone
+    // ========================================
+    const agora = new Date();
+    const dataHoraFormatada =
+      agora.getFullYear() +
+      "-" +
+      String(agora.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(agora.getDate()).padStart(2, "0") +
+      " " +
+      String(agora.getHours()).padStart(2, "0") +
+      ":" +
+      String(agora.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(agora.getSeconds()).padStart(2, "0");
+
     const dados = {
       criado_por: user.id,
       local_abordagem: document.getElementById("formLocal")?.value || "",
@@ -1387,13 +1398,12 @@ export async function salvarAbordagemComAnexos() {
         document.getElementById("formObservacoesAbordagem")?.value || "",
       fase: document.getElementById("formFase")?.value || "advertencia",
       anexos: anexosUrls,
-      criado_em: agora,
-      atualizado_em: agora,
+      criado_em: dataHoraFormatada,
+      atualizado_em: dataHoraFormatada,
       latitude: localizacao?.latitude || null,
       longitude: localizacao?.longitude || null,
     };
 
-    // Prazo
     const temPrazo = document.getElementById("formTemPrazo")?.checked || false;
     if (temPrazo) {
       dados.prazo = document.getElementById("formPrazo")?.value || null;
@@ -1401,7 +1411,6 @@ export async function salvarAbordagemComAnexos() {
       dados.status_regularizacao = "pendente";
     }
 
-    // Campos específicos
     if (isVeiculo) {
       dados.placa = identificador;
       dados.marca_modelo =
@@ -1427,7 +1436,6 @@ export async function salvarAbordagemComAnexos() {
 
     if (error) throw error;
 
-    // Limpar arquivos temporários
     estado.arquivosTemp = [];
     const previewArea = document.getElementById("abordagemPreviewArea");
     if (previewArea) previewArea.innerHTML = "";
@@ -1440,11 +1448,9 @@ export async function salvarAbordagemComAnexos() {
       showToast("Abordagem registrada com sucesso!", "success");
     }
 
-    // Recarregar feed e ranking
     await carregarFeedConsultas();
     await carregarRankingReincidentes();
 
-    // Limpar campo de busca
     const buscaInput = document.getElementById("inputBuscaConsulta");
     if (buscaInput) buscaInput.value = "";
   } catch (error) {

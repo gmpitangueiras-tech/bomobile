@@ -15,7 +15,7 @@
  * - Câmera rápida (capture="environment")
  * - GPS contínuo
  * - Debounce em buscas
- * - Ranking de reincidentes (CORRIGIDO - sem .group())
+ * - Ranking de reincidentes
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
@@ -25,8 +25,8 @@
 // IMPORTAÇÕES
 // ============================================
 
-// Usamos os objetos globais disponíveis
-// (authManager, supabaseClient, ocorrenciaManager)
+// Importar funções do utils
+import * as utils from './utils.js';
 
 // ============================================
 // CONSTANTES
@@ -44,19 +44,19 @@ const REINCIDENCIA_LIMITE_MULTA = 4;
 // ============================================
 
 let estado = {
-  abaAtiva: "veiculos",
+  abaAtiva: 'veiculos',
   filtros: {
-    dataInicio: "",
-    dataFim: "",
-    guarda: "",
-    tipo: "todos",
+    dataInicio: '',
+    dataFim: '',
+    guarda: '',
+    tipo: 'todos'
   },
   listaGuardas: [],
   arquivosTemp: [],
   timeoutBusca: null,
-  ultimaBusca: "",
+  ultimaBusca: '',
   rankingReincidentes: [],
-  carregandoRanking: false,
+  carregandoRanking: false
 };
 
 // ============================================
@@ -73,9 +73,9 @@ export async function renderConsultaOperacional(container, appInstance) {
   await carregarListaGuardas();
 
   // Definir filtros do estado
-  const dataInicio = estado.filtros.dataInicio || "";
-  const dataFim = estado.filtros.dataFim || "";
-  const guardaId = estado.filtros.guarda || "";
+  const dataInicio = estado.filtros.dataInicio || '';
+  const dataFim = estado.filtros.dataFim || '';
+  const guardaId = estado.filtros.guarda || '';
 
   let html = `
     <div class="container" style="padding-bottom:100px;">
@@ -86,10 +86,10 @@ export async function renderConsultaOperacional(container, appInstance) {
 
       <!-- Tabs -->
       <div class="tabs-container" style="display:flex;gap:4px;margin-bottom:16px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
-        <button onclick="window._consultaMudarAba('veiculos')" id="tabVeiculos" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "veiculos" ? "var(--branco)" : "none"};">
+        <button onclick="window._consultaMudarAba('veiculos')" id="tabVeiculos" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === 'veiculos' ? 'var(--branco)' : 'none'};">
           <i class="fas fa-motorcycle"></i> Veículos
         </button>
-        <button onclick="window._consultaMudarAba('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "pessoas" ? "var(--branco)" : "none"};">
+        <button onclick="window._consultaMudarAba('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === 'pessoas' ? 'var(--branco)' : 'none'};">
           <i class="fas fa-user-friends"></i> Pessoas
         </button>
       </div>
@@ -130,13 +130,9 @@ export async function renderConsultaOperacional(container, appInstance) {
             </label>
             <select id="consultaGuarda" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);">
               <option value="">Todos</option>
-              ${estado.listaGuardas
-                .map(
-                  (g) => `
-                <option value="${g.id}" ${guardaId === g.id ? "selected" : ""}>${g.nome_completo}</option>
-              `,
-                )
-                .join("")}
+              ${estado.listaGuardas.map(g => `
+                <option value="${g.id}" ${guardaId === g.id ? 'selected' : ''}>${g.nome_completo}</option>
+              `).join('')}
             </select>
           </div>
           <div class="filtros-actions" style="display:flex;gap:4px;align-self:flex-end;padding-bottom:2px;">
@@ -197,56 +193,54 @@ export async function renderConsultaOperacional(container, appInstance) {
 
 async function carregarListaGuardas() {
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
     if (!client) return;
 
     const { data, error } = await client
-      .from("usuarios")
-      .select("id, nome_completo")
-      .eq("status", "ativo")
-      .order("nome_completo");
+      .from('usuarios')
+      .select('id, nome_completo')
+      .eq('status', 'ativo')
+      .order('nome_completo');
 
     if (error) throw error;
     estado.listaGuardas = data || [];
   } catch (error) {
-    console.error("Erro ao carregar lista de guardas:", error);
+    console.error('Erro ao carregar lista de guardas:', error);
     estado.listaGuardas = [];
   }
 }
 
 // ============================================
-// RANKING DE REINCIDENTES - CORRIGIDO (SEM .group())
+// RANKING DE REINCIDENTES
 // ============================================
 
 async function carregarRankingReincidentes() {
   try {
     estado.carregandoRanking = true;
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
     if (!client) return;
 
     // Buscar veículos
     const { data: veiculos, error: veicError } = await client
-      .from("abordagens_veiculos")
-      .select("placa")
-      .order("criado_em", { ascending: false });
+      .from('abordagens_veiculos')
+      .select('placa')
+      .order('criado_em', { ascending: false });
 
     if (veicError) throw veicError;
 
     // Buscar pessoas
     const { data: pessoas, error: pesError } = await client
-      .from("abordagens_pessoas")
-      .select("nome, cpf")
-      .order("criado_em", { ascending: false });
+      .from('abordagens_pessoas')
+      .select('nome, cpf')
+      .order('criado_em', { ascending: false });
 
     if (pesError) throw pesError;
 
     // Agrupar manualmente
     const veiculosCount = {};
     if (veiculos) {
-      veiculos.forEach((v) => {
-        const placa = v.placa || "Sem placa";
+      veiculos.forEach(v => {
+        const placa = v.placa || 'Sem placa';
         if (!veiculosCount[placa]) veiculosCount[placa] = 0;
         veiculosCount[placa]++;
       });
@@ -254,8 +248,8 @@ async function carregarRankingReincidentes() {
 
     const pessoasCount = {};
     if (pessoas) {
-      pessoas.forEach((p) => {
-        const nome = p.nome || "Sem nome";
+      pessoas.forEach(p => {
+        const nome = p.nome || 'Sem nome';
         if (!pessoasCount[nome]) pessoasCount[nome] = 0;
         pessoasCount[nome]++;
         if (p.cpf) {
@@ -268,22 +262,22 @@ async function carregarRankingReincidentes() {
     // Montar ranking
     const ranking = [];
 
-    Object.keys(veiculosCount).forEach((key) => {
+    Object.keys(veiculosCount).forEach(key => {
       ranking.push({
         identificador: key,
-        tipo: "veiculo",
+        tipo: 'veiculo',
         total: veiculosCount[key],
-        label: "🚗 " + key,
+        label: '🚗 ' + key
       });
     });
 
-    Object.keys(pessoasCount).forEach((key) => {
-      const isCpf = /^\d{11}$/.test(key.replace(/\D/g, ""));
+    Object.keys(pessoasCount).forEach(key => {
+      const isCpf = /^\d{11}$/.test(key.replace(/\D/g, ''));
       ranking.push({
         identificador: key,
-        tipo: "pessoa",
+        tipo: 'pessoa',
         total: pessoasCount[key],
-        label: "👤 " + (isCpf ? `CPF: ${key}` : key),
+        label: '👤 ' + (isCpf ? `CPF: ${key}` : key)
       });
     });
 
@@ -292,22 +286,23 @@ async function carregarRankingReincidentes() {
     estado.rankingReincidentes = ranking.slice(0, 10);
 
     // Mostrar ranking se houver resultados
-    const rankingEl = document.getElementById("rankingReincidentes");
+    const rankingEl = document.getElementById('rankingReincidentes');
     if (rankingEl && ranking.length > 0) {
-      rankingEl.style.display = "block";
+      rankingEl.style.display = 'block';
       renderizarRanking(ranking);
     } else if (rankingEl) {
-      rankingEl.style.display = "none";
+      rankingEl.style.display = 'none';
     }
+
   } catch (error) {
-    console.error("Erro ao carregar ranking:", error);
+    console.error('Erro ao carregar ranking:', error);
   } finally {
     estado.carregandoRanking = false;
   }
 }
 
 function renderizarRanking(ranking) {
-  const lista = document.getElementById("rankingLista");
+  const lista = document.getElementById('rankingLista');
   if (!lista) return;
 
   if (ranking.length === 0) {
@@ -319,32 +314,22 @@ function renderizarRanking(ranking) {
     return;
   }
 
-  lista.innerHTML = ranking
-    .slice(0, 10)
-    .map((item, index) => {
-      const medalha =
-        index === 0
-          ? "🥇"
-          : index === 1
-            ? "🥈"
-            : index === 2
-              ? "🥉"
-              : `${index + 1}º`;
-      const emoji = item.tipo === "veiculo" ? "🚗" : "👤";
-      return `
+  lista.innerHTML = ranking.slice(0, 10).map((item, index) => {
+    const medalha = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`;
+    const emoji = item.tipo === 'veiculo' ? '🚗' : '👤';
+    return `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
         <span>
           <span style="font-weight:700;color:var(--cinza-medio);min-width:30px;display:inline-block;">${medalha}</span>
           ${emoji} ${item.identificador}
-          ${item.total > 1 ? ` (${item.total}x)` : ""}
+          ${item.total > 1 ? ` (${item.total}x)` : ''}
         </span>
         <span style="font-weight:700;color:var(--azul-bandeira);">
-          ${item.total} ${item.total === 1 ? "abordagem" : "abordagens"}
+          ${item.total} ${item.total === 1 ? 'abordagem' : 'abordagens'}
         </span>
       </div>
     `;
-    })
-    .join("");
+  }).join('');
 }
 
 // ============================================
@@ -355,27 +340,24 @@ export function mudarAbaConsulta(aba) {
   estado.abaAtiva = aba;
   estado.filtros.tipo = aba;
 
-  const tabVeiculos = document.getElementById("tabVeiculos");
-  const tabPessoas = document.getElementById("tabPessoas");
+  const tabVeiculos = document.getElementById('tabVeiculos');
+  const tabPessoas = document.getElementById('tabPessoas');
 
   if (tabVeiculos && tabPessoas) {
-    tabVeiculos.style.background =
-      aba === "veiculos" ? "var(--branco)" : "none";
-    tabPessoas.style.background = aba === "pessoas" ? "var(--branco)" : "none";
+    tabVeiculos.style.background = aba === 'veiculos' ? 'var(--branco)' : 'none';
+    tabPessoas.style.background = aba === 'pessoas' ? 'var(--branco)' : 'none';
   }
 
   renderAbaConsulta();
 }
 
 function renderAbaConsulta() {
-  const area = document.getElementById("consultaBuscaArea");
+  const area = document.getElementById('consultaBuscaArea');
   if (!area) return;
 
-  const isVeiculo = estado.abaAtiva === "veiculos";
-  const placeholder = isVeiculo
-    ? "Digite a Placa (ex: ABC1D23)"
-    : "Nome, CPF, RG ou Apelido";
-  const icone = isVeiculo ? "fa-motorcycle" : "fa-user";
+  const isVeiculo = estado.abaAtiva === 'veiculos';
+  const placeholder = isVeiculo ? 'Digite a Placa (ex: ABC1D23)' : 'Nome, CPF, RG ou Apelido';
+  const icone = isVeiculo ? 'fa-motorcycle' : 'fa-user';
 
   area.innerHTML = `
     <div class="search-card" style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
@@ -392,17 +374,13 @@ function renderAbaConsulta() {
           <i class="fas fa-search"></i>
         </button>
       </div>
-      ${
-        isVeiculo
-          ? `
+      ${isVeiculo ? `
         <div style="display:flex;gap:8px;margin-bottom:8px;">
           <button onclick="window._consultaReconhecerPlaca()" class="btn-secondary" style="flex:1;font-size:11px;padding:6px;border-radius:var(--border-radius);">
             <i class="fas fa-camera"></i> Reconhecer Placa por Foto
           </button>
         </div>
-      `
-          : ""
-      }
+      ` : ''}
       <button onclick="window._consultaAbrirFormulario()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:var(--border-radius);">
         <i class="fas fa-plus-circle"></i> Registrar Nova Abordagem
       </button>
@@ -427,18 +405,15 @@ function renderAbaConsulta() {
 // ============================================
 
 export function aplicarFiltrosConsulta() {
-  const dataInicio = document.getElementById("consultaDataInicio")?.value || "";
-  const dataFim = document.getElementById("consultaDataFim")?.value || "";
-  const guarda = document.getElementById("consultaGuarda")?.value || "";
+  const dataInicio = document.getElementById('consultaDataInicio')?.value || '';
+  const dataFim = document.getElementById('consultaDataFim')?.value || '';
+  const guarda = document.getElementById('consultaGuarda')?.value || '';
 
   if (dataInicio && dataFim && dataFim < dataInicio) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast(
-        "Data final deve ser maior ou igual à data inicial",
-        "warning",
-      );
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Data final deve ser maior ou igual à data inicial', 'warning');
     } else {
-      showToast("Data final deve ser maior ou igual à data inicial", "warning");
+      showToast('Data final deve ser maior ou igual à data inicial', 'warning');
     }
     return;
   }
@@ -447,42 +422,42 @@ export function aplicarFiltrosConsulta() {
     dataInicio,
     dataFim,
     guarda,
-    tipo: estado.abaAtiva,
+    tipo: estado.abaAtiva
   };
 
   carregarFeedConsultas();
   carregarRankingReincidentes();
 
-  if (typeof window.app !== "undefined" && window.app.showToast) {
-    window.app.showToast("Filtros aplicados", "success");
+  if (typeof window.app !== 'undefined' && window.app.showToast) {
+    window.app.showToast('Filtros aplicados', 'success');
   } else {
-    showToast("Filtros aplicados", "success");
+    showToast('Filtros aplicados', 'success');
   }
 }
 
 export function limparFiltrosConsulta() {
-  const dataInicioInput = document.getElementById("consultaDataInicio");
-  const dataFimInput = document.getElementById("consultaDataFim");
-  const guardaSelect = document.getElementById("consultaGuarda");
+  const dataInicioInput = document.getElementById('consultaDataInicio');
+  const dataFimInput = document.getElementById('consultaDataFim');
+  const guardaSelect = document.getElementById('consultaGuarda');
 
-  if (dataInicioInput) dataInicioInput.value = "";
-  if (dataFimInput) dataFimInput.value = "";
-  if (guardaSelect) guardaSelect.value = "";
+  if (dataInicioInput) dataInicioInput.value = '';
+  if (dataFimInput) dataFimInput.value = '';
+  if (guardaSelect) guardaSelect.value = '';
 
   estado.filtros = {
-    dataInicio: "",
-    dataFim: "",
-    guarda: "",
-    tipo: estado.abaAtiva,
+    dataInicio: '',
+    dataFim: '',
+    guarda: '',
+    tipo: estado.abaAtiva
   };
 
   carregarFeedConsultas();
   carregarRankingReincidentes();
 
-  if (typeof window.app !== "undefined" && window.app.showToast) {
-    window.app.showToast("Filtros removidos", "info");
+  if (typeof window.app !== 'undefined' && window.app.showToast) {
+    window.app.showToast('Filtros removidos', 'info');
   } else {
-    showToast("Filtros removidos", "info");
+    showToast('Filtros removidos', 'info');
   }
 }
 
@@ -491,12 +466,11 @@ export function limparFiltrosConsulta() {
 // ============================================
 
 export async function carregarFeedConsultas() {
-  const areaResultados = document.getElementById("consultaResultadosArea");
+  const areaResultados = document.getElementById('consultaResultadosArea');
   if (!areaResultados) return;
 
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
     if (!client) {
       areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor.</p>`;
       return;
@@ -504,36 +478,28 @@ export async function carregarFeedConsultas() {
 
     const { dataInicio, dataFim, guarda, tipo } = estado.filtros;
 
-    let queryVeiculos = client
-      .from("abordagens_veiculos")
-      .select("*, usuarios(nome_completo)");
-    let queryPessoas = client
-      .from("abordagens_pessoas")
-      .select("*, usuarios(nome_completo)");
+    let queryVeiculos = client.from('abordagens_veiculos').select('*, usuarios(nome_completo)');
+    let queryPessoas = client.from('abordagens_pessoas').select('*, usuarios(nome_completo)');
 
     if (dataInicio) {
-      queryVeiculos = queryVeiculos.gte("criado_em", dataInicio);
-      queryPessoas = queryPessoas.gte("criado_em", dataInicio);
+      queryVeiculos = queryVeiculos.gte('criado_em', dataInicio);
+      queryPessoas = queryPessoas.gte('criado_em', dataInicio);
     }
     if (dataFim) {
-      queryVeiculos = queryVeiculos.lte("criado_em", dataFim + "T23:59:59");
-      queryPessoas = queryPessoas.lte("criado_em", dataFim + "T23:59:59");
+      queryVeiculos = queryVeiculos.lte('criado_em', dataFim + 'T23:59:59');
+      queryPessoas = queryPessoas.lte('criado_em', dataFim + 'T23:59:59');
     }
     if (guarda) {
-      queryVeiculos = queryVeiculos.eq("criado_por", guarda);
-      queryPessoas = queryPessoas.eq("criado_por", guarda);
+      queryVeiculos = queryVeiculos.eq('criado_por', guarda);
+      queryPessoas = queryPessoas.eq('criado_por', guarda);
     }
 
-    queryVeiculos = queryVeiculos
-      .order("criado_em", { ascending: false })
-      .limit(50);
-    queryPessoas = queryPessoas
-      .order("criado_em", { ascending: false })
-      .limit(50);
+    queryVeiculos = queryVeiculos.order('criado_em', { ascending: false }).limit(50);
+    queryPessoas = queryPessoas.order('criado_em', { ascending: false }).limit(50);
 
     const [veiculosResult, pessoasResult] = await Promise.all([
       queryVeiculos,
-      queryPessoas,
+      queryPessoas
     ]);
 
     const veiculos = veiculosResult.data || [];
@@ -541,34 +507,26 @@ export async function carregarFeedConsultas() {
 
     let todasAbordagens = [];
 
-    if (tipo === "todos" || tipo === "veiculos") {
-      todasAbordagens = [
-        ...todasAbordagens,
-        ...veiculos.map((v) => ({ ...v, tipo_abordagem: "veiculo" })),
-      ];
+    if (tipo === 'todos' || tipo === 'veiculos') {
+      todasAbordagens = [...todasAbordagens, ...veiculos.map(v => ({ ...v, tipo_abordagem: 'veiculo' }))];
     }
-    if (tipo === "todos" || tipo === "pessoas") {
-      todasAbordagens = [
-        ...todasAbordagens,
-        ...pessoas.map((p) => ({ ...p, tipo_abordagem: "pessoa" })),
-      ];
+    if (tipo === 'todos' || tipo === 'pessoas') {
+      todasAbordagens = [...todasAbordagens, ...pessoas.map(p => ({ ...p, tipo_abordagem: 'pessoa' }))];
     }
 
-    todasAbordagens.sort(
-      (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
-    );
+    todasAbordagens.sort((a, b) => new Date(b.criado_em) - new Date(a.criado_em));
 
     // Atualizar contador
-    const totalSpan = document.getElementById("consultaTotalRegistros");
+    const totalSpan = document.getElementById('consultaTotalRegistros');
     if (totalSpan) {
       totalSpan.textContent = `${todasAbordagens.length} registro(s) encontrado(s)`;
     }
 
     // Mostrar indicador de filtros ativos
-    const filtrosAtivos = document.getElementById("consultaFiltrosAtivos");
+    const filtrosAtivos = document.getElementById('consultaFiltrosAtivos');
     if (filtrosAtivos) {
       const hasFilters = dataInicio || dataFim || guarda;
-      filtrosAtivos.style.display = hasFilters ? "inline" : "none";
+      filtrosAtivos.style.display = hasFilters ? 'inline' : 'none';
     }
 
     if (todasAbordagens.length === 0) {
@@ -585,8 +543,9 @@ export async function carregarFeedConsultas() {
     }
 
     await renderTimeline(areaResultados, todasAbordagens.slice(0, 20));
+
   } catch (error) {
-    console.error("Erro ao carregar feed:", error);
+    console.error('Erro ao carregar feed:', error);
     areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao carregar histórico: ${error.message}</p>`;
   }
 }
@@ -610,49 +569,41 @@ async function renderTimeline(container, abordagens) {
   `;
 
   for (const h of abordagens) {
-    const isVeiculo = h.tipo_abordagem === "veiculo";
+    const isVeiculo = h.tipo_abordagem === 'veiculo';
     const reincidencias = await contarReincidencias(h, isVeiculo);
-    const data = new Date(h.criado_em).toLocaleString("pt-BR");
-    const guardaNome = h.usuarios?.nome_completo || "Desconhecido";
+    const data = new Date(h.criado_em).toLocaleString('pt-BR');
+    const guardaNome = h.usuarios?.nome_completo || 'Desconhecido';
 
     let icone, identificador, detalhes, badgeColor, badgeIcon;
     if (isVeiculo) {
-      icone = "fa-motorcycle";
-      identificador = h.placa || "Placa não informada";
-      detalhes =
-        `${h.marca_modelo || ""} (${h.cor || "cor não informada"})`.trim() ||
-        "Detalhes não informados";
-      badgeColor = "badge-veiculo";
-      badgeIcon = "🚗";
+      icone = 'fa-motorcycle';
+      identificador = h.placa || 'Placa não informada';
+      detalhes = `${h.marca_modelo || ''} (${h.cor || 'cor não informada'})`.trim() || 'Detalhes não informados';
+      badgeColor = 'badge-veiculo';
+      badgeIcon = '🚗';
     } else {
-      icone = "fa-user";
-      identificador = h.nome || "Nome não informado";
-      detalhes = h.alcunha ? `(${h.alcunha})` : "";
+      icone = 'fa-user';
+      identificador = h.nome || 'Nome não informado';
+      detalhes = h.alcunha ? `(${h.alcunha})` : '';
       if (h.cpf) detalhes += ` - CPF: ${h.cpf}`;
       if (h.rg) detalhes += ` - RG: ${h.rg}`;
-      badgeColor = "badge-pessoa";
-      badgeIcon = "👤";
+      badgeColor = 'badge-pessoa';
+      badgeIcon = '👤';
     }
 
     // Determinar fase automaticamente com base na reincidência
-    let fase = h.fase || "advertencia";
+    let fase = h.fase || 'advertencia';
     if (reincidencias >= REINCIDENCIA_LIMITE_MULTA) {
-      fase = "multa";
-    } else if (
-      reincidencias >= REINCIDENCIA_LIMITE_ADVERTENCIA &&
-      fase === "advertencia"
-    ) {
-      fase = "advertencia";
+      fase = 'multa';
+    } else if (reincidencias >= REINCIDENCIA_LIMITE_ADVERTENCIA && fase === 'advertencia') {
+      fase = 'advertencia';
     }
 
     // Badge de reincidência
-    let reincidenciaHTML = "";
+    let reincidenciaHTML = '';
     if (reincidencias > 0) {
-      const classe =
-        reincidencias >= REINCIDENCIA_LIMITE_MULTA
-          ? "reincidencia-alta"
-          : "reincidencia-media";
-      const emoji = reincidencias >= REINCIDENCIA_LIMITE_MULTA ? "🔴" : "🟡";
+      const classe = reincidencias >= REINCIDENCIA_LIMITE_MULTA ? 'reincidencia-alta' : 'reincidencia-media';
+      const emoji = reincidencias >= REINCIDENCIA_LIMITE_MULTA ? '🔴' : '🟡';
       reincidenciaHTML = `
         <div style="margin-top:4px;">
           <span class="badge ${classe}" style="font-size:9px;padding:2px 10px;">
@@ -671,58 +622,53 @@ async function renderTimeline(container, abordagens) {
     }
 
     // Anexos
-    let anexosHTML = "";
+    let anexosHTML = '';
     if (h.anexos && h.anexos.length > 0) {
       anexosHTML = `
         <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
-          ${h.anexos
-            .slice(0, 3)
-            .map(
-              (a, i) => `
-            <img src="${a.url}" alt="Anexo ${i + 1}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="window.open('${a.url}', '_blank')">
-          `,
-            )
-            .join("")}
-          ${h.anexos.length > 3 ? `<span style="font-size:10px;color:var(--cinza-medio);align-self:center;">+${h.anexos.length - 3}</span>` : ""}
+          ${h.anexos.slice(0, 3).map((a, i) => `
+            <img src="${a.url}" alt="Anexo ${i+1}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="window.open('${a.url}', '_blank')">
+          `).join('')}
+          ${h.anexos.length > 3 ? `<span style="font-size:10px;color:var(--cinza-medio);align-self:center;">+${h.anexos.length - 3}</span>` : ''}
         </div>
       `;
     }
 
     // Fase
-    let faseHTML = "";
+    let faseHTML = '';
     if (fase) {
-      const faseLabels = { advertencia: "⚠️ Advertência", multa: "💰 Multa" };
+      const faseLabels = { advertencia: '⚠️ Advertência', multa: '💰 Multa' };
       faseHTML = `
-        <span class="badge ${fase === "multa" ? "badge-cancelled" : "badge-pending"}" style="font-size:9px;padding:2px 8px;">
+        <span class="badge ${fase === 'multa' ? 'badge-cancelled' : 'badge-pending'}" style="font-size:9px;padding:2px 8px;">
           ${faseLabels[fase] || fase}
         </span>
       `;
     }
 
     // Prazo
-    let prazoHTML = "";
+    let prazoHTML = '';
     if (h.prazo) {
       const prazoDate = new Date(h.prazo);
       const hoje = new Date();
       const vencido = prazoDate < hoje;
       prazoHTML = `
-        <span class="badge ${vencido ? "badge-cancelled" : "badge-pending"}" style="font-size:9px;padding:2px 8px;">
-          ${vencido ? "🔴 Prazo vencido" : `📅 Prazo: ${prazoDate.toLocaleDateString("pt-BR")}`}
+        <span class="badge ${vencido ? 'badge-cancelled' : 'badge-pending'}" style="font-size:9px;padding:2px 8px;">
+          ${vencido ? '🔴 Prazo vencido' : `📅 Prazo: ${prazoDate.toLocaleDateString('pt-BR')}`}
         </span>
       `;
     }
 
     html += `
       <div class="timeline-item" style="margin-bottom:20px;position:relative;">
-        <div style="position:absolute;left:-26px;top:0;width:10px;height:10px;border-radius:50%;background:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};border:2px solid var(--branco);"></div>
-        <div style="background:var(--branco);padding:12px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
+        <div style="position:absolute;left:-26px;top:0;width:10px;height:10px;border-radius:50%;background:${isVeiculo ? 'var(--azul-bandeira)' : 'var(--verde-bandeira)'};border:2px solid var(--branco);"></div>
+        <div style="background:var(--branco);padding:12px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? 'var(--azul-bandeira)' : 'var(--verde-bandeira)'};">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--cinza-medio);margin-bottom:4px;">
             <span><i class="fas fa-calendar-alt"></i> ${data}</span>
-            <span><i class="fas fa-map-marker-alt"></i> ${h.local_abordagem || "Local não informado"}</span>
+            <span><i class="fas fa-map-marker-alt"></i> ${h.local_abordagem || 'Local não informado'}</span>
           </div>
           <div style="font-weight:700;color:var(--azul-bandeira);font-size:13px;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="badge ${badgeColor}" style="font-size:10px;padding:2px 10px;">
-              ${badgeIcon} ${isVeiculo ? "Veículo" : "Pessoa"}
+              ${badgeIcon} ${isVeiculo ? 'Veículo' : 'Pessoa'}
             </span>
             <i class="fas ${icone}"></i> ${identificador}
             <span style="font-size:10px;font-weight:400;color:var(--cinza-medio);">${detalhes}</span>
@@ -732,22 +678,18 @@ async function renderTimeline(container, abordagens) {
           ${reincidenciaHTML}
           ${anexosHTML}
           <div style="font-size:12px;color:var(--cinza-escuro);line-height:1.4;background:var(--cinza-muito-claro);padding:8px;border-radius:4px;margin-top:4px;">
-            <strong>Motivo:</strong> ${h.motivo || "Não informado"}
+            <strong>Motivo:</strong> ${h.motivo || 'Não informado'}
           </div>
-          ${
-            h.observacoes
-              ? `
+          ${h.observacoes ? `
             <div style="font-size:12px;color:var(--cinza-escuro);margin-top:4px;padding:4px 8px;background:var(--azul-muito-claro);border-radius:4px;">
               <strong>Obs:</strong> ${h.observacoes}
             </div>
-          `
-              : ""
-          }
+          ` : ''}
           <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
             <span style="font-size:10px;color:var(--cinza-medio);">
               <i class="fas fa-user-shield"></i> ${guardaNome}
             </span>
-            <button onclick="window._consultaConverterBO('${isVeiculo ? "veiculo" : "pessoa"}', '${btoa(JSON.stringify(h))}')" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 8px;width:auto;border-radius:8px;">
+            <button onclick="window._consultaConverterBO('${isVeiculo ? 'veiculo' : 'pessoa'}', '${btoa(JSON.stringify(h))}')" class="btn-secondary" style="font-size:10px;min-height:auto;padding:4px 8px;width:auto;border-radius:8px;">
               <i class="fas fa-file-export"></i> Converter em BO
             </button>
           </div>
@@ -765,12 +707,8 @@ async function renderTimeline(container, abordagens) {
 // ============================================
 
 export async function executarBuscaConsulta() {
-  const termo =
-    document
-      .getElementById("inputBuscaConsulta")
-      ?.value?.trim()
-      ?.toUpperCase() || "";
-  const areaResultados = document.getElementById("consultaResultadosArea");
+  const termo = document.getElementById('inputBuscaConsulta')?.value?.trim()?.toUpperCase() || '';
+  const areaResultados = document.getElementById('consultaResultadosArea');
 
   if (!termo) {
     await carregarFeedConsultas();
@@ -787,8 +725,7 @@ export async function executarBuscaConsulta() {
   `;
 
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
     if (!client) {
       areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar.</p>`;
       return;
@@ -797,31 +734,29 @@ export async function executarBuscaConsulta() {
     const { dataInicio, dataFim, guarda } = estado.filtros;
     let data = [];
 
-    if (estado.abaAtiva === "veiculos") {
+    if (estado.abaAtiva === 'veiculos') {
       let query = client
-        .from("abordagens_veiculos")
-        .select("*, usuarios(nome_completo)")
-        .eq("placa", termo);
+        .from('abordagens_veiculos')
+        .select('*, usuarios(nome_completo)')
+        .eq('placa', termo);
 
-      if (dataInicio) query = query.gte("criado_em", dataInicio);
-      if (dataFim) query = query.lte("criado_em", dataFim + "T23:59:59");
-      if (guarda) query = query.eq("criado_por", guarda);
+      if (dataInicio) query = query.gte('criado_em', dataInicio);
+      if (dataFim) query = query.lte('criado_em', dataFim + 'T23:59:59');
+      if (guarda) query = query.eq('criado_por', guarda);
 
-      const res = await query.order("criado_em", { ascending: false });
+      const res = await query.order('criado_em', { ascending: false });
       data = res.data || [];
     } else {
       let query = client
-        .from("abordagens_pessoas")
-        .select("*, usuarios(nome_completo)")
-        .or(
-          `nome.ilike.%${termo}%,cpf.ilike.%${termo}%,rg.ilike.%${termo}%,alcunha.ilike.%${termo}%`,
-        );
+        .from('abordagens_pessoas')
+        .select('*, usuarios(nome_completo)')
+        .or(`nome.ilike.%${termo}%,cpf.ilike.%${termo}%,rg.ilike.%${termo}%,alcunha.ilike.%${termo}%`);
 
-      if (dataInicio) query = query.gte("criado_em", dataInicio);
-      if (dataFim) query = query.lte("criado_em", dataFim + "T23:59:59");
-      if (guarda) query = query.eq("criado_por", guarda);
+      if (dataInicio) query = query.gte('criado_em', dataInicio);
+      if (dataFim) query = query.lte('criado_em', dataFim + 'T23:59:59');
+      if (guarda) query = query.eq('criado_por', guarda);
 
-      const res = await query.order("criado_em", { ascending: false });
+      const res = await query.order('criado_em', { ascending: false });
       data = res.data || [];
     }
 
@@ -843,8 +778,9 @@ export async function executarBuscaConsulta() {
     }
 
     await renderTimeline(areaResultados, data);
+
   } catch (error) {
-    console.error("Erro na busca:", error);
+    console.error('Erro na busca:', error);
     areaResultados.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao realizar busca: ${error.message}</p>`;
   }
 }
@@ -855,99 +791,94 @@ export async function executarBuscaConsulta() {
 
 export async function reconhecerPlacaPorFoto() {
   try {
-    if (typeof Tesseract === "undefined") {
-      if (typeof window.app !== "undefined" && window.app.showToast) {
-        window.app.showToast(
-          "Biblioteca de reconhecimento não carregada",
-          "warning",
-        );
+    if (typeof Tesseract === 'undefined') {
+      if (typeof window.app !== 'undefined' && window.app.showToast) {
+        window.app.showToast('Biblioteca de reconhecimento não carregada', 'warning');
       } else {
-        showToast("Biblioteca de reconhecimento não carregada", "warning");
+        showToast('Biblioteca de reconhecimento não carregada', 'warning');
       }
-      const script = document.createElement("script");
-      script.src =
-        "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
       document.head.appendChild(script);
       await new Promise((resolve) => {
         script.onload = resolve;
         script.onerror = resolve;
         setTimeout(resolve, 5000);
       });
-      if (typeof Tesseract === "undefined") {
-        if (typeof window.app !== "undefined" && window.app.showToast) {
-          window.app.showToast(
-            "Erro ao carregar biblioteca de reconhecimento",
-            "error",
-          );
+      if (typeof Tesseract === 'undefined') {
+        if (typeof window.app !== 'undefined' && window.app.showToast) {
+          window.app.showToast('Erro ao carregar biblioteca de reconhecimento', 'error');
         } else {
-          showToast("Erro ao carregar biblioteca de reconhecimento", "error");
+          showToast('Erro ao carregar biblioteca de reconhecimento', 'error');
         }
         return;
       }
     }
 
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = "environment";
-    input.style.display = "none";
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.style.display = 'none';
 
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      if (typeof window.app !== "undefined" && window.app.showToast) {
-        window.app.showToast("Reconhecendo placa...", "info");
+      if (typeof window.app !== 'undefined' && window.app.showToast) {
+        window.app.showToast('Reconhecendo placa...', 'info');
       } else {
-        showToast("Reconhecendo placa...", "info");
+        showToast('Reconhecendo placa...', 'info');
       }
 
       try {
         const imageUrl = URL.createObjectURL(file);
-        const result = await Tesseract.recognize(imageUrl, "por", {
-          logger: (m) => {
-            if (m.status === "recognizing text") {
-              console.log("Reconhecendo:", m.progress);
+        const result = await Tesseract.recognize(
+          imageUrl,
+          'por',
+          {
+            logger: (m) => {
+              if (m.status === 'recognizing text') {
+                console.log('Reconhecendo:', m.progress);
+              }
             }
-          },
-        });
+          }
+        );
 
-        const text = result.data.text || "";
-        console.log("Texto reconhecido:", text);
+        const text = result.data.text || '';
+        console.log('Texto reconhecido:', text);
 
         const placaRegex = /[A-Z]{3}[0-9][A-Z]{2}[0-9]/g;
         const matches = text.match(placaRegex);
 
         if (matches && matches.length > 0) {
           const placa = matches[0];
-          const inputBusca = document.getElementById("inputBuscaConsulta");
+          const inputBusca = document.getElementById('inputBuscaConsulta');
           if (inputBusca) {
             inputBusca.value = placa;
             await executarBuscaConsulta();
           }
-          if (typeof window.app !== "undefined" && window.app.showToast) {
-            window.app.showToast(`Placa reconhecida: ${placa}`, "success");
+          if (typeof window.app !== 'undefined' && window.app.showToast) {
+            window.app.showToast(`Placa reconhecida: ${placa}`, 'success');
           } else {
-            showToast(`Placa reconhecida: ${placa}`, "success");
+            showToast(`Placa reconhecida: ${placa}`, 'success');
           }
         } else {
-          if (typeof window.app !== "undefined" && window.app.showToast) {
-            window.app.showToast(
-              "Nenhuma placa reconhecida na imagem",
-              "warning",
-            );
+          if (typeof window.app !== 'undefined' && window.app.showToast) {
+            window.app.showToast('Nenhuma placa reconhecida na imagem', 'warning');
           } else {
-            showToast("Nenhuma placa reconhecida na imagem", "warning");
+            showToast('Nenhuma placa reconhecida na imagem', 'warning');
           }
         }
 
         URL.revokeObjectURL(imageUrl);
+
       } catch (error) {
-        console.error("Erro no reconhecimento:", error);
-        if (typeof window.app !== "undefined" && window.app.showToast) {
-          window.app.showToast("Erro ao reconhecer placa", "error");
+        console.error('Erro no reconhecimento:', error);
+        if (typeof window.app !== 'undefined' && window.app.showToast) {
+          window.app.showToast('Erro ao reconhecer placa', 'error');
         } else {
-          showToast("Erro ao reconhecer placa", "error");
+          showToast('Erro ao reconhecer placa', 'error');
         }
       }
     };
@@ -955,12 +886,13 @@ export async function reconhecerPlacaPorFoto() {
     document.body.appendChild(input);
     input.click();
     document.body.removeChild(input);
+
   } catch (error) {
-    console.error("Erro ao abrir câmera:", error);
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Erro ao abrir câmera", "error");
+    console.error('Erro ao abrir câmera:', error);
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Erro ao abrir câmera', 'error');
     } else {
-      showToast("Erro ao abrir câmera", "error");
+      showToast('Erro ao abrir câmera', 'error');
     }
   }
 }
@@ -971,48 +903,47 @@ export async function reconhecerPlacaPorFoto() {
 
 export async function contarReincidencias(registro, isVeiculo) {
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
     if (!client) return 0;
 
-    const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+    const tabela = isVeiculo ? 'abordagens_veiculos' : 'abordagens_pessoas';
     let campo, valor;
 
     if (isVeiculo) {
-      campo = "placa";
+      campo = 'placa';
       valor = registro.placa;
     } else {
-      if (registro.cpf && registro.cpf.trim() !== "") {
-        campo = "cpf";
-        valor = registro.cpf.replace(/\D/g, "");
+      if (registro.cpf && registro.cpf.trim() !== '') {
+        campo = 'cpf';
+        valor = registro.cpf.replace(/\D/g, '');
       } else if (registro.nome) {
-        campo = "nome";
+        campo = 'nome';
         valor = registro.nome;
       } else {
         return 0;
       }
     }
 
-    if (!valor || valor.trim() === "") return 0;
+    if (!valor || valor.trim() === '') return 0;
 
     let query = client
       .from(tabela)
-      .select("*", { count: "exact", head: true })
+      .select('*', { count: 'exact', head: true })
       .eq(campo, valor);
 
     if (registro.id) {
-      query = query.neq("id", registro.id);
+      query = query.neq('id', registro.id);
     }
 
     const { count, error } = await query;
     if (error) {
-      console.error("Erro ao contar reincidências:", error);
+      console.error('Erro ao contar reincidências:', error);
       return 0;
     }
 
     return count || 0;
   } catch (error) {
-    console.error("Erro ao contar reincidências:", error);
+    console.error('Erro ao contar reincidências:', error);
     return 0;
   }
 }
@@ -1021,31 +952,24 @@ export async function contarReincidencias(registro, isVeiculo) {
 // FORMULÁRIO DE ABORDAGEM
 // ============================================
 
-export function abrirFormularioAbordagem(termoPreenchido = "") {
-  const area = document.getElementById("consultaResultadosArea");
+export function abrirFormularioAbordagem(termoPreenchido = '') {
+  const area = document.getElementById('consultaResultadosArea');
   if (!area) return;
 
-  const isVeiculo = estado.abaAtiva === "veiculos";
+  const isVeiculo = estado.abaAtiva === 'veiculos';
   estado.arquivosTemp = [];
 
-  const localizacaoAtual =
-    typeof window.app !== "undefined"
-      ? window.app.obterLocalizacaoAtual()
-      : null;
+  const localizacaoAtual = typeof window.app !== 'undefined' ? window.app.obterLocalizacaoAtual() : null;
 
   let html = `
     <div style="background:var(--branco);padding:16px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
       <h3 style="font-size:14px;color:var(--azul-bandeira);margin-bottom:16px;">
         <i class="fas fa-plus-circle"></i> Nova Abordagem/Orientação
-        ${
-          localizacaoAtual
-            ? `
+        ${localizacaoAtual ? `
           <span style="font-size:10px;color:var(--cinza-medio);font-weight:400;display:block;margin-top:2px;">
             📍 GPS: ${localizacaoAtual.latitude.toFixed(6)}, ${localizacaoAtual.longitude.toFixed(6)}
           </span>
-        `
-            : ""
-        }
+        ` : ''}
       </h3>
       <form id="formAbordagem" onsubmit="event.preventDefault();">
   `;
@@ -1108,7 +1032,7 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
     <div class="form-group" style="margin-bottom:12px;">
       <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Local da Abordagem</label>
       <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;" 
-        value="${localizacaoAtual ? "Coordenadas GPS disponíveis" : ""}">
+        value="${localizacaoAtual ? 'Coordenadas GPS disponíveis' : ''}">
     </div>
     <div class="form-group" style="margin-bottom:12px;">
       <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">Motivo da Abordagem</label>
@@ -1168,26 +1092,24 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
   html += `</form></div>`;
   area.innerHTML = html;
 
-  const cpfInput =
-    document.getElementById("formCpf") ||
-    document.getElementById("formCondutorCpf");
+  const cpfInput = document.getElementById('formCpf') || document.getElementById('formCondutorCpf');
   if (cpfInput) {
-    cpfInput.addEventListener("input", function (e) {
-      this.value = aplicarMascaraCPF(this.value);
+    cpfInput.addEventListener('input', function(e) {
+      this.value = utils.aplicarMascaraCPF(this.value);
     });
   }
 
-  const placaInput = document.getElementById("formPlaca");
+  const placaInput = document.getElementById('formPlaca');
   if (placaInput) {
-    placaInput.addEventListener("input", function (e) {
-      this.value = aplicarMascaraPlaca(this.value);
+    placaInput.addEventListener('input', function(e) {
+      this.value = utils.aplicarMascaraPlaca(this.value);
     });
   }
 
   window._consultaAbrirCameraRapida = () => {
-    const fileInput = document.getElementById("abordagemFileInput");
+    const fileInput = document.getElementById('abordagemFileInput');
     if (fileInput) {
-      fileInput.setAttribute("capture", "environment");
+      fileInput.setAttribute('capture', 'environment');
       fileInput.click();
     }
   };
@@ -1198,41 +1120,37 @@ export function abrirFormularioAbordagem(termoPreenchido = "") {
 // ============================================
 
 export function previewMultiplasImagensAbordagem(input) {
-  const area = document.getElementById("abordagemPreviewArea");
+  const area = document.getElementById('abordagemPreviewArea');
   if (!area) return;
 
   const files = input.files;
   if (files.length > MAX_ANEXOS) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast(
-        `Máximo ${MAX_ANEXOS} imagens permitidas`,
-        "warning",
-      );
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast(`Máximo ${MAX_ANEXOS} imagens permitidas`, 'warning');
     } else {
-      showToast(`Máximo ${MAX_ANEXOS} imagens permitidas`, "warning");
+      showToast(`Máximo ${MAX_ANEXOS} imagens permitidas`, 'warning');
     }
-    input.value = "";
+    input.value = '';
     return;
   }
 
-  area.innerHTML = "";
+  area.innerHTML = '';
   const imagensData = [];
 
   for (const file of files) {
     if (file.size > 10 * 1024 * 1024) {
-      if (typeof window.app !== "undefined" && window.app.showToast) {
-        window.app.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
+      if (typeof window.app !== 'undefined' && window.app.showToast) {
+        window.app.showToast(`Arquivo ${file.name} excede 10MB`, 'warning');
       } else {
-        showToast(`Arquivo ${file.name} excede 10MB`, "warning");
+        showToast(`Arquivo ${file.name} excede 10MB`, 'warning');
       }
       continue;
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const div = document.createElement("div");
-      div.style.cssText =
-        "position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
+      const div = document.createElement('div');
+      div.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);';
       div.innerHTML = `
         <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
         <button type="button" onclick="window._consultaRemoverImagem(this)" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
@@ -1249,15 +1167,13 @@ export function previewMultiplasImagensAbordagem(input) {
 }
 
 export function removerImagemAbordagemPreview(btn) {
-  const div = btn.closest("div");
+  const div = btn.closest('div');
   div.remove();
 
   const files = estado.arquivosTemp || [];
-  const img = div.querySelector("img");
+  const img = div.querySelector('img');
   if (img) {
-    const index = files.findIndex(
-      (f) => f.name === img.alt || f.name === img.src.split("/").pop(),
-    );
+    const index = files.findIndex(f => f.name === img.alt || f.name === img.src.split('/').pop());
     if (index > -1) {
       files.splice(index, 1);
       estado.arquivosTemp = files;
@@ -1266,95 +1182,79 @@ export function removerImagemAbordagemPreview(btn) {
 }
 
 // ============================================
-// SALVAR ABORDAGEM COM ANEXOS
+// SALVAR ABORDAGEM COM ANEXOS - CORRIGIDO
 // ============================================
 
 export async function salvarAbordagemComAnexos() {
-  const isVeiculo = estado.abaAtiva === "veiculos";
-  const user =
-    typeof authManager !== "undefined" ? authManager.getUser() : null;
+  const isVeiculo = estado.abaAtiva === 'veiculos';
+  const user = typeof authManager !== 'undefined' ? authManager.getUser() : null;
 
   if (!user) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Usuário não autenticado", "error");
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Usuário não autenticado', 'error');
     } else {
-      showToast("Usuário não autenticado", "error");
+      showToast('Usuário não autenticado', 'error');
     }
     return;
   }
 
+  // Validar campos obrigatórios
   const identificador = isVeiculo
-    ? document.getElementById("formPlaca")?.value?.toUpperCase()?.trim()
-    : document.getElementById("formNome")?.value?.trim();
+    ? document.getElementById('formPlaca')?.value?.toUpperCase()?.trim()
+    : document.getElementById('formNome')?.value?.trim();
 
   if (!identificador) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast(
-        isVeiculo ? "Placa é obrigatória" : "Nome é obrigatório",
-        "warning",
-      );
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast(isVeiculo ? 'Placa é obrigatória' : 'Nome é obrigatório', 'warning');
     } else {
-      showToast(
-        isVeiculo ? "Placa é obrigatória" : "Nome é obrigatório",
-        "warning",
-      );
+      showToast(isVeiculo ? 'Placa é obrigatória' : 'Nome é obrigatório', 'warning');
     }
     return;
   }
 
+  // Verificar reincidência para sugerir fase
   let reincidencia = 0;
   try {
-    const registro = {
+    const registro = { 
       placa: isVeiculo ? identificador : null,
       nome: !isVeiculo ? identificador : null,
-      cpf: document.getElementById("formCpf")?.value || null,
+      cpf: document.getElementById('formCpf')?.value || null
     };
     reincidencia = await contarReincidencias(registro, isVeiculo);
-
+    
+    // Sugerir fase automaticamente
     if (reincidencia >= REINCIDENCIA_LIMITE_MULTA) {
-      const faseSelect = document.getElementById("formFase");
+      const faseSelect = document.getElementById('formFase');
       if (faseSelect) {
-        faseSelect.value = "multa";
-        if (typeof window.app !== "undefined" && window.app.showToast) {
-          window.app.showToast(
-            `⚠️ ${reincidencia + 1}ª abordagem - Fase alterada para Multa automaticamente`,
-            "warning",
-          );
+        faseSelect.value = 'multa';
+        if (typeof window.app !== 'undefined' && window.app.showToast) {
+          window.app.showToast(`⚠️ ${reincidencia + 1}ª abordagem - Fase alterada para Multa automaticamente`, 'warning');
         } else {
-          showToast(
-            `⚠️ ${reincidencia + 1}ª abordagem - Fase alterada para Multa automaticamente`,
-            "warning",
-          );
+          showToast(`⚠️ ${reincidencia + 1}ª abordagem - Fase alterada para Multa automaticamente`, 'warning');
         }
       }
     } else if (reincidencia >= REINCIDENCIA_LIMITE_ADVERTENCIA) {
-      if (typeof window.app !== "undefined" && window.app.showToast) {
-        window.app.showToast(
-          `⚠️ ${reincidencia + 1}ª abordagem - Considere aplicar Multa`,
-          "warning",
-        );
+      if (typeof window.app !== 'undefined' && window.app.showToast) {
+        window.app.showToast(`⚠️ ${reincidencia + 1}ª abordagem - Considere aplicar Multa`, 'warning');
       } else {
-        showToast(
-          `⚠️ ${reincidencia + 1}ª abordagem - Considere aplicar Multa`,
-          "warning",
-        );
+        showToast(`⚠️ ${reincidencia + 1}ª abordagem - Considere aplicar Multa`, 'warning');
       }
     }
   } catch (e) {
-    console.warn("Erro ao verificar reincidência:", e);
+    console.warn('Erro ao verificar reincidência:', e);
   }
 
-  if (typeof window.app !== "undefined" && window.app.showToast) {
-    window.app.showToast("Processando...", "info");
+  if (typeof window.app !== 'undefined' && window.app.showToast) {
+    window.app.showToast('Processando...', 'info');
   } else {
-    showToast("Processando...", "info");
+    showToast('Processando...', 'info');
   }
 
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) throw new Error("Erro ao conectar ao servidor");
+    const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
+    if (!client) throw new Error('Erro ao conectar ao servidor');
 
+    // Processar anexos
     const files = estado.arquivosTemp || [];
     let anexos = [];
     let anexosUrls = [];
@@ -1364,94 +1264,95 @@ export async function salvarAbordagemComAnexos() {
       anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
     }
 
-    let localizacao =
-      typeof window.app !== "undefined"
-        ? window.app.obterLocalizacaoAtual()
-        : null;
+    // Obter localização (GPS contínuo ou fallback)
+    let localizacao = typeof window.app !== 'undefined' ? window.app.obterLocalizacaoAtual() : null;
     if (!localizacao) {
-      localizacao = await obterLocalizacao();
+      localizacao = await utils.obterLocalizacao();
     }
 
-    const agora = await obterDataHoraBrasiliaISO();
+    // Montar dados - CORRIGIDO: usando utils.obterDataHoraBrasiliaISO()
+    const agora = await utils.obterDataHoraBrasiliaISO();
     const dados = {
       criado_por: user.id,
-      local_abordagem: document.getElementById("formLocal")?.value || "",
-      motivo: document.getElementById("formMotivo")?.value || "",
-      observacoes:
-        document.getElementById("formObservacoesAbordagem")?.value || "",
-      fase: document.getElementById("formFase")?.value || "advertencia",
+      local_abordagem: document.getElementById('formLocal')?.value || '',
+      motivo: document.getElementById('formMotivo')?.value || '',
+      observacoes: document.getElementById('formObservacoesAbordagem')?.value || '',
+      fase: document.getElementById('formFase')?.value || 'advertencia',
       anexos: anexosUrls,
       criado_em: agora,
       atualizado_em: agora,
       latitude: localizacao?.latitude || null,
-      longitude: localizacao?.longitude || null,
+      longitude: localizacao?.longitude || null
     };
 
-    const temPrazo = document.getElementById("formTemPrazo")?.checked || false;
+    // Prazo
+    const temPrazo = document.getElementById('formTemPrazo')?.checked || false;
     if (temPrazo) {
-      dados.prazo = document.getElementById("formPrazo")?.value || null;
+      dados.prazo = document.getElementById('formPrazo')?.value || null;
       dados.tem_prazo = true;
-      dados.status_regularizacao = "pendente";
+      dados.status_regularizacao = 'pendente';
     }
 
+    // Campos específicos
     if (isVeiculo) {
       dados.placa = identificador;
-      dados.marca_modelo =
-        document.getElementById("formMarcaModelo")?.value || "";
-      dados.cor = document.getElementById("formCor")?.value || "";
-      dados.condutor_nome =
-        document.getElementById("formCondutor")?.value || "";
-      dados.condutor_cpf =
-        document.getElementById("formCondutorCpf")?.value || "";
-
+      dados.marca_modelo = document.getElementById('formMarcaModelo')?.value || '';
+      dados.cor = document.getElementById('formCor')?.value || '';
+      dados.condutor_nome = document.getElementById('formCondutor')?.value || '';
+      dados.condutor_cpf = document.getElementById('formCondutorCpf')?.value || '';
+      
+      // Gerar hash da placa para integridade
       try {
         const hash = await utils.gerarHashArquivo(new Blob([identificador]));
         dados.hash_placa = hash;
       } catch (e) {}
     } else {
       dados.nome = identificador;
-      dados.alcunha = document.getElementById("formAlcunha")?.value || "";
-      dados.cpf = document.getElementById("formCpf")?.value || "";
-      dados.rg = document.getElementById("formRg")?.value || "";
-      dados.caracteristicas_fisicas =
-        document.getElementById("formCaracteristicas")?.value || "";
-      dados.vestimentas =
-        document.getElementById("formVestimentas")?.value || "";
-
+      dados.alcunha = document.getElementById('formAlcunha')?.value || '';
+      dados.cpf = document.getElementById('formCpf')?.value || '';
+      dados.rg = document.getElementById('formRg')?.value || '';
+      dados.caracteristicas_fisicas = document.getElementById('formCaracteristicas')?.value || '';
+      dados.vestimentas = document.getElementById('formVestimentas')?.value || '';
+      
+      // Gerar hash do nome para integridade
       try {
         const hash = await utils.gerarHashArquivo(new Blob([identificador]));
         dados.hash_nome = hash;
       } catch (e) {}
     }
 
-    const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+    const tabela = isVeiculo ? 'abordagens_veiculos' : 'abordagens_pessoas';
     const { data, error } = await client.from(tabela).insert([dados]).select();
 
     if (error) throw error;
 
+    // Limpar arquivos temporários
     estado.arquivosTemp = [];
-    const previewArea = document.getElementById("abordagemPreviewArea");
-    if (previewArea) previewArea.innerHTML = "";
-    const fileInput = document.getElementById("abordagemFileInput");
-    if (fileInput) fileInput.value = "";
+    const previewArea = document.getElementById('abordagemPreviewArea');
+    if (previewArea) previewArea.innerHTML = '';
+    const fileInput = document.getElementById('abordagemFileInput');
+    if (fileInput) fileInput.value = '';
 
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Abordagem registrada com sucesso!", "success");
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Abordagem registrada com sucesso!', 'success');
     } else {
-      showToast("Abordagem registrada com sucesso!", "success");
+      showToast('Abordagem registrada com sucesso!', 'success');
     }
 
+    // Recarregar feed e ranking
     await carregarFeedConsultas();
     await carregarRankingReincidentes();
 
-    const buscaInput = document.getElementById("inputBuscaConsulta");
-    if (buscaInput) buscaInput.value = "";
+    // Limpar campo de busca
+    const buscaInput = document.getElementById('inputBuscaConsulta');
+    if (buscaInput) buscaInput.value = '';
+
   } catch (error) {
-    console.error("Erro ao salvar abordagem:", error);
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Erro ao salvar: " + error.message, "error");
+    console.error('Erro ao salvar abordagem:', error);
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Erro ao salvar: ' + error.message, 'error');
     } else {
-      showToast("Erro ao salvar: " + error.message, "error");
+      showToast('Erro ao salvar: ' + error.message, 'error');
     }
   }
 }
@@ -1466,45 +1367,36 @@ async function processarAnexosAbordagem(files) {
 
   for (const file of filesToProcess) {
     try {
-      let fileProcessado = await comprimirImagem(
-        file,
-        MAX_IMAGE_WIDTH,
-        IMAGE_QUALITY,
-      );
+      let fileProcessado = await utils.comprimirImagem(file, MAX_IMAGE_WIDTH, IMAGE_QUALITY);
 
       if (fileProcessado.size > MAX_IMAGE_SIZE) {
-        fileProcessado = await comprimirImagem(file, 600, 0.6);
+        fileProcessado = await utils.comprimirImagem(file, 600, 0.6);
         if (fileProcessado.size > MAX_IMAGE_SIZE) {
-          if (typeof window.app !== "undefined" && window.app.showToast) {
-            window.app.showToast(
-              `Arquivo ${file.name} excede 1MB após compressão`,
-              "warning",
-            );
+          if (typeof window.app !== 'undefined' && window.app.showToast) {
+            window.app.showToast(`Arquivo ${file.name} excede 1MB após compressão`, 'warning');
           } else {
-            showToast(
-              `Arquivo ${file.name} excede 1MB após compressão`,
-              "warning",
-            );
+            showToast(`Arquivo ${file.name} excede 1MB após compressão`, 'warning');
           }
           continue;
         }
       }
 
+      // Gerar hash da imagem
       let hash = null;
       try {
-        hash = await gerarHashArquivo(fileProcessado);
+        hash = await utils.gerarHashArquivo(fileProcessado);
       } catch (e) {}
 
       anexos.push({
         nome: file.name,
-        tipo: "image",
+        tipo: 'image',
         tamanho: fileProcessado.size,
         arquivo: fileProcessado,
         hash: hash,
-        url: null,
+        url: null
       });
     } catch (error) {
-      console.error("Erro ao processar anexo:", error);
+      console.error('Erro ao processar anexo:', error);
     }
   }
 
@@ -1514,27 +1406,26 @@ async function processarAnexosAbordagem(files) {
 async function uploadAnexosAbordagem(anexos, isVeiculo) {
   if (!anexos || anexos.length === 0) return [];
 
-  const client =
-    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  const client = typeof supabaseClient !== 'undefined' ? supabaseClient.getClient() : null;
   if (!client) return [];
 
-  const prefix = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+  const prefix = isVeiculo ? 'abordagens_veiculos' : 'abordagens_pessoas';
   const timestamp = Date.now();
   const resultados = [];
 
   for (const anexo of anexos) {
     try {
-      const fileExt = anexo.arquivo.name.split(".").pop();
+      const fileExt = anexo.arquivo.name.split('.').pop();
       const fileName = `${prefix}/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
       const { error: uploadError } = await client.storage
-        .from("anexos")
+        .from('anexos')
         .upload(fileName, anexo.arquivo);
 
       if (uploadError) throw uploadError;
 
       const { data: urlData } = client.storage
-        .from("anexos")
+        .from('anexos')
         .getPublicUrl(fileName);
 
       resultados.push({
@@ -1542,10 +1433,10 @@ async function uploadAnexosAbordagem(anexos, isVeiculo) {
         nome: anexo.nome,
         tipo: anexo.tipo,
         tamanho: anexo.tamanho,
-        hash: anexo.hash,
+        hash: anexo.hash
       });
     } catch (error) {
-      console.error("Erro no upload do anexo:", error);
+      console.error('Erro no upload do anexo:', error);
     }
   }
 
@@ -1562,127 +1453,60 @@ export function converterEmBO(tipo, dadosBase64) {
 
     const dadosBO = {
       tipo_abordagem: tipo,
-      dados: dados,
+      dados: dados
     };
 
     window._dadosPreenchimentoBO = dadosBO;
 
-    if (typeof window.app !== "undefined" && window.app.navigateTo) {
-      window.app.navigateTo("nova-ocorrencia");
-      if (typeof window.app.showToast === "function") {
-        window.app.showToast("Iniciando BO com dados da abordagem", "info");
+    if (typeof window.app !== 'undefined' && window.app.navigateTo) {
+      window.app.navigateTo('nova-ocorrencia');
+      if (typeof window.app.showToast === 'function') {
+        window.app.showToast('Iniciando BO com dados da abordagem', 'info');
       }
     } else {
-      console.warn("⚠️ app.navigateTo não disponível");
-      alert("Dados da abordagem prontos para converter em BO.");
+      console.warn('⚠️ app.navigateTo não disponível');
+      alert('Dados da abordagem prontos para converter em BO.');
     }
   } catch (error) {
-    console.error("Erro ao converter em BO:", error);
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Erro ao converter: " + error.message, "error");
+    console.error('Erro ao converter em BO:', error);
+    if (typeof window.app !== 'undefined' && window.app.showToast) {
+      window.app.showToast('Erro ao converter: ' + error.message, 'error');
     } else {
-      showToast("Erro ao converter: " + error.message, "error");
+      showToast('Erro ao converter: ' + error.message, 'error');
     }
   }
 }
 
 // ============================================
-// FUNÇÕES AUXILIARES (FALLBACKS)
+// FUNÇÃO AUXILIAR: SHOW TOAST (fallback local)
 // ============================================
 
-const {
-  comprimirImagem,
-  gerarHashArquivo,
-  obterLocalizacao,
-  obterDataHoraBrasiliaISO,
-  aplicarMascaraCPF,
-  aplicarMascaraPlaca,
-} = window.utils || {};
-
-function comprimirImagemFallback(file, maxWidth = 800, quality = 0.7) {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith("image/")) {
-      resolve(file);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              const compressedFile = new File([blob], file.name, {
-                type: "image/jpeg",
-                lastModified: Date.now(),
-              });
-              resolve(compressedFile);
-            } else {
-              resolve(file);
-            }
-          },
-          "image/jpeg",
-          quality,
-        );
-      };
-      img.onerror = () => resolve(file);
-      img.src = e.target.result;
-    };
-    reader.onerror = () => resolve(file);
-    reader.readAsDataURL(file);
-  });
-}
-
-const comprimirImagemSafe =
-  window.utils?.comprimirImagem || comprimirImagemFallback;
-const gerarHashArquivoSafe =
-  window.utils?.gerarHashArquivo || (() => Promise.resolve(null));
-const obterLocalizacaoSafe =
-  window.utils?.obterLocalizacao ||
-  (() => Promise.resolve({ latitude: null, longitude: null }));
-const obterDataHoraBrasiliaISOSafe =
-  window.utils?.obterDataHoraBrasiliaISO ||
-  (() => Promise.resolve(new Date().toISOString()));
-const aplicarMascaraCPFSafe = window.utils?.aplicarMascaraCPF || ((v) => v);
-const aplicarMascaraPlacaSafe = window.utils?.aplicarMascaraPlaca || ((v) => v);
-
-function showToast(message, type = "info") {
-  if (typeof window.app !== "undefined" && window.app.showToast) {
+function showToast(message, type = 'info') {
+  if (typeof window.app !== 'undefined' && window.app.showToast) {
     window.app.showToast(message, type);
     return;
   }
 
-  const container = document.getElementById("toastContainer");
+  const container = document.getElementById('toastContainer');
   if (!container) {
     console.log(`${type}: ${message}`);
     return;
   }
 
-  const toast = document.createElement("div");
+  const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   const cores = {
-    success: "var(--verde-bandeira)",
-    error: "var(--erro)",
-    warning: "var(--aviso)",
-    info: "var(--azul-bandeira)",
+    success: 'var(--verde-bandeira)',
+    error: 'var(--erro)',
+    warning: 'var(--aviso)',
+    info: 'var(--azul-bandeira)'
   };
   toast.style.background = cores[type] || cores.info;
   toast.innerHTML = message;
   container.appendChild(toast);
 
   setTimeout(() => {
-    toast.classList.add("out");
+    toast.classList.add('out');
     setTimeout(() => toast.remove(), 300);
   }, 4000);
 }
@@ -1705,5 +1529,5 @@ export default {
   removerImagemAbordagemPreview,
   converterEmBO,
   reconhecerPlacaPorFoto,
-  carregarRankingReincidentes,
+  carregarRankingReincidentes
 };

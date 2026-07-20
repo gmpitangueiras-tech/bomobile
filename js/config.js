@@ -95,8 +95,8 @@ const CONFIG = {
     VAPID_PRIVATE_KEY: "", // Mantido em segredo no servidor
     APPLICATION_SERVER_KEY:
       "BEl62iU3gU0tG3tW5x8vK6oQ3pM1N7oK2lN9sP0rS5tV6wX9yZ4aB7cD8eF0gH1iJ2kL3mN4oP5qR6sT7uV8wX9yZ0",
-    ICON: "/assets/icons/icon-192x192.png",
-    BADGE: "/assets/icons/icon-192x192.png",
+    ICON: "/assets/icons/icon-192x192.ico",
+    BADGE: "/assets/icons/icon-192x192.ico",
     SOUND: "/assets/sounds/notification.mp3",
     VIBRATE_PATTERN: [200, 100, 200],
     REQUIRES_INTERACTION: true,

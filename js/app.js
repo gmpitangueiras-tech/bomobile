@@ -34,6 +34,7 @@ import * as relatorios from "./modules/relatorios.js";
 import * as usuarios from "./modules/usuarios.js";
 import * as perfil from "./modules/perfil.js";
 import * as logs from "./modules/logs.js";
+// A importação do busca-profunda.js é feita dinamicamente pelo dashboard.js
 
 // ============================================
 // CONSTANTES

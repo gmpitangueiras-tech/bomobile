@@ -22,7 +22,7 @@
       "url": "./index.html#nova-ocorrencia",
       "icons": [
         {
-          "src": "assets/icons/icon-192x192.png",
+          "src": "assets/icons/icon-192x192.ico",
           "sizes": "192x192",
           "type": "image/png",
           "purpose": "any"
@@ -36,7 +36,7 @@
       "url": "./index.html#ocorrencias",
       "icons": [
         {
-          "src": "assets/icons/icon-192x192.png",
+          "src": "assets/icons/icon-192x192.ico",
           "sizes": "192x192",
           "type": "image/png",
           "purpose": "any"
@@ -50,7 +50,7 @@
       "url": "./index.html#mural",
       "icons": [
         {
-          "src": "assets/icons/icon-192x192.png",
+          "src": "assets/icons/icon-192x192.ico",
           "sizes": "192x192",
           "type": "image/png",
           "purpose": "any"
@@ -64,7 +64,7 @@
       "url": "./index.html#consulta",
       "icons": [
         {
-          "src": "assets/icons/icon-192x192.png",
+          "src": "assets/icons/icon-192x192.ico",
           "sizes": "192x192",
           "type": "image/png",
           "purpose": "any"
@@ -97,7 +97,7 @@
   ],
   "icons": [
     {
-      "src": "assets/icons/icon-192x192.png",
+      "src": "assets/icons/icon-192x192.ico",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"

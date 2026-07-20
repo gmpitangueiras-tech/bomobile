@@ -1,34 +1,23 @@
 /**
- * MÓDULO MURAL - Mural de Avisos
+ * MÓDULO MURAL - Mural de Avisos com layout moderno
  * Guarda Municipal de Pitangueiras - PR
  *
- * Este módulo gerencia:
- * - Listagem de avisos com filtros
- * - Criação de novos avisos (supervisor)
- * - Edição e exclusão de avisos (supervisor)
- * - Comentários em avisos
+ * Layout com:
+ * - Cards com imagem de capa (destaque)
+ * - Badges coloridos por tipo
+ * - Título em destaque
+ * - Prévia do conteúdo com "Ver mais"
+ * - Autor com avatar e perfil
+ * - Data de publicação
  * - Reações (like, olhos, alerta, ok, duvida)
- * - Carrossel de imagens
- * - Badge de não lidos
- * - Notificações de novos avisos
- *
- * MELHORIAS APLICADAS:
- * - Pull-to-refresh (recarregar puxando para baixo)
- * - Lazy loading de imagens (carregar apenas visíveis)
- * - Cache de avisos para carregamento mais rápido
- * - Otimização de renderização
- * - Indicador de carregamento
+ * - Comentários (últimos 2 com "Ver todos")
+ * - Filtros compactos e colapsáveis
+ * - Suporte a múltiplas imagens com carrossel
+ * - Avisos urgentes com destaque
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             utils, ui
  */
-
-// ============================================
-// IMPORTAÇÕES
-// ============================================
-
-// Usamos os objetos globais disponíveis
-// (authManager, supabaseClient)
 
 // ============================================
 // CONSTANTES
@@ -42,21 +31,56 @@ const REACOES_EMOJIS = {
   duvida: "❓",
 };
 
+const REACOES_LABELS = {
+  like: "Curtir",
+  olhos: "Visualizar",
+  alerta: "Alerta",
+  ok: "Confirmar",
+  duvida: "Dúvida",
+};
+
 const TIPOS_AVISO = {
-  noticia: { label: "Notícia", icon: "📢", badge: "noticia" },
-  procurado: { label: "Procurado", icon: "🔍", badge: "procurado" },
-  desaparecido: { label: "Desaparecido", icon: "🆘", badge: "desaparecido" },
+  noticia: {
+    label: "NOTÍCIA",
+    icon: "📢",
+    badge: "badge-noticia",
+    cor: "#003f87",
+    corBg: "var(--azul-bandeira)",
+  },
+  alerta: {
+    label: "ALERTA",
+    icon: "🔴",
+    badge: "badge-alerta",
+    cor: "#dc2626",
+    corBg: "var(--erro)",
+  },
   ordem_servico: {
-    label: "Ordem de Serviço",
+    label: "ORDEM DE SERVIÇO",
     icon: "📋",
-    badge: "ordem_servico",
+    badge: "badge-ordem-servico",
+    cor: "#8b5cf6",
+    corBg: "var(--roxo)",
+  },
+  informativo: {
+    label: "INFORMATIVO",
+    icon: "ℹ️",
+    badge: "badge-informativo",
+    cor: "#00843d",
+    corBg: "var(--verde-bandeira)",
   },
 };
 
+const TIPOS_AVISO_LISTA = [
+  { value: "todos", label: "Todos" },
+  { value: "noticia", label: "Notícia" },
+  { value: "alerta", label: "Alerta" },
+  { value: "ordem_servico", label: "Ordem de Serviço" },
+  { value: "informativo", label: "Informativo" },
+];
+
 const CACHE_KEY_MURAL = "mural_avisos_cache";
 const CACHE_EXPIRY = 60000; // 1 minuto
-const PULL_REFRESH_THRESHOLD = 80;
-const LAZY_LOAD_THRESHOLD = 200;
+const ITENS_POR_PAGINA = 5;
 
 // ============================================
 // ESTADO DO MÓDULO
@@ -69,22 +93,17 @@ let estado = {
     dataInicio: "",
     dataFim: "",
   },
-  carrosselData: null,
-  avisosCache: [],
+  avisos: [],
+  totalRegistros: 0,
+  totalPaginas: 0,
+  paginaAtual: 1,
+  carregando: false,
+  filtrosVisiveis: false,
   isRefreshing: false,
-  touchStartY: 0,
-  touchCurrentY: 0,
-  isPulling: false,
-  pullProgress: 0,
-  isLoadingMore: false,
-  hasMoreItems: true,
-  page: 0,
-  pageSize: 10,
-  lazyLoadObserver: null,
 };
 
 // ============================================
-// FUNÇÕES PRINCIPAIS
+// FUNÇÃO PRINCIPAL
 // ============================================
 
 /**
@@ -93,857 +112,807 @@ let estado = {
  * @param {Object} appInstance - Instância do app
  */
 export async function renderMural(container, appInstance) {
+  const user =
+    typeof authManager !== "undefined" ? authManager.getUser() : null;
   const isSupervisor =
     typeof authManager !== "undefined" && authManager.isSupervisor();
 
   // Marcar como lido ao entrar
   await marcarMuralComoLido();
 
-  // Tentar carregar do cache
-  const cachedAvisos = getCachedData(CACHE_KEY_MURAL);
-  if (cachedAvisos) {
-    estado.avisosCache = cachedAvisos;
-    console.log("📦 Avisos carregados do cache");
-  }
-
-  let html = `
-    <div class="container" style="padding-bottom:100px;" id="muralContainer">
-      ${
-        isSupervisor
-          ? `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-bullhorn" style="margin-right:8px;"></i>
-            Mural de Avisos
-          </h2>
-          <div style="display:flex;gap:8px;">
-            <button id="btnNovoAvisoMural" class="btn-primary" style="padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;font-weight:700;box-shadow:0 2px 12px rgba(0,63,135,0.25);">
-              <i class="fas fa-plus"></i> Novo Aviso
-            </button>
-          </div>
-        </div>
-      `
-          : `
-        <h2 style="color:var(--azul-bandeira);margin-bottom:16px;font-size:18px;">
-          <i class="fas fa-bullhorn" style="margin-right:8px;"></i>
-          Mural de Avisos
-        </h2>
-      `
-      }
-
-      <!-- Filtros -->
-      <div class="filtros-container" style="margin-bottom:12px;border-radius:16px;padding:12px;">
-        <div class="filtros-row">
-          <div class="filtro-group" style="flex:2;">
-            <label><i class="fas fa-search"></i> Buscar</label>
-            <input type="text" id="muralBusca" placeholder="Buscar por título ou conteúdo..." 
-              value="${estado.filtros.busca || ""}" 
-              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);min-height:44px;"
-              onkeydown="if(event.key==='Enter') window._muralAplicarFiltros()">
-          </div>
-          <div class="filtro-group" style="flex:1;">
-            <label><i class="fas fa-tag"></i> Categoria</label>
-            <select id="muralFiltroTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);min-height:44px;">
-              <option value="todos" ${estado.filtros.tipo === "todos" ? "selected" : ""}>Todos</option>
-              <option value="noticia" ${estado.filtros.tipo === "noticia" ? "selected" : ""}>📢 Notícias</option>
-              <option value="procurado" ${estado.filtros.tipo === "procurado" ? "selected" : ""}>🔍 Procurados</option>
-              <option value="desaparecido" ${estado.filtros.tipo === "desaparecido" ? "selected" : ""}>🆘 Desaparecidos</option>
-              <option value="ordem_servico" ${estado.filtros.tipo === "ordem_servico" ? "selected" : ""}>📋 O.S.</option>
-            </select>
-          </div>
-        </div>
-        <div class="filtros-row" style="margin-top:6px;">
-          <div class="filtro-group" style="flex:1;">
-            <label><i class="fas fa-calendar-alt"></i> Data Início</label>
-            <input type="date" id="muralDataInicio" value="${estado.filtros.dataInicio || ""}" 
-              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);min-height:44px;">
-          </div>
-          <div class="filtro-group" style="flex:1;">
-            <label><i class="fas fa-calendar-alt"></i> Data Fim</label>
-            <input type="date" id="muralDataFim" value="${estado.filtros.dataFim || ""}" 
-              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco-fumaca);min-height:44px;">
-          </div>
-          <div class="filtros-actions">
-            <button onclick="window._muralAplicarFiltros()" class="btn-primary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
-              <i class="fas fa-search"></i>
-            </button>
-            <button onclick="window._muralLimparFiltros()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:36px;width:auto;border-radius:12px;">
-              <i class="fas fa-undo"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Lista de avisos -->
-      <div id="muralListaArea">
-        ${
-          estado.avisosCache.length > 0
-            ? renderAvisos(estado.avisosCache, isSupervisor, appInstance)
-            : `
-          <div style="text-align:center;padding:20px;">
-            <div class="spinner-azul" style="margin:0 auto;"></div>
-            <p style="margin-top:8px;color:var(--cinza-medio);">Carregando avisos...</p>
-          </div>
-        `
-        }
-      </div>
-
-      <!-- Loader de mais itens -->
-      <div id="muralLoaderMore" style="display:none;text-align:center;padding:20px;">
-        <div class="spinner-azul" style="margin:0 auto;width:24px;height:24px;border-width:2px;"></div>
-        <p style="margin-top:8px;color:var(--cinza-medio);font-size:12px;">Carregando mais...</p>
-      </div>
-    </div>
-  `;
-
-  container.innerHTML = html;
-
-  // Registrar funções no escopo global
-  window._muralAplicarFiltros = () =>
-    aplicarFiltrosMural(container, appInstance);
-  window._muralLimparFiltros = () => limparFiltrosMural(container, appInstance);
-  window._muralNovoAviso = () => abrirFormularioMural(container, appInstance);
-  window._muralEditar = (id) => editarAvisoMural(id, container, appInstance);
-  window._muralDeletar = (id) => deletarAvisoMural(id, container, appInstance);
-  window._muralExpandir = (id) => expandirConteudoMural(id);
-  window._muralReagir = (id, tipo) =>
-    toggleReacao(id, tipo, container, appInstance);
-  window._muralComentar = (id) =>
-    adicionarComentario(id, container, appInstance);
-  window._muralVerComentarios = (id) => verTodosComentarios(id, appInstance);
-  window._muralAbrirCarrossel = (id) => abrirCarrossel(id, appInstance);
-  window._muralRecarregar = () => carregarAvisosMural(container, appInstance);
-
-  // Evento do botão novo aviso
-  const btnNovo = document.getElementById("btnNovoAvisoMural");
-  if (btnNovo) {
-    btnNovo.addEventListener("click", () =>
-      abrirFormularioMural(container, appInstance),
-    );
-  }
-
-  // Carregar avisos (se não houver cache ou se o cache estiver vazio)
-  if (estado.avisosCache.length === 0) {
-    await carregarAvisosMural(container, appInstance);
-  } else {
-    // Configurar lazy loading para imagens existentes
-    setTimeout(() => configurarLazyLoading(container), 100);
-    // Atualizar em background
-    carregarAvisosMural(container, appInstance);
-  }
-
-  // Configurar pull-to-refresh
-  configurarPullToRefresh(container, appInstance);
-
-  // Configurar lazy loading
-  configurarLazyLoading(container);
-
-  // Atualizar badge
-  await atualizarBadgeMural();
-
-  // Configurar scroll infinito
-  configurarScrollInfinito(container, appInstance);
-}
-
-// ============================================
-// PULL-TO-REFRESH
-// ============================================
-
-function configurarPullToRefresh(container, appInstance) {
-  const muralContainer = document.getElementById("muralContainer");
-  if (!muralContainer) return;
-
-  muralContainer.removeEventListener("touchstart", handleTouchStart);
-  muralContainer.removeEventListener("touchmove", handleTouchMove);
-  muralContainer.removeEventListener("touchend", handleTouchEnd);
-
-  muralContainer.addEventListener("touchstart", handleTouchStart, {
-    passive: true,
-  });
-  muralContainer.addEventListener("touchmove", handleTouchMove, {
-    passive: false,
-  });
-  muralContainer.addEventListener("touchend", handleTouchEnd, {
-    passive: true,
-  });
-
-  muralContainer._pullRefreshApp = appInstance;
-  muralContainer._pullRefreshContainer = container;
-}
-
-function handleTouchStart(e) {
-  const container = this;
-  const scrollTop = window.scrollY || document.documentElement.scrollTop;
-
-  if (scrollTop <= 0) {
-    estado.touchStartY = e.touches[0].clientY;
-    estado.isPulling = true;
-    estado.pullProgress = 0;
-    estado.touchCurrentY = estado.touchStartY;
-  } else {
-    estado.isPulling = false;
-  }
-}
-
-function handleTouchMove(e) {
-  if (!estado.isPulling) return;
-
-  const touchY = e.touches[0].clientY;
-  const diff = touchY - estado.touchStartY;
-
-  if (diff > 0) {
-    estado.touchCurrentY = touchY;
-    estado.pullProgress = Math.min(diff / PULL_REFRESH_THRESHOLD, 1);
-
-    mostrarIndicadorPullRefresh(this, estado.pullProgress);
-
-    if (estado.pullProgress > 0.1) {
-      e.preventDefault();
-    }
-  }
-}
-
-function handleTouchEnd(e) {
-  if (!estado.isPulling) return;
-
-  const container = this;
-  const appInstance = container._pullRefreshApp;
-  const muralContainer = container._pullRefreshContainer;
-
-  if (estado.pullProgress >= 1) {
-    mostrarIndicadorPullRefresh(container, 1, true);
-    refreshMural(muralContainer, appInstance);
-  } else {
-    removerIndicadorPullRefresh(container);
-  }
-
-  estado.isPulling = false;
-  estado.pullProgress = 0;
-  estado.touchStartY = 0;
-  estado.touchCurrentY = 0;
-}
-
-function mostrarIndicadorPullRefresh(container, progress, loading = false) {
-  let indicator = container.querySelector(".pull-refresh-indicator");
-
-  if (!indicator) {
-    indicator = document.createElement("div");
-    indicator.className = "pull-refresh-indicator";
-    indicator.style.cssText = `
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      text-align: center;
-      padding: 8px;
-      font-size: 12px;
-      color: var(--cinza-medio);
-      background: var(--branco);
-      transform: translateY(-100%);
-      transition: transform 0.2s ease;
-      border-bottom: 1px solid var(--cinza-claro);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    `;
-    container.parentNode.insertBefore(indicator, container);
-  }
-
-  if (loading) {
-    indicator.innerHTML = `
-      <div class="spinner-small" style="width:16px;height:16px;border:2px solid var(--cinza-claro);border-top-color:var(--azul-bandeira);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-      <span>Atualizando mural...</span>
-    `;
-    indicator.style.transform = "translateY(0)";
-    indicator.style.background = "var(--azul-muito-claro)";
-    indicator.style.color = "var(--azul-bandeira)";
-    return;
-  }
-
-  const percentual = Math.round(progress * 100);
-  const texto =
-    percentual >= 100
-      ? "🔄 Solte para atualizar"
-      : `⬇️ Puxe para atualizar (${percentual}%)`;
-  const cor =
-    percentual >= 100 ? "var(--verde-bandeira)" : "var(--cinza-medio)";
-
-  indicator.innerHTML = `<span style="color:${cor}">${texto}</span>`;
-  indicator.style.transform = `translateY(${-100 + progress * 100}%)`;
-  indicator.style.background =
-    progress >= 1 ? "var(--verde-muito-claro)" : "var(--branco)";
-}
-
-function removerIndicadorPullRefresh(container) {
-  const indicator = container.querySelector(".pull-refresh-indicator");
-  if (indicator) {
-    indicator.style.transform = "translateY(-100%)";
-    setTimeout(() => {
-      if (indicator.parentNode) {
-        indicator.remove();
-      }
-    }, 300);
-  }
-}
-
-async function refreshMural(container, appInstance) {
-  if (estado.isRefreshing) return;
-
-  estado.isRefreshing = true;
+  // Mostrar loader
+  container.innerHTML = renderLoader();
 
   try {
-    // Limpar cache
-    localStorage.removeItem(CACHE_KEY_MURAL);
-    estado.avisosCache = [];
-    estado.page = 0;
-    estado.hasMoreItems = true;
+    // Carregar avisos
+    await carregarAvisosMural();
 
-    await carregarAvisosMural(container, appInstance);
+    // Renderizar
+    renderizarLista(container, appInstance, isSupervisor);
 
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Mural atualizado!", "success");
-    }
+    // Registrar funções globais
+    window._muralAplicarFiltros = () => aplicarFiltros(container, appInstance);
+    window._muralLimparFiltros = () => limparFiltros(container, appInstance);
+    window._muralToggleFiltros = () => toggleFiltros(container, appInstance);
+    window._muralFiltrarCategoria = (tipo) =>
+      filtrarPorCategoria(tipo, container, appInstance);
+    window._muralNovoAviso = () => abrirFormularioMural(container, appInstance);
+    window._muralEditar = (id) => editarAvisoMural(id, container, appInstance);
+    window._muralDeletar = (id) =>
+      deletarAvisoMural(id, container, appInstance);
+    window._muralExpandir = (id) => expandirConteudoMural(id);
+    window._muralReagir = (id, tipo) =>
+      toggleReacao(id, tipo, container, appInstance);
+    window._muralComentar = (id) =>
+      adicionarComentario(id, container, appInstance);
+    window._muralVerComentarios = (id) => verTodosComentarios(id, appInstance);
+    window._muralVerDetalhes = (id) => abrirModalDetalhes(id, appInstance);
+    window._muralRecarregar = () => renderMural(container, appInstance);
+    window._muralPagina = (pagina) =>
+      irParaPagina(pagina, container, appInstance);
+    window._muralVerMais = (id) => verMaisConteudo(id, appInstance);
+    window._muralCompartilhar = (id) => compartilharAviso(id, appInstance);
+    window._muralVerImagens = (id) => verImagensAviso(id, appInstance);
   } catch (error) {
-    console.error("Erro ao atualizar mural:", error);
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Erro ao atualizar mural", "error");
-    }
-  } finally {
-    estado.isRefreshing = false;
-    const indicator = container.querySelector(".pull-refresh-indicator");
-    if (indicator) {
-      indicator.style.transform = "translateY(-100%)";
-      setTimeout(() => {
-        if (indicator.parentNode) {
-          indicator.remove();
-        }
-      }, 300);
-    }
+    console.error("❌ Erro ao renderizar mural:", error);
+    container.innerHTML = renderErro(error, appInstance);
   }
-}
-
-// ============================================
-// SCROLL INFINITO
-// ============================================
-
-function configurarScrollInfinito(container, appInstance) {
-  const listaArea = document.getElementById("muralListaArea");
-  if (!listaArea) return;
-
-  const observer = new IntersectionObserver(
-    (entries) => {
-      const target = entries[0];
-      if (
-        target.isIntersecting &&
-        !estado.isLoadingMore &&
-        estado.hasMoreItems
-      ) {
-        carregarMaisAvisos(container, appInstance);
-      }
-    },
-    {
-      rootMargin: "100px",
-      threshold: 0.1,
-    },
-  );
-
-  // Observar o loader de mais itens
-  const loaderMore = document.getElementById("muralLoaderMore");
-  if (loaderMore) {
-    observer.observe(loaderMore);
-  }
-
-  // Guardar referência para limpeza
-  estado.scrollObserver = observer;
-}
-
-async function carregarMaisAvisos(container, appInstance) {
-  if (estado.isLoadingMore || !estado.hasMoreItems) return;
-
-  estado.isLoadingMore = true;
-  estado.page++;
-
-  const loaderMore = document.getElementById("muralLoaderMore");
-  if (loaderMore) loaderMore.style.display = "block";
-
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    let query = client.from("mural_avisos").select("*");
-
-    if (estado.filtros.tipo !== "todos") {
-      query = query.eq("tipo", estado.filtros.tipo);
-    }
-
-    if (estado.filtros.busca && estado.filtros.busca.trim() !== "") {
-      const termo = `%${estado.filtros.busca.trim()}%`;
-      query = query.or(`titulo.ilike.${termo},conteudo.ilike.${termo}`);
-    }
-
-    if (estado.filtros.dataInicio) {
-      query = query.gte("criado_em", estado.filtros.dataInicio);
-    }
-
-    if (estado.filtros.dataFim) {
-      query = query.lte("criado_em", estado.filtros.dataFim + "T23:59:59");
-    }
-
-    query = query
-      .order("prioridade", { ascending: false })
-      .order("criado_em", { ascending: false })
-      .range(
-        estado.page * estado.pageSize,
-        (estado.page + 1) * estado.pageSize - 1,
-      );
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    if (!data || data.length === 0) {
-      estado.hasMoreItems = false;
-      if (loaderMore) {
-        loaderMore.innerHTML = `
-          <p style="color:var(--cinza-medio);font-size:12px;padding:8px;">
-            <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
-            Você chegou ao fim
-          </p>
-        `;
-      }
-      return;
-    }
-
-    // Buscar comentários e reações
-    const avisosComDados = await Promise.all(
-      data.map(async (aviso) => {
-        const { data: comentarios } = await client
-          .from("mural_comentarios")
-          .select("*, usuarios(nome_completo)")
-          .eq("aviso_id", aviso.id)
-          .order("criado_em", { ascending: true });
-
-        const { data: reacoes } = await client
-          .from("mural_reações")
-          .select("*")
-          .eq("aviso_id", aviso.id);
-
-        const user =
-          typeof authManager !== "undefined" ? authManager.getUser() : null;
-        const reacaoUsuario = reacoes?.find((r) => r.usuario_id === user?.id);
-
-        return {
-          ...aviso,
-          comentarios: comentarios || [],
-          reacoes: reacoes || [],
-          reacao_usuario: reacaoUsuario,
-          total_reacoes: reacoes?.length || 0,
-          anexos: aviso.anexos || [],
-        };
-      }),
-    );
-
-    // Adicionar ao cache
-    estado.avisosCache = [...estado.avisosCache, ...avisosComDados];
-    setCachedData(CACHE_KEY_MURAL, estado.avisosCache);
-
-    // Renderizar novos avisos
-    const isSupervisor =
-      typeof authManager !== "undefined" && authManager.isSupervisor();
-    const novosAvisosHTML = avisosComDados
-      .map((aviso) => renderAvisoItem(aviso, isSupervisor, appInstance))
-      .join("");
-
-    const listaArea = document.getElementById("muralListaArea");
-    if (listaArea) {
-      listaArea.insertAdjacentHTML("beforeend", novosAvisosHTML);
-    }
-
-    if (loaderMore) loaderMore.style.display = "none";
-
-    // Configurar lazy loading para novas imagens
-    setTimeout(() => configurarLazyLoading(container), 200);
-  } catch (error) {
-    console.error("Erro ao carregar mais avisos:", error);
-    if (loaderMore) loaderMore.style.display = "none";
-  } finally {
-    estado.isLoadingMore = false;
-  }
-}
-
-// ============================================
-// CACHE DE DADOS
-// ============================================
-
-function setCachedData(key, data) {
-  try {
-    const cacheData = {
-      data: data,
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(key, JSON.stringify(cacheData));
-  } catch (error) {
-    console.warn("Erro ao salvar cache:", error);
-  }
-}
-
-function getCachedData(key) {
-  try {
-    const cached = localStorage.getItem(key);
-    if (!cached) return null;
-
-    const cacheData = JSON.parse(cached);
-    const now = Date.now();
-
-    if (now - cacheData.timestamp > CACHE_EXPIRY) {
-      localStorage.removeItem(key);
-      return null;
-    }
-
-    return cacheData.data;
-  } catch (error) {
-    console.warn("Erro ao recuperar cache:", error);
-    return null;
-  }
-}
-
-// ============================================
-// LAZY LOADING DE IMAGENS
-// ============================================
-
-function configurarLazyLoading(container) {
-  // Remover observer antigo
-  if (estado.lazyLoadObserver) {
-    estado.lazyLoadObserver.disconnect();
-  }
-
-  const images = container.querySelectorAll("img[data-src]");
-  if (images.length === 0) return;
-
-  const imageObserver = new IntersectionObserver(
-    (entries, observer) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const img = entry.target;
-          const src = img.getAttribute("data-src");
-          if (src) {
-            img.src = src;
-            img.removeAttribute("data-src");
-            img.style.opacity = "0";
-            img.style.transition = "opacity 0.3s ease";
-            setTimeout(() => {
-              img.style.opacity = "1";
-            }, 50);
-          }
-          observer.unobserve(img);
-        }
-      });
-    },
-    {
-      rootMargin: "50px",
-      threshold: 0.01,
-    },
-  );
-
-  images.forEach((img) => imageObserver.observe(img));
-  estado.lazyLoadObserver = imageObserver;
-
-  // Também observar imagens que podem ser adicionadas depois
-  const observer = new MutationObserver(() => {
-    const newImages = container.querySelectorAll("img[data-src]");
-    newImages.forEach((img) => {
-      if (!estado.lazyLoadObserver?.observing?.(img)) {
-        estado.lazyLoadObserver?.observe(img);
-      }
-    });
-  });
-
-  observer.observe(container, { childList: true, subtree: true });
 }
 
 // ============================================
 // CARREGAR AVISOS
 // ============================================
 
-export async function carregarAvisosMural(container, appInstance) {
-  const area = document.getElementById("muralListaArea");
-  if (!area) return;
-
-  // Mostrar loader se não houver dados em cache
-  if (estado.avisosCache.length === 0) {
-    area.innerHTML = `
-      <div style="text-align:center;padding:20px;">
-        <div class="spinner-azul" style="margin:0 auto;"></div>
-        <p style="margin-top:8px;color:var(--cinza-medio);">Carregando avisos...</p>
-      </div>
-    `;
-  }
+export async function carregarAvisosMural(pagina = 1) {
+  estado.carregando = true;
+  estado.paginaAtual = pagina;
 
   try {
     const client =
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) {
-      area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor</p>`;
+      estado.avisos = [];
+      estado.totalRegistros = 0;
+      estado.totalPaginas = 1;
+      estado.carregando = false;
       return;
     }
 
-    let query = client.from("mural_avisos").select("*");
+    const { busca, tipo, dataInicio, dataFim } = estado.filtros;
+    const offset = (pagina - 1) * ITENS_POR_PAGINA;
 
-    if (estado.filtros.tipo !== "todos") {
-      query = query.eq("tipo", estado.filtros.tipo);
+    let query = client.from("mural_avisos").select("*", { count: "exact" });
+
+    if (tipo !== "todos") {
+      query = query.eq("tipo", tipo);
     }
 
-    if (estado.filtros.busca && estado.filtros.busca.trim() !== "") {
-      const termo = `%${estado.filtros.busca.trim()}%`;
+    if (busca && busca.trim() !== "") {
+      const termo = `%${busca.trim()}%`;
       query = query.or(`titulo.ilike.${termo},conteudo.ilike.${termo}`);
     }
 
-    if (estado.filtros.dataInicio) {
-      query = query.gte("criado_em", estado.filtros.dataInicio);
+    if (dataInicio) {
+      query = query.gte("criado_em", dataInicio);
     }
 
-    if (estado.filtros.dataFim) {
-      query = query.lte("criado_em", estado.filtros.dataFim + "T23:59:59");
+    if (dataFim) {
+      query = query.lte("criado_em", dataFim + "T23:59:59");
     }
 
     query = query
       .order("prioridade", { ascending: false })
-      .order("criado_em", { ascending: false });
+      .order("criado_em", { ascending: false })
+      .range(offset, offset + ITENS_POR_PAGINA - 1);
 
-    // Limitar para primeira página
-    query = query.range(0, estado.pageSize - 1);
+    const { data, error, count } = await query;
 
-    const { data, error } = await query;
     if (error) throw error;
 
-    estado.avisosCache = data || [];
-    estado.page = 0;
-    estado.hasMoreItems = true;
+    // Buscar dados dos criadores, comentários e reações
+    const avisos = data || [];
+    if (avisos.length > 0) {
+      const idsCriadores = avisos.map((a) => a.criado_por).filter((id) => id);
+      const dadosUsuarios = await buscarDadosUsuariosEmLote(idsCriadores);
 
-    // Salvar no cache
-    setCachedData(CACHE_KEY_MURAL, estado.avisosCache);
+      const avisosComDados = await Promise.all(
+        avisos.map(async (aviso) => {
+          // Buscar comentários
+          const { data: comentarios } = await client
+            .from("mural_comentarios")
+            .select("*, usuarios(nome_completo, perfil)")
+            .eq("aviso_id", aviso.id)
+            .order("criado_em", { ascending: true })
+            .limit(3);
 
-    if (data.length === 0) {
-      area.innerHTML = `
-        <div style="text-align:center;padding:40px;color:var(--cinza-medio);">
-          <i class="fas fa-inbox" style="font-size:48px;display:block;margin-bottom:12px;color:var(--cinza-claro);"></i>
-          <p>Nenhum aviso encontrado</p>
-          ${
-            estado.filtros.busca ||
-            estado.filtros.tipo !== "todos" ||
-            estado.filtros.dataInicio ||
-            estado.filtros.dataFim
-              ? '<button onclick="window._muralLimparFiltros()" class="btn-secondary" style="margin-top:12px;padding:6px 16px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">Limpar Filtros</button>'
-              : typeof authManager !== "undefined" && authManager.isSupervisor()
-                ? '<button onclick="window._muralNovoAviso()" class="btn-primary" style="margin-top:16px;padding:8px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">Criar Primeiro Aviso</button>'
-                : ""
+          // Buscar reações
+          const { data: reacoes } = await client
+            .from("mural_reações")
+            .select("*")
+            .eq("aviso_id", aviso.id);
+
+          const user =
+            typeof authManager !== "undefined" ? authManager.getUser() : null;
+          const reacaoUsuario = reacoes?.find((r) => r.usuario_id === user?.id);
+
+          // Processar anexos
+          let anexos = [];
+          if (aviso.anexos) {
+            try {
+              anexos =
+                typeof aviso.anexos === "string"
+                  ? JSON.parse(aviso.anexos)
+                  : aviso.anexos || [];
+            } catch (e) {
+              anexos = [];
+            }
           }
-        </div>
-      `;
-      return;
+
+          return {
+            ...aviso,
+            criador: dadosUsuarios[aviso.criado_por] || {
+              nome_completo: "Desconhecido",
+              perfil: null,
+            },
+            comentarios: comentarios || [],
+            reacoes: reacoes || [],
+            reacao_usuario: reacaoUsuario,
+            total_reacoes: reacoes?.length || 0,
+            anexos: anexos || [],
+          };
+        }),
+      );
+
+      estado.avisos = avisosComDados;
+    } else {
+      estado.avisos = [];
     }
 
-    // Buscar comentários e reações para cada aviso
-    const avisosComDados = await Promise.all(
-      data.map(async (aviso) => {
-        const { data: comentarios } = await client
-          .from("mural_comentarios")
-          .select("*, usuarios(nome_completo)")
-          .eq("aviso_id", aviso.id)
-          .order("criado_em", { ascending: true });
-
-        const { data: reacoes } = await client
-          .from("mural_reações")
-          .select("*")
-          .eq("aviso_id", aviso.id);
-
-        const user =
-          typeof authManager !== "undefined" ? authManager.getUser() : null;
-        const reacaoUsuario = reacoes?.find((r) => r.usuario_id === user?.id);
-
-        return {
-          ...aviso,
-          comentarios: comentarios || [],
-          reacoes: reacoes || [],
-          reacao_usuario: reacaoUsuario,
-          total_reacoes: reacoes?.length || 0,
-          anexos: aviso.anexos || [],
-        };
-      }),
+    estado.totalRegistros = count || 0;
+    estado.totalPaginas = Math.max(
+      1,
+      Math.ceil(estado.totalRegistros / ITENS_POR_PAGINA),
     );
-
-    estado.avisosCache = avisosComDados;
-    setCachedData(CACHE_KEY_MURAL, avisosComDados);
-
-    // Renderizar avisos
-    const isSupervisor =
-      typeof authManager !== "undefined" && authManager.isSupervisor();
-    area.innerHTML = renderAvisos(avisosComDados, isSupervisor, appInstance);
-
-    // Configurar lazy loading
-    setTimeout(() => configurarLazyLoading(container), 200);
   } catch (error) {
-    console.error("Erro ao carregar mural:", error);
-    area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao carregar avisos: ${error.message}</p>`;
+    console.error("Erro ao carregar avisos:", error);
+    estado.avisos = [];
+    estado.totalRegistros = 0;
+    estado.totalPaginas = 1;
+  }
+
+  estado.carregando = false;
+}
+
+async function buscarDadosUsuariosEmLote(ids) {
+  if (!ids || ids.length === 0) return {};
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return {};
+
+    const { data, error } = await client
+      .from("usuarios")
+      .select("id, nome_completo, perfil")
+      .in("id", ids);
+
+    if (error) throw error;
+    const resultado = {};
+    data.forEach((u) => {
+      resultado[u.id] = u;
+    });
+    return resultado;
+  } catch (error) {
+    console.warn("Erro ao buscar usuários em lote:", error);
+    return {};
   }
 }
 
 // ============================================
-// RENDERIZAÇÃO DE AVISOS
+// RENDERIZAÇÃO PRINCIPAL
 // ============================================
 
-function renderAvisos(avisos, isSupervisor, appInstance) {
-  if (!avisos || avisos.length === 0) {
-    return `
-      <div style="text-align:center;padding:40px;color:var(--cinza-medio);">
-        <i class="fas fa-inbox" style="font-size:48px;display:block;margin-bottom:12px;color:var(--cinza-claro);"></i>
-        <p>Nenhum aviso encontrado</p>
+async function renderizarLista(container, appInstance, isSupervisor) {
+  const { avisos, totalRegistros, totalPaginas, paginaAtual, filtros } = estado;
+
+  const temFiltros =
+    filtros.busca ||
+    filtros.tipo !== "todos" ||
+    filtros.dataInicio ||
+    filtros.dataFim;
+
+  const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA + 1;
+  const fim = Math.min(paginaAtual * ITENS_POR_PAGINA, totalRegistros);
+
+  const filtrosAbertos = estado.filtrosVisiveis;
+
+  let html = `
+    <div class="container" style="padding-bottom:100px;" id="muralContainer">
+      <!-- Cabeçalho -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+          <div>
+            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;font-weight:700;">
+              <i class="fas fa-bullhorn" style="margin-right:6px;color:var(--azul-bandeira);"></i>
+              Mural de Avisos
+            </h2>
+            <p style="color:var(--cinza-medio);font-size:12px;margin:0;">
+              Fique por dentro das comunicações da corporação.
+            </p>
+          </div>
+          ${
+            isSupervisor
+              ? `
+            <button onclick="window._muralNovoAviso()" class="btn-primary" 
+              style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--gradiente-principal);box-shadow:0 2px 12px rgba(0,63,135,0.25);">
+              <i class="fas fa-plus" style="margin-right:4px;"></i> Novo
+            </button>
+          `
+              : ""
+          }
+        </div>
       </div>
+
+      <!-- Filtros compactos -->
+      <div class="filtros-mural" style="background:var(--branco);border-radius:var(--border-radius);padding:8px 10px;margin-bottom:10px;box-shadow:var(--sombra-suave);">
+        <!-- Linha 1: Busca + Toggle -->
+        <div style="display:flex;gap:6px;margin-bottom:4px;">
+          <div style="flex:1;position:relative;">
+            <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:12px;z-index:2;"></i>
+            <input type="text" id="muralBusca" placeholder="Buscar aviso..." 
+              value="${filtros.busca || ""}"
+              style="width:100%;padding:6px 10px 6px 32px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;"
+              oninput="window._muralBuscar(this.value)">
+          </div>
+          <div style="display:flex;gap:4px;flex-shrink:0;">
+            <button onclick="window._muralToggleFiltros()" 
+              style="padding:4px 10px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:${filtrosAbertos ? "var(--azul-muito-claro)" : "var(--branco)"};color:${filtrosAbertos ? "var(--azul-bandeira)" : "var(--cinza-medio)"};font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">
+              <i class="fas fa-sliders-h" style="margin-right:4px;"></i>
+              ${filtrosAbertos ? "▲" : "▼"}
+            </button>
+            ${temFiltros ? `<button onclick="window._muralLimparFiltros()" style="padding:4px 8px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:var(--branco);color:var(--azul-bandeira);font-size:11px;font-weight:600;cursor:pointer;"><i class="fas fa-times"></i></button>` : ""}
+          </div>
+        </div>
+
+        <!-- Linha 2: Categorias (abas) - Compactas -->
+        <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-start;">
+          ${TIPOS_AVISO_LISTA.map(
+            (cat) => `
+            <button 
+              onclick="window._muralFiltrarCategoria('${cat.value}')" 
+              class="categoria-aba-mural"
+              style="
+                flex:1 1 auto;
+                min-width:0;
+                padding:4px 6px;
+                border:2px solid ${filtros.tipo === cat.value ? "var(--azul-bandeira)" : "var(--cinza-claro)"};
+                border-radius:20px;
+                font-size:10px;
+                font-weight:${filtros.tipo === cat.value ? "700" : "500"};
+                background:${filtros.tipo === cat.value ? "var(--azul-bandeira)" : "var(--branco)"};
+                color:${filtros.tipo === cat.value ? "var(--branco)" : "var(--cinza-escuro)"};
+                cursor:pointer;
+                transition:all 0.2s ease;
+                white-space:nowrap;
+                min-height:26px;
+                text-align:center;
+                max-width:100%;
+                overflow:hidden;
+                text-overflow:ellipsis;
+              "
+            >
+              ${cat.label}
+            </button>
+          `,
+          ).join("")}
+        </div>
+
+        <!-- Linha 3: Filtros avançados (colapsáveis) -->
+        <div id="filtrosAvancadosMural" style="display:${filtrosAbertos ? "block" : "none"};margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:80px;">
+              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Início</label>
+              <input type="date" id="muralDataInicio" value="${filtros.dataInicio || ""}" 
+                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
+                onchange="window._muralAplicarFiltros()">
+            </div>
+            <div style="flex:1;min-width:80px;">
+              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Fim</label>
+              <input type="date" id="muralDataFim" value="${filtros.dataFim || ""}" 
+                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
+                onchange="window._muralAplicarFiltros()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contador -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px;">
+        <span style="font-size:12px;color:var(--cinza-medio);font-weight:500;">
+          <i class="fas fa-bullhorn" style="margin-right:4px;"></i>
+          ${
+            totalRegistros > 0
+              ? `Mostrando <strong>${inicio}</strong> a <strong>${fim}</strong> de <strong>${totalRegistros}</strong> avisos`
+              : "Nenhum aviso encontrado"
+          }
+          ${temFiltros ? `<span style="color:var(--azul-bandeira);font-weight:600;">(filtrado)</span>` : ""}
+        </span>
+      </div>
+
+      <!-- Lista de avisos -->
+      <div id="muralListaAvisos">
+  `;
+
+  if (estado.carregando) {
+    html += renderLoaderCards();
+  } else if (avisos.length === 0) {
+    html += renderVazio(temFiltros, isSupervisor);
+  } else {
+    avisos.forEach((aviso) => {
+      html += renderAvisoCard(aviso, isSupervisor, appInstance);
+    });
+  }
+
+  html += `
+      </div>
+
+      <!-- Paginação -->
+      ${totalPaginas > 1 ? renderPaginacao(paginaAtual, totalPaginas) : ""}
+
+      <!-- Rodapé -->
+      <div style="text-align:center;padding:8px 0;color:var(--cinza-medio);font-size:11px;">
+        <i class="fas fa-database" style="margin-right:4px;"></i>
+        ${
+          totalRegistros > 0
+            ? `Exibindo ${avisos.length} de ${totalRegistros} avisos`
+            : "Nenhum aviso cadastrado"
+        }
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+
+  // Registrar função de busca com debounce
+  window._muralBuscar = (termo) => {
+    clearTimeout(estado._timeoutBusca);
+    estado._timeoutBusca = setTimeout(() => {
+      estado.filtros.busca = termo.trim();
+      estado.paginaAtual = 1;
+      renderMural(container, appInstance);
+    }, 400);
+  };
+
+  // Atualizar badge
+  await atualizarBadgeMural();
+}
+
+// ============================================
+// RENDERIZAÇÃO: CARD DE AVISO
+// ============================================
+
+function renderAvisoCard(aviso, isSupervisor, appInstance) {
+  const tipoInfo = TIPOS_AVISO[aviso.tipo] || TIPOS_AVISO.noticia;
+  const corBadge = tipoInfo.corBg || "var(--cinza-medio)";
+  const badgeClass = tipoInfo.badge || "badge-noticia";
+
+  const autorNome = aviso.criador?.nome_completo || "Desconhecido";
+  const isSupervisorAutor = aviso.criador?.perfil === "supervisor";
+  const dataFormatada = formatarDataHoraLocal(aviso.criado_em);
+
+  // Processar anexos/imagens
+  const imagens =
+    aviso.anexos?.filter(
+      (a) => a.tipo === "image" || a.tipo_arquivo === "image",
+    ) || [];
+  const primeiraImagem = imagens.length > 0 ? imagens[0] : null;
+  const totalImagens = imagens.length;
+
+  // Conteúdo - prévia de 150 caracteres
+  const conteudoLongo = aviso.conteudo && aviso.conteudo.length > 150;
+  const conteudoPreview = conteudoLongo
+    ? aviso.conteudo.substring(0, 150) + "..."
+    : aviso.conteudo;
+
+  // Reações
+  const reacoes = aviso.reacoes || [];
+  const reacaoUsuario = aviso.reacao_usuario;
+  const totalReacoes = reacoes.length;
+
+  // Comentários - últimos 2
+  const comentarios = aviso.comentarios || [];
+  const ultimosComentarios = comentarios.slice(-2);
+  const totalComentarios = comentarios.length;
+
+  // Verificar se é urgente
+  const isUrgente = aviso.prioridade === true;
+
+  // Extrair localização e tag do conteúdo
+  let localizacao = "";
+  let tag = "";
+  if (aviso.conteudo) {
+    const linhas = aviso.conteudo.split("\n");
+    for (const linha of linhas) {
+      const trimmed = linha.trim();
+      if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
+        const texto = trimmed.replace(/^[-•]\s*/, "").trim();
+        if (
+          texto.includes("PR") ||
+          texto.includes("Rodovia") ||
+          texto.includes("km")
+        ) {
+          if (!localizacao) localizacao = texto;
+        } else if (!tag) {
+          tag = texto;
+        }
+      }
+    }
+  }
+
+  // Usar campos específicos se existirem
+  if (aviso.localizacao) localizacao = aviso.localizacao;
+  if (aviso.tag) tag = aviso.tag;
+
+  // Gerar ID para o card
+  const cardId = `aviso-card-${aviso.id}`;
+
+  // Calcular contagem de reações
+  const reacoesCount = {};
+  Object.keys(REACOES_EMOJIS).forEach((key) => {
+    reacoesCount[key] = reacoes.filter((r) => r.tipo === key).length;
+  });
+
+  return `
+    <div class="mural-card-modern" id="${cardId}" style="
+      background:var(--branco);
+      border-radius:var(--border-radius);
+      overflow:hidden;
+      margin-bottom:14px;
+      box-shadow:var(--sombra-suave);
+      border: ${isUrgente ? "2px solid var(--erro)" : "1px solid var(--cinza-claro)"};
+      position:relative;
+    ">
+      ${isUrgente ? `<div style="position:absolute;top:10px;right:10px;background:var(--erro);color:white;font-size:9px;font-weight:700;padding:2px 12px;border-radius:20px;text-transform:uppercase;z-index:2;box-shadow:0 2px 8px rgba(220,38,38,0.3);animation:pulse-urgent 2s ease-in-out infinite;">🚨 Urgente</div>` : ""}
+
+      <!-- Imagem de capa -->
+      <div style="width:100%;height:180px;background:var(--cinza-claro);position:relative;overflow:hidden;">
+        ${
+          primeiraImagem
+            ? `
+          <img src="${primeiraImagem.url_thumb || primeiraImagem.url}" alt="${aviso.titulo}" 
+            style="width:100%;height:100%;object-fit:cover;"
+            loading="lazy"
+            onclick="event.stopPropagation(); window._muralVerImagens('${aviso.id}')">
+          ${totalImagens > 1 ? `<span style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.7);color:white;font-size:10px;font-weight:700;padding:2px 10px;border-radius:12px;backdrop-filter:blur(4px);">+${totalImagens - 1}</span>` : ""}
+          <button onclick="event.stopPropagation(); window._muralVerImagens('${aviso.id}')" 
+            style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.5);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;">
+            <i class="fas fa-expand"></i>
+          </button>
+        `
+            : `
+          <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg, ${tipoInfo.cor}15, var(--cinza-claro));">
+            <i class="fas fa-bullhorn" style="font-size:48px;color:var(--cinza-medio);opacity:0.3;"></i>
+          </div>
+        `
+        }
+      </div>
+
+      <!-- Conteúdo -->
+      <div style="padding:12px 14px;">
+        <!-- Badge e Data -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:4px;">
+          <span class="badge ${badgeClass}" style="font-size:9px;padding:2px 12px;font-weight:700;background:${corBadge};color:white;border:none;text-transform:uppercase;letter-spacing:0.5px;">
+            ${tipoInfo.label}
+          </span>
+          <span style="font-size:10px;color:var(--cinza-medio);display:flex;align-items:center;gap:4px;">
+            <i class="fas fa-clock" style="font-size:10px;"></i>
+            ${dataFormatada}
+          </span>
+        </div>
+
+        <!-- Título -->
+        <h3 style="font-size:15px;font-weight:700;color:var(--azul-bandeira);margin:0 0 6px 0;line-height:1.3;">
+          ${aviso.titulo}
+        </h3>
+
+        <!-- Conteúdo -->
+        <div style="font-size:13px;color:var(--cinza-escuro);line-height:1.5;margin-bottom:4px;">
+          <span id="conteudo-${aviso.id}">
+            ${conteudoPreview}
+          </span>
+          ${
+            conteudoLongo
+              ? `
+            <button onclick="event.stopPropagation(); window._muralVerMais('${aviso.id}')" 
+              style="background:none;border:none;color:var(--azul-bandeira);font-weight:600;font-size:12px;cursor:pointer;padding:0 2px;">
+              <span id="verMaisBtn-${aviso.id}">Ver mais</span>
+            </button>
+          `
+              : ""
+          }
+        </div>
+
+        <!-- Tags (Localização e Tag) -->
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
+          ${
+            localizacao
+              ? `
+            <span style="font-size:10px;color:var(--cinza-medio);background:var(--branco-fumaca);padding:2px 10px;border-radius:12px;">
+              <i class="fas fa-map-marker-alt" style="margin-right:4px;font-size:9px;"></i>
+              ${localizacao}
+            </span>
+          `
+              : ""
+          }
+          ${
+            tag
+              ? `
+            <span style="font-size:10px;color:var(--cinza-medio);background:var(--branco-fumaca);padding:2px 10px;border-radius:12px;">
+              <i class="fas fa-tag" style="margin-right:4px;font-size:9px;"></i>
+              ${tag}
+            </span>
+          `
+              : ""
+          }
+        </div>
+
+        <!-- Autor -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--cinza-claro);">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--gradiente-principal);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;">
+              ${autorNome.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <span style="font-size:12px;font-weight:600;color:var(--cinza-escuro);">${autorNome}</span>
+              ${isSupervisorAutor ? `<span style="font-size:8px;font-weight:700;color:var(--azul-bandeira);background:var(--azul-muito-claro);padding:1px 8px;border-radius:10px;margin-left:4px;">SUPERVISOR</span>` : ""}
+            </div>
+          </div>
+          ${
+            isSupervisor
+              ? `
+            <div style="display:flex;gap:4px;">
+              <button onclick="event.stopPropagation(); window._muralEditar('${aviso.id}')" 
+                style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:none;cursor:pointer;">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button onclick="event.stopPropagation(); window._muralDeletar('${aviso.id}')" 
+                style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--erro-claro);color:var(--erro);border:none;cursor:pointer;">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          `
+              : `
+            <button onclick="event.stopPropagation(); window._muralCompartilhar('${aviso.id}')" 
+              style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:none;cursor:pointer;">
+              <i class="fas fa-share-alt"></i>
+            </button>
+          `
+          }
+        </div>
+
+        <!-- Reações -->
+        <div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 0 0 0;margin-top:6px;border-top:1px solid var(--cinza-claro);">
+          ${Object.entries(REACOES_EMOJIS)
+            .map(([key, emoji]) => {
+              const count = reacoesCount[key] || 0;
+              const isUserReacted = reacaoUsuario?.tipo === key;
+              return `
+              <button onclick="event.stopPropagation(); window._muralReagir('${aviso.id}', '${key}')" 
+                class="reacao-btn-mural ${isUserReacted ? "ativo" : ""}" 
+                style="background:${isUserReacted ? "var(--azul-muito-claro)" : "var(--branco-fumaca)"};border:2px solid ${isUserReacted ? "var(--azul-bandeira)" : "transparent"};border-radius:30px;padding:2px 8px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;transition:all 0.2s ease;min-height:28px;">
+                ${emoji}
+                <span class="count" style="font-size:10px;font-weight:600;color:${isUserReacted ? "var(--azul-bandeira)" : "var(--cinza-medio)"};">${count}</span>
+              </button>
+            `;
+            })
+            .join("")}
+          <span style="font-size:10px;color:var(--cinza-medio);display:flex;align-items:center;margin-left:auto;">
+            ${totalReacoes > 0 ? `${totalReacoes} reações` : ""}
+          </span>
+        </div>
+
+        <!-- Comentários -->
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cinza-claro);">
+          ${
+            ultimosComentarios.length > 0
+              ? `
+            <div style="margin-bottom:4px;">
+              ${ultimosComentarios
+                .map(
+                  (c) => `
+                <div style="display:flex;gap:6px;padding:3px 0;font-size:12px;">
+                  <span style="font-weight:600;color:var(--azul-bandeira);font-size:11px;">${c.usuarios?.nome_completo || "Usuário"}:</span>
+                  <span style="color:var(--cinza-escuro);word-break:break-word;">${c.comentario}</span>
+                </div>
+              `,
+                )
+                .join("")}
+            </div>
+          `
+              : ""
+          }
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <div style="flex:1;min-width:100px;position:relative;">
+              <input type="text" id="comentarioInput-${aviso.id}" 
+                placeholder="Escreva um comentário..." 
+                style="width:100%;padding:4px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco-fumaca);min-height:28px;"
+                onkeydown="if(event.key==='Enter') window._muralComentar('${aviso.id}')">
+            </div>
+            <button onclick="window._muralComentar('${aviso.id}')" class="btn-primary" 
+              style="padding:4px 10px;font-size:11px;min-height:28px;width:auto;border-radius:8px;">
+              <i class="fas fa-paper-plane"></i>
+            </button>
+            ${
+              totalComentarios > 2
+                ? `
+              <button onclick="window._muralVerComentarios('${aviso.id}')" 
+                style="background:none;border:none;color:var(--azul-bandeira);font-size:10px;font-weight:600;cursor:pointer;padding:2px 6px;">
+                Ver todos (${totalComentarios})
+              </button>
+            `
+                : totalComentarios > 0 && totalComentarios <= 2
+                  ? `
+              <span style="font-size:10px;color:var(--cinza-medio);">
+                ${totalComentarios} comentário(s)
+              </span>
+            `
+                  : ""
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// RENDERIZAÇÃO: PAGINAÇÃO
+// ============================================
+
+function renderPaginacao(atual, total) {
+  let html = `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;flex-wrap:wrap;gap:6px;">
+      <div style="font-size:12px;color:var(--cinza-medio);">
+        <i class="fas fa-list"></i> Página ${atual} de ${total}
+      </div>
+      <div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;">
+  `;
+
+  html += `
+    <button onclick="window._muralPagina(1)" ${atual <= 1 ? "disabled" : ""}
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
+      <i class="fas fa-angle-double-left"></i>
+    </button>
+  `;
+
+  html += `
+    <button onclick="window._muralPagina(${atual - 1})" ${atual <= 1 ? "disabled" : ""}
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
+      <i class="fas fa-angle-left"></i>
+    </button>
+  `;
+
+  const maxVisible = 5;
+  let inicio = Math.max(1, atual - Math.floor(maxVisible / 2));
+  let fim = Math.min(total, inicio + maxVisible - 1);
+
+  if (fim - inicio < maxVisible - 1) {
+    inicio = Math.max(1, fim - maxVisible + 1);
+  }
+
+  if (inicio > 1) {
+    html += `<button onclick="window._muralPagina(1)" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;">1</button>`;
+    if (inicio > 2) {
+      html += `<span style="padding:0 2px;color:var(--cinza-medio);font-size:12px;">…</span>`;
+    }
+  }
+
+  for (let i = inicio; i <= fim; i++) {
+    html += `
+      <button onclick="window._muralPagina(${i})" 
+        style="padding:4px 8px;border:1px solid ${i === atual ? "var(--azul-bandeira)" : "var(--cinza-claro)"};border-radius:6px;background:${i === atual ? "var(--azul-bandeira)" : "var(--branco)"};color:${i === atual ? "var(--branco)" : "var(--cinza-escuro)"};font-size:12px;cursor:pointer;min-height:30px;min-width:30px;font-weight:${i === atual ? "700" : "400"};">
+        ${i}
+      </button>
     `;
   }
 
-  // Injetar estilos do carrossel se ainda não existir
-  injetarEstilosCarrossel();
+  if (fim < total) {
+    if (fim < total - 1) {
+      html += `<span style="padding:0 2px;color:var(--cinza-medio);font-size:12px;">…</span>`;
+    }
+    html += `<button onclick="window._muralPagina(${total})" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;">${total}</button>`;
+  }
 
-  return avisos
-    .map((aviso) => renderAvisoItem(aviso, isSupervisor, appInstance))
-    .join("");
+  html += `
+    <button onclick="window._muralPagina(${atual + 1})" ${atual >= total ? "disabled" : ""}
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
+      <i class="fas fa-angle-right"></i>
+    </button>
+  `;
+
+  html += `
+    <button onclick="window._muralPagina(${total})" ${atual >= total ? "disabled" : ""}
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
+      <i class="fas fa-angle-double-right"></i>
+    </button>
+  `;
+
+  html += `
+      </div>
+    </div>
+  `;
+
+  return html;
 }
 
-function renderAvisoItem(aviso, isSupervisor, appInstance) {
-  const temAnexos = aviso.anexos && aviso.anexos.length > 0;
-  const primeiraImagem = temAnexos ? aviso.anexos[0] : null;
-  const temMultiplas = temAnexos && aviso.anexos.length > 1;
-  const temVideo = temAnexos && aviso.anexos.some((a) => a.tipo === "video");
-  const tipoInfo = TIPOS_AVISO[aviso.tipo] || TIPOS_AVISO.noticia;
-  const conteudoLongo = aviso.conteudo && aviso.conteudo.length > 150;
+// ============================================
+// RENDERIZAÇÃO: LOADER, VAZIO, ERRO
+// ============================================
 
-  // Lazy loading: usar data-src para imagens
-  const imageSrc = primeiraImagem ? primeiraImagem.url : "";
-
+function renderLoader() {
   return `
-    <div class="mural-card" id="mural-card-${aviso.id}">
-      ${aviso.prioridade ? `<div class="urgent-badge">🚨 Urgente</div>` : ""}
-      <div class="card-header">
-        <span class="card-badge ${tipoInfo.badge}">
-          ${tipoInfo.icon} ${tipoInfo.label}
-        </span>
-        <span class="card-date">
-          <i class="fas fa-clock"></i>
-          ${formatarDataHoraLocal(aviso.criado_em)}
-        </span>
-      </div>
+    <div class="container" style="text-align:center;padding:40px 20px;">
+      <div class="spinner-azul" style="margin:0 auto;"></div>
+      <p style="margin-top:12px;color:var(--cinza-medio);">Carregando avisos...</p>
+    </div>
+  `;
+}
 
-      ${
-        temAnexos
-          ? `
-        <div class="card-image-wrapper" onclick="window._muralAbrirCarrossel('${aviso.id}')" style="cursor:pointer;position:relative;">
-          <img data-src="${imageSrc}" alt="${aviso.titulo}" loading="lazy" style="width:100%;height:100%;object-fit:cover;background:var(--cinza-claro);">
-          ${temMultiplas ? `<span class="media-count">+${aviso.anexos.length - 1}</span>` : ""}
-          ${temVideo ? `<span class="media-play"><i class="fas fa-play"></i></span>` : ""}
-        </div>
-      `
-          : `
-        <div class="card-image-placeholder">
-          <i class="fas ${tipoInfo.icon === "📢" ? "fa-bullhorn" : tipoInfo.icon === "🔍" ? "fa-search" : tipoInfo.icon === "🆘" ? "fa-life-ring" : "fa-clipboard-list"}" style="font-size:48px;opacity:0.3;"></i>
-        </div>
-      `
-      }
-
-      <div class="card-content-wrapper">
-        <h3 class="card-title">${aviso.titulo}</h3>
-        <p class="card-content" id="conteudo_${aviso.id}">${aviso.conteudo}</p>
-        ${
-          conteudoLongo
-            ? `
-          <button class="btn-ver-mais" onclick="window._muralExpandir('${aviso.id}')">
-            <span id="expandBtn_${aviso.id}">Ver mais</span> 
-            <i class="fas fa-chevron-down" id="expandIcon_${aviso.id}"></i>
-          </button>
-        `
-            : ""
-        }
-      </div>
-
-      <!-- Reações -->
-      <div class="reacoes">
-        ${Object.entries(REACOES_EMOJIS)
-          .map(([key, emoji]) => {
-            const count = aviso.reacoes.filter((r) => r.tipo === key).length;
-            const isUserReacted = aviso.reacao_usuario?.tipo === key;
-            return `
-            <button onclick="window._muralReagir('${aviso.id}', '${key}')" 
-              class="reacao-btn ${isUserReacted ? "ativo" : ""}">
-              ${emoji}
-              <span class="count">${count}</span>
-            </button>
-          `;
-          })
-          .join("")}
-      </div>
-
-      <!-- Comentários -->
-      <div class="comentarios">
-        <div style="display:flex;gap:8px;margin-bottom:8px;">
-          <input type="text" id="comentarioInput_${aviso.id}" 
-            placeholder="Escreva um comentário..." 
-            style="flex:1;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:12px;background:var(--branco-fumaca);min-height:44px;"
-            onkeydown="if(event.key==='Enter') window._muralComentar('${aviso.id}')">
-          <button onclick="window._muralComentar('${aviso.id}')" class="btn-primary" style="padding:4px 14px;font-size:12px;min-height:auto;width:auto;border-radius:12px;">
-            <i class="fas fa-paper-plane"></i>
-          </button>
-        </div>
-
-        ${aviso.comentarios
-          .slice(0, 3)
-          .map(
-            (c) => `
-          <div class="comentario-item">
-            <div class="comentario-avatar">${c.usuarios?.nome_completo?.charAt(0)?.toUpperCase() || "U"}</div>
-            <div class="comentario-body">
-              <div>
-                <span class="comentario-nome">${c.usuarios?.nome_completo || "Usuário"}</span>
-                <span class="comentario-data">${formatarHora(c.criado_em)}</span>
-              </div>
-              <div class="comentario-texto">${c.comentario}</div>
-            </div>
+function renderLoaderCards() {
+  let html = "";
+  for (let i = 0; i < 3; i++) {
+    html += `
+      <div style="background:var(--branco);border-radius:var(--border-radius);overflow:hidden;margin-bottom:14px;box-shadow:var(--sombra-suave);opacity:0.6;">
+        <div style="width:100%;height:160px;background:var(--cinza-claro);"></div>
+        <div style="padding:12px;">
+          <div style="background:var(--cinza-claro);height:14px;width:40%;border-radius:4px;margin-bottom:6px;"></div>
+          <div style="background:var(--cinza-claro);height:18px;width:70%;border-radius:4px;margin-bottom:6px;"></div>
+          <div style="background:var(--cinza-claro);height:12px;width:90%;border-radius:4px;margin-bottom:4px;"></div>
+          <div style="background:var(--cinza-claro);height:12px;width:80%;border-radius:4px;margin-bottom:6px;"></div>
+          <div style="display:flex;gap:4px;">
+            ${[1, 2, 3, 4].map(() => `<div style="background:var(--cinza-claro);height:28px;width:40px;border-radius:20px;"></div>`).join("")}
           </div>
-        `,
-          )
-          .join("")}
-
-        ${
-          aviso.comentarios.length > 3
-            ? `
-          <div style="text-align:center;padding:4px 0;">
-            <button onclick="window._muralVerComentarios('${aviso.id}')" 
-              class="btn-secondary" style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;">
-              Ver todos (${aviso.comentarios.length})
-            </button>
-          </div>
-        `
-            : ""
-        }
-      </div>
-
-      <!-- Ações (apenas supervisor) -->
-      ${
-        isSupervisor
-          ? `
-        <div style="padding:0 16px 12px 16px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button onclick="window._muralEditar('${aviso.id}')" 
-            class="btn-secondary" style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
-            <i class="fas fa-edit"></i> Editar
-          </button>
-          <button onclick="window._muralDeletar('${aviso.id}')" 
-            style="padding:4px 14px;font-size:11px;min-height:auto;width:auto;border-radius:12px;background:var(--erro-claro);color:var(--erro);border:none;cursor:pointer;">
-            <i class="fas fa-trash"></i> Excluir
-          </button>
         </div>
-      `
-          : ""
+      </div>
+    `;
+  }
+  return html;
+}
+
+function renderVazio(temFiltros, isSupervisor) {
+  return `
+    <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+      <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+        <i class="fas fa-bullhorn"></i>
+      </div>
+      <p style="font-weight:500;font-size:15px;">Nenhum aviso encontrado</p>
+      ${
+        temFiltros
+          ? `<p style="font-size:13px;">Tente ajustar os filtros aplicados</p>
+             <button onclick="window._muralLimparFiltros()" class="btn-secondary" style="margin-top:10px;padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+               <i class="fas fa-undo" style="margin-right:4px;"></i> Limpar Filtros
+             </button>`
+          : isSupervisor
+            ? `<p style="font-size:13px;">Clique em "Novo" para criar seu primeiro aviso</p>
+             <button onclick="window._muralNovoAviso()" class="btn-primary" style="margin-top:10px;padding:6px 16px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">
+               <i class="fas fa-plus" style="margin-right:4px;"></i> Novo Aviso
+             </button>`
+            : `<p style="font-size:13px;">Nenhum aviso publicado ainda.</p>`
       }
+    </div>
+  `;
+}
+
+function renderErro(error, appInstance) {
+  return `
+    <div class="container" style="text-align:center;padding:40px 20px;">
+      <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+        <i class="fas fa-exclamation-triangle"></i>
+      </div>
+      <h3>Erro ao carregar avisos</h3>
+      <p style="color:var(--cinza-medio);">${error.message}</p>
+      <button onclick="window._muralRecarregar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
+        Tentar novamente
+      </button>
     </div>
   `;
 }
@@ -952,9 +921,8 @@ function renderAvisoItem(aviso, isSupervisor, appInstance) {
 // FILTROS
 // ============================================
 
-export function aplicarFiltrosMural(container, appInstance) {
+export function aplicarFiltros(container, appInstance) {
   const busca = document.getElementById("muralBusca")?.value || "";
-  const tipo = document.getElementById("muralFiltroTipo")?.value || "todos";
   const dataInicio = document.getElementById("muralDataInicio")?.value || "";
   const dataFim = document.getElementById("muralDataFim")?.value || "";
 
@@ -968,58 +936,70 @@ export function aplicarFiltrosMural(container, appInstance) {
     return;
   }
 
-  estado.filtros = { busca, tipo, dataInicio, dataFim };
-  estado.page = 0;
-  estado.hasMoreItems = true;
-  carregarAvisosMural(container, appInstance);
+  estado.filtros = {
+    ...estado.filtros,
+    busca,
+    dataInicio,
+    dataFim,
+  };
+  estado.paginaAtual = 1;
+
+  renderMural(container, appInstance);
 }
 
-export function limparFiltrosMural(container, appInstance) {
-  estado.filtros = { busca: "", tipo: "todos", dataInicio: "", dataFim: "" };
+export function limparFiltros(container, appInstance) {
+  estado.filtros = {
+    busca: "",
+    tipo: "todos",
+    dataInicio: "",
+    dataFim: "",
+  };
+  estado.paginaAtual = 1;
 
-  const buscaInput = document.getElementById("muralBusca");
-  const tipoSelect = document.getElementById("muralFiltroTipo");
-  const dataInicioInput = document.getElementById("muralDataInicio");
-  const dataFimInput = document.getElementById("muralDataFim");
+  const fields = ["muralBusca", "muralDataInicio", "muralDataFim"];
+  fields.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
 
-  if (buscaInput) buscaInput.value = "";
-  if (tipoSelect) tipoSelect.value = "todos";
-  if (dataInicioInput) dataInicioInput.value = "";
-  if (dataFimInput) dataFimInput.value = "";
-
-  estado.page = 0;
-  estado.hasMoreItems = true;
-  carregarAvisosMural(container, appInstance);
+  renderMural(container, appInstance);
 
   if (appInstance && appInstance.showToast) {
     appInstance.showToast("Filtros removidos", "info");
   }
 }
 
-// ============================================
-// EXPANDIR CONTEÚDO
-// ============================================
+export function filtrarPorCategoria(tipo, container, appInstance) {
+  estado.filtros.tipo = tipo;
+  estado.paginaAtual = 1;
+  renderMural(container, appInstance);
+}
 
-export function expandirConteudoMural(id) {
-  const conteudo = document.getElementById(`conteudo_${id}`);
-  const btn = document.getElementById(`expandBtn_${id}`);
-  const icon = document.getElementById(`expandIcon_${id}`);
-
-  if (!conteudo) return;
-
-  if (conteudo.classList.contains("expanded")) {
-    conteudo.classList.remove("expanded");
-    btn.textContent = "Ver mais";
-    icon.className = "fas fa-chevron-down";
-  } else {
-    conteudo.classList.add("expanded");
-    btn.textContent = "Ver menos";
-    icon.className = "fas fa-chevron-up";
-  }
+function toggleFiltros(container, appInstance) {
+  estado.filtrosVisiveis = !estado.filtrosVisiveis;
+  renderMural(container, appInstance);
 }
 
 // ============================================
-// REAÇÕES
+// PAGINAÇÃO
+// ============================================
+
+function irParaPagina(pagina, container, appInstance) {
+  if (
+    pagina < 1 ||
+    pagina > estado.totalPaginas ||
+    pagina === estado.paginaAtual
+  )
+    return;
+  carregarAvisosMural(pagina).then(() => {
+    const isSupervisor =
+      typeof authManager !== "undefined" && authManager.isSupervisor();
+    renderizarLista(container, appInstance, isSupervisor);
+  });
+}
+
+// ============================================
+// INTERAÇÕES - REAÇÕES
 // ============================================
 
 export async function toggleReacao(avisoId, tipo, container, appInstance) {
@@ -1048,13 +1028,7 @@ export async function toggleReacao(avisoId, tipo, container, appInstance) {
       .eq("aviso_id", avisoId)
       .eq("usuario_id", user.id);
 
-    if (checkError) {
-      console.error("Erro ao verificar reações:", checkError);
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Erro ao processar reação", "error");
-      }
-      return;
-    }
+    if (checkError) throw checkError;
 
     const reacaoExistente = reacoesExistentes?.find((r) => r.tipo === tipo);
 
@@ -1065,9 +1039,6 @@ export async function toggleReacao(avisoId, tipo, container, appInstance) {
         .eq("id", reacaoExistente.id);
 
       if (error) throw error;
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Reação removida", "info");
-      }
     } else {
       if (reacoesExistentes && reacoesExistentes.length > 0) {
         const idsParaRemover = reacoesExistentes.map((r) => r.id);
@@ -1087,15 +1058,9 @@ export async function toggleReacao(avisoId, tipo, container, appInstance) {
       });
 
       if (insertError) throw insertError;
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast(
-          `Reação ${REACOES_EMOJIS[tipo] || ""} adicionada!`,
-          "success",
-        );
-      }
     }
 
-    await carregarAvisosMural(container, appInstance);
+    await renderMural(container, appInstance);
   } catch (error) {
     console.error("Erro ao alternar reação:", error);
     if (appInstance && appInstance.showToast) {
@@ -1105,11 +1070,11 @@ export async function toggleReacao(avisoId, tipo, container, appInstance) {
 }
 
 // ============================================
-// COMENTÁRIOS
+// INTERAÇÕES - COMENTÁRIOS
 // ============================================
 
 export async function adicionarComentario(avisoId, container, appInstance) {
-  const input = document.getElementById(`comentarioInput_${avisoId}`);
+  const input = document.getElementById(`comentarioInput-${avisoId}`);
   if (!input) return;
 
   const comentario = input.value.trim();
@@ -1139,33 +1104,21 @@ export async function adicionarComentario(avisoId, container, appInstance) {
       return;
     }
 
-    const { data, error } = await client
-      .from("mural_comentarios")
-      .insert({
-        aviso_id: avisoId,
-        usuario_id: user.id,
-        comentario: comentario,
-        criado_em: new Date().toISOString(),
-      })
-      .select();
+    const { error } = await client.from("mural_comentarios").insert({
+      aviso_id: avisoId,
+      usuario_id: user.id,
+      comentario: comentario,
+      criado_em: new Date().toISOString(),
+    });
 
-    if (error) {
-      console.error("Erro ao adicionar comentário:", error);
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast(
-          "Erro ao adicionar comentário: " + error.message,
-          "error",
-        );
-      }
-      return;
-    }
+    if (error) throw error;
 
     input.value = "";
     if (appInstance && appInstance.showToast) {
       appInstance.showToast("Comentário adicionado!", "success");
     }
 
-    await carregarAvisosMural(container, appInstance);
+    await renderMural(container, appInstance);
   } catch (error) {
     console.error("Erro ao adicionar comentário:", error);
     if (appInstance && appInstance.showToast) {
@@ -1187,7 +1140,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
 
     const { data: comentarios, error } = await client
       .from("mural_comentarios")
-      .select("*, usuarios(nome_completo)")
+      .select("*, usuarios(nome_completo, perfil)")
       .eq("aviso_id", avisoId)
       .order("criado_em", { ascending: true });
 
@@ -1201,7 +1154,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.6);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       z-index: 999;
@@ -1213,41 +1166,46 @@ export async function verTodosComentarios(avisoId, appInstance) {
     `;
 
     overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;width:100%;">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);">
-          <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-comments" style="margin-right:8px;"></i>
-            Todos os Comentários
+      <div class="modal" style="max-width:480px;width:100%;max-height:80vh;overflow-y:auto;background:var(--branco);border-radius:16px;box-shadow:var(--sombra-forte);">
+        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px 8px 14px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:16px 16px 0 0;z-index:1;">
+          <div class="title" style="font-size:15px;font-weight:700;color:var(--azul-bandeira);">
+            <i class="fas fa-comments" style="margin-right:6px;"></i>
+            Comentários (${comentarios?.length || 0})
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+            style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
             <i class="fas fa-times"></i>
           </button>
         </div>
-        <div class="modal-body" style="padding:14px 16px 4px 16px;max-height:60vh;overflow-y:auto;">
+        <div class="modal-body" style="padding:12px 14px;">
           ${
-            comentarios.length === 0
-              ? `
-            <p style="text-align:center;color:var(--cinza-medio);padding:20px;">Nenhum comentário ainda</p>
-          `
-              : `
-            ${comentarios
+            (comentarios || [])
               .map(
                 (c) => `
-              <div style="padding:8px 0;border-bottom:1px solid var(--cinza-claro);">
-                <div style="display:flex;justify-content:space-between;">
-                  <strong style="color:var(--azul-bandeira);font-size:13px;">${c.usuarios?.nome_completo || "Usuário"}</strong>
-                  <span style="color:var(--cinza-medio);font-size:10px;">${formatarDataHoraLocal(c.criado_em)}</span>
-                </div>
-                <div style="font-size:13px;margin-top:4px;">${c.comentario}</div>
+            <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);">
+              <div style="width:28px;height:28px;border-radius:50%;background:var(--gradiente-principal);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;">
+                ${c.usuarios?.nome_completo?.charAt(0)?.toUpperCase() || "U"}
               </div>
-            `,
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px;">
+                  <span style="font-weight:600;font-size:12px;color:var(--azul-bandeira);">
+                    ${c.usuarios?.nome_completo || "Usuário"}
+                    ${c.usuarios?.perfil === "supervisor" ? `<span style="font-size:8px;font-weight:700;color:var(--azul-bandeira);background:var(--azul-muito-claro);padding:1px 8px;border-radius:10px;margin-left:4px;">SUPER</span>` : ""}
+                  </span>
+                  <span style="font-size:10px;color:var(--cinza-medio);">${formatarDataHoraLocal(c.criado_em)}</span>
+                </div>
+                <div style="font-size:13px;color:var(--cinza-escuro);word-break:break-word;margin-top:2px;">${c.comentario}</div>
+              </div>
+            </div>
+          `,
               )
-              .join("")}
-          `
+              .join("") ||
+            `<p style="text-align:center;color:var(--cinza-medio);padding:20px;">Nenhum comentário ainda</p>`
           }
         </div>
-        <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
+        <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);">
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+            style="width:100%;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Fechar
           </button>
         </div>
@@ -1264,760 +1222,116 @@ export async function verTodosComentarios(avisoId, appInstance) {
 }
 
 // ============================================
-// FORMULÁRIO DE NOVO AVISO
+// INTERAÇÕES - VER MAIS CONTEÚDO
 // ============================================
 
-export function abrirFormularioMural(container, appInstance) {
-  const isSupervisor =
-    typeof authManager !== "undefined" && authManager.isSupervisor();
-  if (!isSupervisor) {
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast(
-        "Apenas supervisores podem criar avisos",
-        "warning",
-      );
-    }
-    return;
-  }
+export function verMaisConteudo(id, appInstance) {
+  const aviso = estado.avisos.find((a) => a.id === id);
+  if (!aviso) return;
 
-  window._muralArquivosTemp = [];
+  const conteudoEl = document.getElementById(`conteudo-${id}`);
+  const btnEl = document.getElementById(`verMaisBtn-${id}`);
 
-  container.innerHTML = `
-    <div class="container" style="padding-bottom:100px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-          <i class="fas fa-plus-circle" style="margin-right:8px;"></i>
-          Novo Aviso no Mural
-        </h2>
-        <button onclick="window._muralVoltar()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-          <i class="fas fa-arrow-left"></i> Voltar
-        </button>
-      </div>
+  if (!conteudoEl || !btnEl) return;
 
-      <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
-        <form id="formNovoAviso" onsubmit="event.preventDefault();">
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-              Título do Aviso <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <input type="text" id="muralTitulo" placeholder="Ex: Atenção: Veículo Suspeito" 
-              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:44px;">
-          </div>
+  const isExpanded = conteudoEl.dataset.expanded === "true";
 
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-              Tipo de Aviso <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:44px;">
-              <option value="noticia">📢 Notícia</option>
-              <option value="procurado">🔍 Procurado</option>
-              <option value="desaparecido">🆘 Desaparecido</option>
-              <option value="ordem_servico">📋 Ordem de Serviço</option>
-            </select>
-          </div>
-
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-              Conteúdo/Descrição <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..." 
-              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;resize:vertical;"></textarea>
-          </div>
-
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-              <i class="fas fa-camera"></i> Fotos (máx 3)
-            </label>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" 
-                onchange="window._muralPreviewImagens(this)">
-              <button type="button" onclick="document.getElementById('muralArquivo').click()" 
-                class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:12px;min-height:44px;">
-                <i class="fas fa-camera"></i> Selecionar Fotos (máx 3)
-              </button>
-              <div id="muralPreviewArea" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Máximo 3 imagens. Cada imagem será comprimida para até 1MB.
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="muralPrioridade" style="width:18px;height:18px;accent-color:var(--erro);">
-            <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
-          </div>
-
-          <div style="display:flex;gap:8px;margin-top:20px;">
-            <button type="button" onclick="window._muralSalvar()" class="btn-primary" style="flex:2;border-radius:12px;min-height:48px;">
-              <i class="fas fa-paper-plane"></i> Publicar no Mural
-            </button>
-            <button type="button" onclick="window._muralVoltar()" class="btn-secondary" style="flex:1;border-radius:12px;min-height:48px;">
-              Cancelar
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-
-  window._muralVoltar = () => renderMural(container, appInstance);
-  window._muralSalvar = () => salvarAvisoMural(container, appInstance);
-  window._muralPreviewImagens = (input) => previewMultiplasImagensMural(input);
-  window._muralRemoverImagem = (btn) => removerImagemMuralPreview(btn);
-
-  window._muralArquivosTemp = [];
-}
-
-// ============================================
-// PREVIEW DE IMAGENS (MURAL)
-// ============================================
-
-export function previewMultiplasImagensMural(input) {
-  const area = document.getElementById("muralPreviewArea");
-  if (!area) return;
-
-  const files = input.files;
-  if (files.length > 3) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Máximo 3 imagens permitidas", "warning");
-    } else {
-      showToast("Máximo 3 imagens permitidas", "warning");
-    }
-    input.value = "";
-    return;
-  }
-
-  area.innerHTML = "";
-  const imagensData = [];
-
-  for (const file of files) {
-    if (file.size > 10 * 1024 * 1024) {
-      if (typeof window.app !== "undefined" && window.app.showToast) {
-        window.app.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
-      } else {
-        showToast(`Arquivo ${file.name} excede 10MB`, "warning");
-      }
-      continue;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const div = document.createElement("div");
-      div.style.cssText =
-        "position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
-      div.innerHTML = `
-        <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
-        <button type="button" onclick="window._muralRemoverImagem(this)" 
-          style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
-          <i class="fas fa-times"></i>
-        </button>
-      `;
-      area.appendChild(div);
-      imagensData.push(file);
-    };
-    reader.readAsDataURL(file);
-  }
-
-  window._muralArquivosTemp = imagensData;
-}
-
-export function removerImagemMuralPreview(btn) {
-  const div = btn.closest("div");
-  div.remove();
-
-  const files = window._muralArquivosTemp || [];
-  const img = div.querySelector("img");
-  if (img) {
-    const index = files.findIndex(
-      (f) => f.name === img.alt || f.name === img.src.split("/").pop(),
-    );
-    if (index > -1) {
-      files.splice(index, 1);
-      window._muralArquivosTemp = files;
-    }
+  if (isExpanded) {
+    // Colapsar
+    const preview = aviso.conteudo.substring(0, 150) + "...";
+    conteudoEl.textContent = preview;
+    btnEl.textContent = "Ver mais";
+    conteudoEl.dataset.expanded = "false";
+  } else {
+    // Expandir
+    conteudoEl.textContent = aviso.conteudo;
+    btnEl.textContent = "Ver menos";
+    conteudoEl.dataset.expanded = "true";
   }
 }
 
 // ============================================
-// SALVAR AVISO
+// INTERAÇÕES - COMPARTILHAR
 // ============================================
 
-export async function salvarAvisoMural(container, appInstance) {
-  const user =
-    typeof authManager !== "undefined" ? authManager.getUser() : null;
-  if (!user) {
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Usuário não autenticado", "error");
-    }
-    return;
-  }
+export function compartilharAviso(id, appInstance) {
+  const aviso = estado.avisos.find((a) => a.id === id);
+  if (!aviso) return;
 
-  const titulo = document.getElementById("muralTitulo")?.value?.trim();
-  const conteudo = document.getElementById("muralConteudo")?.value?.trim();
-  const prioridade =
-    document.getElementById("muralPrioridade")?.checked || false;
-  const tipo = document.getElementById("muralTipo")?.value || "noticia";
+  const texto = `📢 ${aviso.titulo}\n\n${aviso.conteudo.substring(0, 200)}...\n\n📌 Guarda Municipal de Pitangueiras - PR`;
 
-  if (!titulo || !conteudo) {
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Título e conteúdo são obrigatórios", "warning");
-    }
-    return;
-  }
-
-  const files = window._muralArquivosTemp || [];
-  if (files.length > 3) {
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Máximo 3 imagens permitidas", "warning");
-    }
-    return;
-  }
-
-  if (appInstance && appInstance.showToast) {
-    appInstance.showToast("Processando...", "info");
-  }
-
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Erro ao conectar", "error");
-      }
-      return;
-    }
-
-    let anexosUrls = [];
-    if (files.length > 0) {
-      const anexosProcessados = await processarAnexosMural(files);
-      anexosUrls = await uploadAnexosMural(anexosProcessados);
-    }
-
-    const dados = {
-      titulo,
-      tipo,
-      conteudo,
-      prioridade,
-      criado_por: user.id,
-      criado_em: new Date().toISOString(),
-      anexos: anexosUrls,
-    };
-
-    const { data: aviso, error } = await client
-      .from("mural_avisos")
-      .insert([dados])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    window._muralArquivosTemp = [];
-    const previewArea = document.getElementById("muralPreviewArea");
-    if (previewArea) previewArea.innerHTML = "";
-    const fileInput = document.getElementById("muralArquivo");
-    if (fileInput) fileInput.value = "";
-
-    await notificarNovoAviso(aviso);
-
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Aviso publicado com sucesso!", "success");
-    }
-
-    await renderMural(container, appInstance);
-  } catch (error) {
-    console.error("Erro ao salvar aviso:", error);
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Erro ao publicar: " + error.message, "error");
-    }
-  }
-}
-
-// ============================================
-// ANEXOS - PROCESSAMENTO E UPLOAD
-// ============================================
-
-async function processarAnexosMural(files) {
-  const maxFiles = 3;
-  const maxSize = 1 * 1024 * 1024;
-  const anexos = [];
-  const filesToProcess = Array.from(files).slice(0, maxFiles);
-
-  for (const file of filesToProcess) {
-    try {
-      let fileProcessado = await comprimirImagem(file, 800, 0.8);
-
-      if (fileProcessado.size > maxSize) {
-        fileProcessado = await comprimirImagem(file, 600, 0.6);
-        if (fileProcessado.size > maxSize) {
-          if (typeof window.app !== "undefined" && window.app.showToast) {
-            window.app.showToast(`Arquivo ${file.name} excede 1MB`, "warning");
-          } else {
-            showToast(`Arquivo ${file.name} excede 1MB`, "warning");
-          }
-          continue;
-        }
-      }
-
-      anexos.push({
-        nome: file.name,
-        tipo: "image",
-        tamanho: fileProcessado.size,
-        arquivo: fileProcessado,
-        url: null,
+  if (navigator.share) {
+    navigator
+      .share({
+        title: aviso.titulo,
+        text: texto,
+      })
+      .catch(() => {
+        copiarTexto(texto, appInstance);
       });
-    } catch (error) {
-      console.error("Erro ao processar anexo:", error);
-    }
-  }
-
-  return anexos;
-}
-
-async function uploadAnexosMural(anexos) {
-  if (!anexos || anexos.length === 0) return [];
-
-  const client =
-    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-  if (!client) return [];
-
-  const timestamp = Date.now();
-  const resultados = [];
-
-  for (const anexo of anexos) {
-    try {
-      const fileExt = anexo.arquivo.name.split(".").pop();
-      const fileName = `mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-
-      const { error: uploadError } = await client.storage
-        .from("anexos")
-        .upload(fileName, anexo.arquivo);
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = client.storage
-        .from("anexos")
-        .getPublicUrl(fileName);
-
-      resultados.push({
-        url: urlData.publicUrl,
-        nome: anexo.nome,
-        tipo: anexo.tipo,
-        tamanho: anexo.tamanho,
-      });
-    } catch (error) {
-      console.error("Erro no upload do anexo:", error);
-    }
-  }
-
-  return resultados;
-}
-
-// ============================================
-// NOTIFICAR NOVO AVISO
-// ============================================
-
-async function notificarNovoAviso(aviso) {
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    const { data: usuarios, error } = await client
-      .from("usuarios")
-      .select("id")
-      .eq("status", "ativo")
-      .neq("id", aviso.criado_por);
-
-    if (error) throw error;
-    if (usuarios.length === 0) return;
-
-    const notificacoes = usuarios.map((u) => ({
-      usuario_id: u.id,
-      titulo: `📢 Novo aviso: ${aviso.titulo}`,
-      mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
-      tipo: "sistema",
-      link: "#mural",
-      criado_em: new Date().toISOString(),
-    }));
-
-    const batchSize = 50;
-    for (let i = 0; i < notificacoes.length; i += batchSize) {
-      const batch = notificacoes.slice(i, i + batchSize);
-      const { error: insertError } = await client
-        .from("notificacoes")
-        .insert(batch);
-      if (insertError) {
-        console.warn("Erro ao inserir notificações em lote:", insertError);
-      }
-    }
-
-    console.log(
-      `✅ ${notificacoes.length} notificações enviadas para o novo aviso`,
-    );
-  } catch (error) {
-    console.error("Erro ao enviar notificações:", error);
+  } else {
+    copiarTexto(texto, appInstance);
   }
 }
 
-// ============================================
-// EDITAR AVISO
-// ============================================
-
-export async function editarAvisoMural(id, container, appInstance) {
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Erro ao conectar", "error");
-      }
-      return;
-    }
-
-    const { data: aviso, error } = await client
-      .from("mural_avisos")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error) throw error;
-
-    container.innerHTML = `
-      <div class="container" style="padding-bottom:100px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-edit" style="margin-right:8px;"></i>
-            Editar Aviso
-          </h2>
-          <button onclick="window._muralVoltar()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-            <i class="fas fa-arrow-left"></i> Voltar
-          </button>
-        </div>
-
-        <div style="background:var(--branco);padding:16px;border-radius:20px;box-shadow:var(--sombra-media);">
-          <form id="formEditarAviso" onsubmit="event.preventDefault();">
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-                Título do Aviso <span class="required" style="color:var(--erro);">*</span>
-              </label>
-              <input type="text" id="muralTitulo" value="${aviso.titulo}" 
-                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:44px;">
-            </div>
-
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-                Tipo de Aviso <span class="required" style="color:var(--erro);">*</span>
-              </label>
-              <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:44px;">
-                <option value="noticia" ${aviso.tipo === "noticia" ? "selected" : ""}>📢 Notícia</option>
-                <option value="procurado" ${aviso.tipo === "procurado" ? "selected" : ""}>🔍 Procurado</option>
-                <option value="desaparecido" ${aviso.tipo === "desaparecido" ? "selected" : ""}>🆘 Desaparecido</option>
-                <option value="ordem_servico" ${aviso.tipo === "ordem_servico" ? "selected" : ""}>📋 Ordem de Serviço</option>
-              </select>
-            </div>
-
-            <div class="form-group" style="margin-bottom:12px;">
-              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-                Conteúdo/Descrição <span class="required" style="color:var(--erro);">*</span>
-              </label>
-              <textarea id="muralConteudo" rows="4" 
-                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:100px;resize:vertical;">${aviso.conteudo}</textarea>
-            </div>
-
-            <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""} 
-                style="width:18px;height:18px;accent-color:var(--erro);">
-              <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
-            </div>
-
-            <div style="display:flex;gap:8px;margin-top:20px;">
-              <button type="button" onclick="window._muralSalvarEdicao('${id}')" class="btn-primary" style="flex:2;border-radius:12px;min-height:48px;">
-                <i class="fas fa-save"></i> Salvar Alterações
-              </button>
-              <button type="button" onclick="window._muralVoltar()" class="btn-secondary" style="flex:1;border-radius:12px;min-height:48px;">
-                Cancelar
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    `;
-
-    window._muralSalvarEdicao = async (editId) => {
-      const titulo = document.getElementById("muralTitulo")?.value?.trim();
-      const tipo = document.getElementById("muralTipo")?.value;
-      const conteudo = document.getElementById("muralConteudo")?.value?.trim();
-      const prioridade =
-        document.getElementById("muralPrioridade")?.checked || false;
-
-      if (!titulo || !conteudo) {
+function copiarTexto(texto, appInstance) {
+  if (navigator.clipboard) {
+    navigator.clipboard
+      .writeText(texto)
+      .then(() => {
         if (appInstance && appInstance.showToast) {
           appInstance.showToast(
-            "Título e conteúdo são obrigatórios",
-            "warning",
+            "Copiado para a área de transferência!",
+            "success",
           );
         }
-        return;
-      }
+      })
+      .catch(() => {
+        fallbackCopiarTexto(texto, appInstance);
+      });
+  } else {
+    fallbackCopiarTexto(texto, appInstance);
+  }
+}
 
-      try {
-        const { error } = await client
-          .from("mural_avisos")
-          .update({
-            titulo,
-            tipo,
-            conteudo,
-            prioridade,
-            atualizado_em: new Date().toISOString(),
-          })
-          .eq("id", editId);
-
-        if (error) throw error;
-
-        if (appInstance && appInstance.showToast) {
-          appInstance.showToast("Aviso atualizado com sucesso!", "success");
-        }
-
-        await renderMural(container, appInstance);
-      } catch (error) {
-        console.error("Erro ao salvar edição:", error);
-        if (appInstance && appInstance.showToast) {
-          appInstance.showToast("Erro ao salvar: " + error.message, "error");
-        }
-      }
-    };
-
-    window._muralVoltar = () => renderMural(container, appInstance);
-  } catch (error) {
-    console.error("Erro ao carregar aviso para edição:", error);
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Erro ao carregar aviso", "error");
-    }
+function fallbackCopiarTexto(texto, appInstance) {
+  const textarea = document.createElement("textarea");
+  textarea.value = texto;
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (appInstance && appInstance.showToast) {
+    appInstance.showToast("Copiado para a área de transferência!", "success");
   }
 }
 
 // ============================================
-// DELETAR AVISO
+// INTERAÇÕES - VER IMAGENS
 // ============================================
 
-export async function deletarAvisoMural(id, container, appInstance) {
-  const confirmado = await confirmarModal(
-    "Tem certeza que deseja excluir este aviso?\n\nEsta ação não pode ser desfeita.",
-    "Confirmar Exclusão",
-  );
+export function verImagensAviso(id, appInstance) {
+  const aviso = estado.avisos.find((a) => a.id === id);
+  if (!aviso) return;
 
-  if (!confirmado) return;
+  const imagens =
+    aviso.anexos?.filter(
+      (a) => a.tipo === "image" || a.tipo_arquivo === "image",
+    ) || [];
 
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Erro ao conectar", "error");
-      }
-      return;
-    }
-
-    const { error } = await client.from("mural_avisos").delete().eq("id", id);
-
-    if (error) throw error;
-
+  if (imagens.length === 0) {
     if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Aviso excluído com sucesso!", "success");
+      appInstance.showToast("Nenhuma imagem disponível", "info");
     }
-
-    await carregarAvisosMural(container, appInstance);
-  } catch (error) {
-    console.error("Erro ao excluir aviso:", error);
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Erro ao excluir aviso: " + error.message, "error");
-    }
+    return;
   }
-}
 
-// ============================================
-// CARROSSEL DE IMAGENS
-// ============================================
-
-export async function abrirCarrossel(avisoId, appInstance) {
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Erro ao conectar", "error");
-      }
-      return;
-    }
-
-    const { data: aviso, error } = await client
-      .from("mural_avisos")
-      .select("anexos")
-      .eq("id", avisoId)
-      .single();
-
-    if (error) throw error;
-
-    const anexos = aviso?.anexos || [];
-    if (anexos.length === 0) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Nenhuma imagem disponível", "info");
-      }
-      return;
-    }
-
-    const imagens = anexos.filter((a) => a.tipo === "image");
-    if (imagens.length === 0) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast("Nenhuma imagem disponível", "info");
-      }
-      return;
-    }
-
-    let indexAtual = 0;
-
-    const overlay = document.createElement("div");
-    overlay.className = "carrossel-modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.95);
-      z-index: 10000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: fadeIn 0.3s ease;
-    `;
-
-    overlay.innerHTML = `
-      <button class="carrossel-close" onclick="this.closest('.carrossel-modal-overlay').remove()"
-        style="position:absolute;top:20px;right:20px;background:rgba(255,255,255,0.2);border:none;color:white;font-size:28px;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease;z-index:10;">
-        <i class="fas fa-times"></i>
-      </button>
-      <div class="carrossel-container" style="position:relative;width:90%;max-width:800px;max-height:90vh;">
-        <div class="carrossel-slide" id="carrosselSlide" style="position:relative;width:100%;height:100%;min-height:300px;display:flex;align-items:center;justify-content:center;">
-          ${imagens
-            .map(
-              (item, i) => `
-            <div class="carrossel-item ${i === 0 ? "active" : ""}" data-index="${i}" 
-              style="display:${i === 0 ? "block" : "none"};width:100%;height:100%;max-height:80vh;text-align:center;">
-              <img src="${item.url}" alt="Imagem ${i + 1}" loading="lazy" 
-                style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:8px;">
-            </div>
-          `,
-            )
-            .join("")}
-        </div>
-
-        ${
-          imagens.length > 1
-            ? `
-          <button class="carrossel-nav carrossel-prev" onclick="window._carrosselNavegar(-1)"
-            style="position:absolute;top:50%;transform:translateY(-50%);left:10px;background:rgba(255,255,255,0.2);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease;z-index:5;">
-            <i class="fas fa-chevron-left"></i>
-          </button>
-          <button class="carrossel-nav carrossel-next" onclick="window._carrosselNavegar(1)"
-            style="position:absolute;top:50%;transform:translateY(-50%);right:10px;background:rgba(255,255,255,0.2);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s ease;z-index:5;">
-            <i class="fas fa-chevron-right"></i>
-          </button>
-          <div class="carrossel-dots" style="position:absolute;bottom:-40px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:5;">
-            ${imagens
-              .map(
-                (_, i) => `
-              <span class="carrossel-dot ${i === 0 ? "active" : ""}" onclick="window._carrosselIrPara(${i})"
-                style="width:10px;height:10px;border-radius:50%;background:${i === 0 ? "white" : "rgba(255,255,255,0.3)"};cursor:pointer;transition:background 0.2s ease;"></span>
-            `,
-              )
-              .join("")}
-          </div>
-          <div class="carrossel-counter" style="position:absolute;bottom:-40px;right:0;color:rgba(255,255,255,0.7);font-size:13px;font-weight:600;z-index:5;">
-            1 / ${imagens.length}
-          </div>
-        `
-            : ""
-        }
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    estado.carrosselData = {
-      total: imagens.length,
-      currentIndex: 0,
-      overlay: overlay,
-      imagens: imagens,
-    };
-
-    window._carrosselNavegar = (direcao) => {
-      const data = estado.carrosselData;
-      if (!data) return;
-
-      const novoIndex = data.currentIndex + direcao;
-      if (novoIndex < 0 || novoIndex >= data.total) return;
-
-      data.currentIndex = novoIndex;
-      atualizarCarrosselUI();
-    };
-
-    window._carrosselIrPara = (index) => {
-      const data = estado.carrosselData;
-      if (!data || index < 0 || index >= data.total) return;
-
-      data.currentIndex = index;
-      atualizarCarrosselUI();
-    };
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        estado.carrosselData = null;
-      }
-    });
-
-    document.addEventListener("keydown", function handler(e) {
-      if (e.key === "ArrowLeft") {
-        window._carrosselNavegar(-1);
-      } else if (e.key === "ArrowRight") {
-        window._carrosselNavegar(1);
-      } else if (e.key === "Escape") {
-        if (estado.carrosselData?.overlay) {
-          estado.carrosselData.overlay.remove();
-          estado.carrosselData = null;
-          document.removeEventListener("keydown", handler);
-        }
-      }
-    });
-  } catch (error) {
-    console.error("Erro ao abrir carrossel:", error);
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Erro ao carregar imagens", "error");
-    }
-  }
-}
-
-function atualizarCarrosselUI() {
-  const data = estado.carrosselData;
-  if (!data) return;
-
-  const slides = data.overlay.querySelectorAll(".carrossel-item");
-  slides.forEach((slide, i) => {
-    slide.style.display = i === data.currentIndex ? "block" : "none";
-    slide.classList.toggle("active", i === data.currentIndex);
-  });
-
-  const dots = data.overlay.querySelectorAll(".carrossel-dot");
-  dots.forEach((dot, i) => {
-    dot.style.background =
-      i === data.currentIndex ? "white" : "rgba(255,255,255,0.3)";
-  });
-
-  const counter = data.overlay.querySelector(".carrossel-counter");
-  if (counter) {
-    counter.textContent = `${data.currentIndex + 1} / ${data.total}`;
+  // Abrir carrossel
+  if (typeof window._consultaAbrirCarrossel === "function") {
+    window._consultaAbrirCarrossel(imagens, 0, appInstance);
+  } else {
+    // Fallback: abrir em nova aba
+    window.open(imagens[0].url, "_blank");
   }
 }
 
@@ -2128,145 +1442,369 @@ export async function marcarMuralComoLido() {
 }
 
 // ============================================
-// ESTILOS DO CARROSSEL
+// FORMULÁRIO - NOVO AVISO
 // ============================================
 
-function injetarEstilosCarrossel() {
-  if (document.getElementById("carrossel-styles")) return;
-
-  const styles = document.createElement("style");
-  styles.id = "carrossel-styles";
-  styles.textContent = `
-    .carrossel-modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.95);
-      z-index: 10000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: fadeIn 0.3s ease;
+export function abrirFormularioMural(container, appInstance) {
+  const isSupervisor =
+    typeof authManager !== "undefined" && authManager.isSupervisor();
+  if (!isSupervisor) {
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast(
+        "Apenas supervisores podem criar avisos",
+        "warning",
+      );
     }
+    return;
+  }
 
-    .carrossel-close:hover {
-      background: rgba(255,255,255,0.3);
-    }
+  window._muralArquivosTemp = [];
 
-    .carrossel-item {
-      display: none;
-      width: 100%;
-      height: 100%;
-      max-height: 80vh;
-      text-align: center;
-    }
+  container.innerHTML = `
+    <div class="container" style="padding-bottom:100px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+          <i class="fas fa-plus-circle" style="margin-right:6px;"></i>
+          Novo Aviso
+        </h2>
+        <button onclick="window._muralRecarregar()" class="btn-secondary" style="padding:4px 10px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+          <i class="fas fa-arrow-left"></i> Voltar
+        </button>
+      </div>
 
-    .carrossel-item.active {
-      display: block;
-      animation: fadeIn 0.3s ease;
-    }
+      <div style="background:var(--branco);padding:14px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
+        <form id="formNovoAviso" onsubmit="event.preventDefault();">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              Título <span class="required" style="color:var(--erro);">*</span>
+            </label>
+            <input type="text" id="muralTitulo" placeholder="Título do aviso" 
+              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+          </div>
 
-    .carrossel-item img {
-      max-width: 100%;
-      max-height: 80vh;
-      object-fit: contain;
-      border-radius: 8px;
-    }
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              Tipo <span class="required" style="color:var(--erro);">*</span>
+            </label>
+            <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+              <option value="noticia">📢 NOTÍCIA</option>
+              <option value="alerta">🔴 ALERTA</option>
+              <option value="ordem_servico">📋 ORDEM DE SERVIÇO</option>
+              <option value="informativo">ℹ️ INFORMATIVO</option>
+            </select>
+          </div>
 
-    .carrossel-item video {
-      max-width: 100%;
-      max-height: 80vh;
-      border-radius: 8px;
-    }
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              Localização
+            </label>
+            <input type="text" id="muralLocalizacao" placeholder="Ex: Astorga - PR, Vila Rural" 
+              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+          </div>
 
-    .carrossel-nav:hover {
-      background: rgba(255,255,255,0.3);
-    }
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              Tag
+            </label>
+            <input type="text" id="muralTag" placeholder="Ex: Veículo, Pessoa, Patrulhamento" 
+              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+          </div>
 
-    .media-count {
-      position: absolute;
-      bottom: 8px;
-      right: 8px;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 2px 10px;
-      border-radius: 12px;
-    }
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              Conteúdo <span class="required" style="color:var(--erro);">*</span>
+            </label>
+            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..." 
+              style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:80px;resize:vertical;"></textarea>
+          </div>
 
-    .media-play {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 48px;
-      height: 48px;
-      background: rgba(0,0,0,0.6);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 20px;
-    }
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+              <i class="fas fa-camera"></i> Fotos (máx 3)
+            </label>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" 
+                onchange="window._muralPreviewImagens(this)">
+              <button type="button" onclick="document.getElementById('muralArquivo').click()" 
+                class="btn-secondary" style="width:100%;font-size:12px;padding:6px;border-radius:12px;min-height:40px;">
+                <i class="fas fa-camera"></i> Selecionar Fotos
+              </button>
+              <div id="muralPreviewArea" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
+            </div>
+          </div>
 
-    @media (max-width: 480px) {
-      .carrossel-nav {
-        width: 36px;
-        height: 36px;
-        font-size: 18px;
-      }
-      .carrossel-prev {
-        left: 4px;
-      }
-      .carrossel-next {
-        right: 4px;
-      }
-      .carrossel-container {
-        width: 95%;
-      }
-      .carrossel-dots {
-        bottom: -32px;
-      }
-      .carrossel-counter {
-        bottom: -32px;
-      }
-    }
+          <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="muralPrioridade" style="width:18px;height:18px;accent-color:var(--erro);">
+            <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:16px;">
+            <button type="button" onclick="window._muralSalvarAviso()" class="btn-primary" style="flex:2;border-radius:12px;min-height:44px;">
+              <i class="fas fa-paper-plane"></i> Publicar
+            </button>
+            <button type="button" onclick="window._muralRecarregar()" class="btn-secondary" style="flex:1;border-radius:12px;min-height:44px;">
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   `;
 
-  document.head.appendChild(styles);
+  window._muralSalvarAviso = () => salvarAvisoMural(container, appInstance);
+  window._muralPreviewImagens = (input) => previewMultiplasImagensMural(input);
+  window._muralRemoverImagem = (btn) => removerImagemMuralPreview(btn);
+
+  window._muralArquivosTemp = [];
+}
+
+function previewMultiplasImagensMural(input) {
+  const area = document.getElementById("muralPreviewArea");
+  if (!area) return;
+
+  const files = input.files;
+  if (files.length > 3) {
+    if (typeof window.app !== "undefined" && window.app.showToast) {
+      window.app.showToast("Máximo 3 imagens permitidas", "warning");
+    }
+    input.value = "";
+    return;
+  }
+
+  area.innerHTML = "";
+  const imagensData = [];
+
+  for (const file of files) {
+    if (file.size > 10 * 1024 * 1024) {
+      if (typeof window.app !== "undefined" && window.app.showToast) {
+        window.app.showToast(`Arquivo ${file.name} excede 10MB`, "warning");
+      }
+      continue;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const div = document.createElement("div");
+      div.style.cssText =
+        "position:relative;width:70px;height:70px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
+      div.innerHTML = `
+        <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
+        <button type="button" onclick="window._muralRemoverImagem(this)" 
+          style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
+          <i class="fas fa-times"></i>
+        </button>
+      `;
+      area.appendChild(div);
+      imagensData.push(file);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  window._muralArquivosTemp = imagensData;
+}
+
+function removerImagemMuralPreview(btn) {
+  const div = btn.closest("div");
+  div.remove();
+
+  const files = window._muralArquivosTemp || [];
+  const img = div.querySelector("img");
+  if (img) {
+    const index = files.findIndex(
+      (f) => f.name === img.alt || f.name === img.src.split("/").pop(),
+    );
+    if (index > -1) {
+      files.splice(index, 1);
+      window._muralArquivosTemp = files;
+    }
+  }
 }
 
 // ============================================
-// FUNÇÕES AUXILIARES
+// SALVAR AVISO
 // ============================================
 
-function formatarDataHoraLocal(date) {
-  if (!date) return "";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+export async function salvarAvisoMural(container, appInstance) {
+  const user =
+    typeof authManager !== "undefined" ? authManager.getUser() : null;
+  if (!user) {
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Usuário não autenticado", "error");
+    }
+    return;
+  }
+
+  const titulo = document.getElementById("muralTitulo")?.value?.trim();
+  const tipo = document.getElementById("muralTipo")?.value || "noticia";
+  const conteudo = document.getElementById("muralConteudo")?.value?.trim();
+  const prioridade =
+    document.getElementById("muralPrioridade")?.checked || false;
+  const localizacao =
+    document.getElementById("muralLocalizacao")?.value?.trim() || "";
+  const tag = document.getElementById("muralTag")?.value?.trim() || "";
+
+  if (!titulo || !conteudo) {
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Título e conteúdo são obrigatórios", "warning");
+    }
+    return;
+  }
+
+  const files = window._muralArquivosTemp || [];
+  if (files.length > 3) {
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Máximo 3 imagens permitidas", "warning");
+    }
+    return;
+  }
+
+  if (appInstance && appInstance.showToast) {
+    appInstance.showToast("Publicando aviso...", "info");
+  }
+
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      if (appInstance && appInstance.showToast) {
+        appInstance.showToast("Erro ao conectar", "error");
+      }
+      return;
+    }
+
+    let anexosUrls = [];
+    if (files.length > 0) {
+      const anexosProcessados = await processarAnexosMural(files);
+      anexosUrls = await uploadAnexosMural(anexosProcessados);
+    }
+
+    const dados = {
+      titulo,
+      tipo,
+      conteudo,
+      prioridade,
+      criado_por: user.id,
+      criado_em: new Date().toISOString(),
+      anexos: anexosUrls,
+      localizacao: localizacao,
+      tag: tag,
+    };
+
+    const { data: aviso, error } = await client
+      .from("mural_avisos")
+      .insert([dados])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    window._muralArquivosTemp = [];
+    const previewArea = document.getElementById("muralPreviewArea");
+    if (previewArea) previewArea.innerHTML = "";
+    const fileInput = document.getElementById("muralArquivo");
+    if (fileInput) fileInput.value = "";
+
+    await notificarNovoAviso(aviso);
+
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Aviso publicado com sucesso!", "success");
+    }
+
+    await renderMural(container, appInstance);
+  } catch (error) {
+    console.error("Erro ao salvar aviso:", error);
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Erro ao publicar: " + error.message, "error");
+    }
+  }
 }
 
-function formatarHora(date) {
-  if (!date) return "";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+async function processarAnexosMural(files) {
+  const maxFiles = 3;
+  const maxSize = 1 * 1024 * 1024;
+  const anexos = [];
+  const filesToProcess = Array.from(files).slice(0, maxFiles);
+
+  for (const file of filesToProcess) {
+    try {
+      let fileProcessado = await comprimirImagem(file, 800, 0.8);
+
+      if (fileProcessado.size > maxSize) {
+        fileProcessado = await comprimirImagem(file, 600, 0.6);
+        if (fileProcessado.size > maxSize) {
+          if (typeof window.app !== "undefined" && window.app.showToast) {
+            window.app.showToast(`Arquivo ${file.name} excede 1MB`, "warning");
+          }
+          continue;
+        }
+      }
+
+      anexos.push({
+        nome: file.name,
+        tipo: "image",
+        tamanho: fileProcessado.size,
+        arquivo: fileProcessado,
+        url: null,
+      });
+    } catch (error) {
+      console.error("Erro ao processar anexo:", error);
+    }
+  }
+
+  return anexos;
+}
+
+async function uploadAnexosMural(anexos) {
+  if (!anexos || anexos.length === 0) return [];
+
+  const client =
+    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) return [];
+
+  const timestamp = Date.now();
+  const resultados = [];
+
+  for (const anexo of anexos) {
+    try {
+      const fileExt = anexo.arquivo.name.split(".").pop();
+      const fileName = `mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+
+      const { error: uploadError } = await client.storage
+        .from("anexos")
+        .upload(fileName, anexo.arquivo);
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = client.storage
+        .from("anexos")
+        .getPublicUrl(fileName);
+
+      const thumbFileName = `mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}_thumb.${fileExt}`;
+      const { error: thumbError } = await client.storage
+        .from("anexos")
+        .upload(thumbFileName, anexo.arquivo);
+
+      let thumbUrl = urlData.publicUrl;
+      if (!thumbError) {
+        const { data: thumbData } = client.storage
+          .from("anexos")
+          .getPublicUrl(thumbFileName);
+        thumbUrl = thumbData.publicUrl;
+      }
+
+      resultados.push({
+        url: urlData.publicUrl,
+        url_thumb: thumbUrl,
+        nome: anexo.nome,
+        tipo: anexo.tipo,
+        tamanho: anexo.tamanho,
+      });
+    } catch (error) {
+      console.error("Erro no upload do anexo:", error);
+    }
+  }
+
+  return resultados;
 }
 
 function comprimirImagem(file, maxWidth = 800, quality = 0.8) {
@@ -2317,6 +1855,262 @@ function comprimirImagem(file, maxWidth = 800, quality = 0.8) {
   });
 }
 
+async function notificarNovoAviso(aviso) {
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return;
+
+    const { data: usuarios, error } = await client
+      .from("usuarios")
+      .select("id")
+      .eq("status", "ativo")
+      .neq("id", aviso.criado_por);
+
+    if (error) throw error;
+    if (usuarios.length === 0) return;
+
+    const notificacoes = usuarios.map((u) => ({
+      usuario_id: u.id,
+      titulo: `📢 Novo aviso: ${aviso.titulo}`,
+      mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
+      tipo: "sistema",
+      link: "#mural",
+      criado_em: new Date().toISOString(),
+    }));
+
+    const batchSize = 50;
+    for (let i = 0; i < notificacoes.length; i += batchSize) {
+      const batch = notificacoes.slice(i, i + batchSize);
+      const { error: insertError } = await client
+        .from("notificacoes")
+        .insert(batch);
+      if (insertError) {
+        console.warn("Erro ao inserir notificações em lote:", insertError);
+      }
+    }
+
+    console.log(
+      `✅ ${notificacoes.length} notificações enviadas para o novo aviso`,
+    );
+  } catch (error) {
+    console.error("Erro ao enviar notificações:", error);
+  }
+}
+
+// ============================================
+// EDITAR AVISO
+// ============================================
+
+export async function editarAvisoMural(id, container, appInstance) {
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      if (appInstance && appInstance.showToast) {
+        appInstance.showToast("Erro ao conectar", "error");
+      }
+      return;
+    }
+
+    const { data: aviso, error } = await client
+      .from("mural_avisos")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error) throw error;
+
+    container.innerHTML = `
+      <div class="container" style="padding-bottom:100px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-edit" style="margin-right:6px;"></i>
+            Editar Aviso
+          </h2>
+          <button onclick="window._muralRecarregar()" class="btn-secondary" style="padding:4px 10px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+            <i class="fas fa-arrow-left"></i> Voltar
+          </button>
+        </div>
+
+        <div style="background:var(--branco);padding:14px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
+          <form id="formEditarAviso" onsubmit="event.preventDefault();">
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+                Título <span class="required">*</span>
+              </label>
+              <input type="text" id="muralTitulo" value="${aviso.titulo}" 
+                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+                Tipo <span class="required">*</span>
+              </label>
+              <select id="muralTipo" style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+                <option value="noticia" ${aviso.tipo === "noticia" ? "selected" : ""}>📢 NOTÍCIA</option>
+                <option value="alerta" ${aviso.tipo === "alerta" ? "selected" : ""}>🔴 ALERTA</option>
+                <option value="ordem_servico" ${aviso.tipo === "ordem_servico" ? "selected" : ""}>📋 ORDEM DE SERVIÇO</option>
+                <option value="informativo" ${aviso.tipo === "informativo" ? "selected" : ""}>ℹ️ INFORMATIVO</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+                Localização
+              </label>
+              <input type="text" id="muralLocalizacao" value="${aviso.localizacao || ""}" 
+                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+                Tag
+              </label>
+              <input type="text" id="muralTag" value="${aviso.tag || ""}" 
+                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:12px;">
+              <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
+                Conteúdo <span class="required">*</span>
+              </label>
+              <textarea id="muralConteudo" rows="4" 
+                style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:80px;resize:vertical;">${aviso.conteudo}</textarea>
+            </div>
+
+            <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""} 
+                style="width:18px;height:18px;accent-color:var(--erro);">
+              <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:16px;">
+              <button type="button" onclick="window._muralSalvarEdicao('${id}')" class="btn-primary" style="flex:2;border-radius:12px;min-height:44px;">
+                <i class="fas fa-save"></i> Salvar
+              </button>
+              <button type="button" onclick="window._muralRecarregar()" class="btn-secondary" style="flex:1;border-radius:12px;min-height:44px;">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    window._muralSalvarEdicao = async (editId) => {
+      const titulo = document.getElementById("muralTitulo")?.value?.trim();
+      const tipo = document.getElementById("muralTipo")?.value;
+      const conteudo = document.getElementById("muralConteudo")?.value?.trim();
+      const prioridade =
+        document.getElementById("muralPrioridade")?.checked || false;
+      const localizacao =
+        document.getElementById("muralLocalizacao")?.value?.trim() || "";
+      const tag = document.getElementById("muralTag")?.value?.trim() || "";
+
+      if (!titulo || !conteudo) {
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast(
+            "Título e conteúdo são obrigatórios",
+            "warning",
+          );
+        }
+        return;
+      }
+
+      try {
+        const { error } = await client
+          .from("mural_avisos")
+          .update({
+            titulo,
+            tipo,
+            conteudo,
+            prioridade,
+            localizacao: localizacao,
+            tag: tag,
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", editId);
+
+        if (error) throw error;
+
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast("Aviso atualizado com sucesso!", "success");
+        }
+
+        await renderMural(container, appInstance);
+      } catch (error) {
+        console.error("Erro ao salvar edição:", error);
+        if (appInstance && appInstance.showToast) {
+          appInstance.showToast("Erro ao salvar: " + error.message, "error");
+        }
+      }
+    };
+  } catch (error) {
+    console.error("Erro ao carregar aviso para edição:", error);
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Erro ao carregar aviso", "error");
+    }
+  }
+}
+
+// ============================================
+// DELETAR AVISO
+// ============================================
+
+export async function deletarAvisoMural(id, container, appInstance) {
+  const confirmado = await confirmarModal(
+    "Tem certeza que deseja excluir este aviso?\n\nEsta ação não pode ser desfeita.",
+    "Confirmar Exclusão",
+  );
+
+  if (!confirmado) return;
+
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      if (appInstance && appInstance.showToast) {
+        appInstance.showToast("Erro ao conectar", "error");
+      }
+      return;
+    }
+
+    const { error } = await client.from("mural_avisos").delete().eq("id", id);
+
+    if (error) throw error;
+
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Aviso excluído com sucesso!", "success");
+    }
+
+    await renderMural(container, appInstance);
+  } catch (error) {
+    console.error("Erro ao excluir aviso:", error);
+    if (appInstance && appInstance.showToast) {
+      appInstance.showToast("Erro ao excluir aviso: " + error.message, "error");
+    }
+  }
+}
+
+// ============================================
+// FUNÇÕES AUXILIARES
+// ============================================
+
+function formatarDataHoraLocal(date) {
+  if (!date) return "";
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function confirmarModal(mensagem, titulo = "Confirmar") {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -2327,7 +2121,7 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.6);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       z-index: 999;
@@ -2339,28 +2133,28 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
     `;
 
     overlay.innerHTML = `
-      <div class="modal" style="max-width:400px;width:100%;">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);">
-          <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-question-circle" style="margin-right:8px;"></i>
+      <div class="modal" style="max-width:380px;width:100%;background:var(--branco);border-radius:16px;box-shadow:var(--sombra-forte);">
+        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px 8px 14px;border-bottom:1px solid var(--cinza-claro);">
+          <div class="title" style="font-size:15px;font-weight:700;color:var(--azul-bandeira);">
+            <i class="fas fa-question-circle" style="margin-right:6px;"></i>
             ${titulo}
           </div>
           <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
-            style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+            style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
             <i class="fas fa-times"></i>
           </button>
         </div>
-        <div class="modal-body" style="padding:14px 16px 4px 16px;">
-          <p style="font-size:15px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;white-space:pre-wrap;">${mensagem}</p>
+        <div class="modal-body" style="padding:12px 14px;">
+          <p style="font-size:14px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;white-space:pre-wrap;">${mensagem}</p>
         </div>
-        <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:10px;">
+        <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:8px;">
           <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
-            style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
+            style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Cancelar
           </button>
           <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);" 
-            style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--gradiente-principal);color:var(--branco);">
-            <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
+            style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--gradiente-principal);color:var(--branco);">
+            <i class="fas fa-check" style="margin-right:4px;"></i> Confirmar
           </button>
         </div>
       </div>
@@ -2378,36 +2172,6 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
   });
 }
 
-function showToast(message, type = "info") {
-  if (typeof window.app !== "undefined" && window.app.showToast) {
-    window.app.showToast(message, type);
-    return;
-  }
-
-  const container = document.getElementById("toastContainer");
-  if (!container) {
-    console.log(`${type}: ${message}`);
-    return;
-  }
-
-  const toast = document.createElement("div");
-  toast.className = `toast ${type}`;
-  const cores = {
-    success: "var(--verde-bandeira)",
-    error: "var(--erro)",
-    warning: "var(--aviso)",
-    info: "var(--azul-bandeira)",
-  };
-  toast.style.background = cores[type] || cores.info;
-  toast.innerHTML = message;
-  container.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add("out");
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
-}
-
 // ============================================
 // EXPORTAÇÕES
 // ============================================
@@ -2415,17 +2179,19 @@ function showToast(message, type = "info") {
 export default {
   renderMural,
   carregarAvisosMural,
-  aplicarFiltrosMural,
-  limparFiltrosMural,
+  aplicarFiltros,
+  limparFiltros,
+  filtrarPorCategoria,
   abrirFormularioMural,
   salvarAvisoMural,
   editarAvisoMural,
   deletarAvisoMural,
-  expandirConteudoMural,
   toggleReacao,
   adicionarComentario,
   verTodosComentarios,
-  abrirCarrossel,
+  verMaisConteudo,
+  compartilharAviso,
+  verImagensAviso,
   atualizarBadgeMural,
   marcarMuralComoLido,
 };

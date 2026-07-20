@@ -42,13 +42,49 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/ocorrencia.js",
   BASE_PATH + "js/session.js",
   BASE_PATH + "js/app.js",
+  BASE_PATH + "js/pdf-export.js",
+  BASE_PATH + "js/modules/busca-profunda.js",
+  BASE_PATH + "js/modules/consulta.js",
+  BASE_PATH + "js/modules/dashboard.js",
+  BASE_PATH + "js/modules/detalhe-ocorrencia.js",
+  BASE_PATH + "js/modules/logs.js",
+  BASE_PATH + "js/modules/mural.js",
+  BASE_PATH + "js/modules/nova-ocorrencia.js",
+  BASE_PATH + "js/modules/ocorrencias-lista.js",
+  BASE_PATH + "js/modules/perfil.js",
+  BASE_PATH + "js/modules/relatorios.js",
+  BASE_PATH + "js/modules/retificacoes.js",
+  BASE_PATH + "js/modules/ui.js",
+  BASE_PATH + "js/modules/usuarios.js",
+  BASE_PATH + "js/modules/utils.js",
   BASE_PATH + "manifest.json",
-  BASE_PATH + "assets/icons/icon-192x192.png",
+  BASE_PATH + "assets/icons/icon-192x192.ico",
   BASE_PATH + "assets/icons/icon-512x512.png",
+  // Leaflet para offline
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+  "https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.css",
+  "https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.Default.css",
+  "https://unpkg.com/leaflet.markercluster@1.5.0/dist/leaflet.markercluster.js",
 ];
 
 // Rotas da API que devem ser cacheadas
-const API_ROUTES = ["/api/ocorrencias", "/api/usuarios", "/api/abordagens"];
+const API_ROUTES = [
+  "/api/ocorrencias",
+  "/api/usuarios",
+  "/api/abordagens",
+  "/rest/v1/ocorrencias",
+  "/rest/v1/usuarios",
+  "/rest/v1/envolvidos",
+  "/rest/v1/anexos",
+  "/rest/v1/abordagens_veiculos",
+  "/rest/v1/abordagens_pessoas",
+  "/rest/v1/mural_avisos",
+  "/rest/v1/mural_comentarios",
+  "/rest/v1/mural_reações",
+  "/rest/v1/retificacoes",
+  "/rest/v1/logs_acesso",
+];
 
 // ============================================
 // INSTALAÇÃO
@@ -115,13 +151,15 @@ self.addEventListener("activate", (event) => {
       self.clients.matchAll().then((clients) => {
         clients.forEach((client) => {
           client.postMessage({
-            type: 'SW_UPDATED',
+            type: "SW_UPDATED",
             version: CACHE_VERSION,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         });
       });
-      console.log(`✅ Service Worker ${CACHE_VERSION} ativado e controlando todos os clientes`);
+      console.log(
+        `✅ Service Worker ${CACHE_VERSION} ativado e controlando todos os clientes`,
+      );
     }),
   );
 });
@@ -137,47 +175,50 @@ self.addEventListener("message", (event) => {
   console.log("📨 Mensagem recebida no Service Worker:", event.data);
 
   // Forçar atualização do Service Worker
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    console.log('🔄 Forçando skipWaiting...');
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    console.log("🔄 Forçando skipWaiting...");
     self.skipWaiting();
     // Notificar que o SW foi atualizado
     event.waitUntil(
       self.clients.matchAll().then((clients) => {
         clients.forEach((client) => {
           client.postMessage({
-            type: 'SW_UPDATED',
+            type: "SW_UPDATED",
             version: CACHE_VERSION,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         });
-      })
+      }),
     );
   }
 
   // Verificar se há atualizações disponíveis
-  if (event.data && event.data.type === 'CHECK_FOR_UPDATE') {
-    console.log('🔍 Verificando atualizações...');
+  if (event.data && event.data.type === "CHECK_FOR_UPDATE") {
+    console.log("🔍 Verificando atualizações...");
     // Tentar atualizar o SW
     event.waitUntil(
-      self.registration.update().then(() => {
-        console.log('✅ Verificação de atualização concluída');
-        // Notificar o cliente sobre o resultado
-        if (event.ports && event.ports[0]) {
-          event.ports[0].postMessage({
-            type: 'UPDATE_CHECK_RESULT',
-            version: CACHE_VERSION,
-            hasUpdate: false
-          });
-        }
-      }).catch((error) => {
-        console.warn('⚠️ Erro ao verificar atualização:', error);
-        if (event.ports && event.ports[0]) {
-          event.ports[0].postMessage({
-            type: 'UPDATE_CHECK_RESULT',
-            error: error.message
-          });
-        }
-      })
+      self.registration
+        .update()
+        .then(() => {
+          console.log("✅ Verificação de atualização concluída");
+          // Notificar o cliente sobre o resultado
+          if (event.ports && event.ports[0]) {
+            event.ports[0].postMessage({
+              type: "UPDATE_CHECK_RESULT",
+              version: CACHE_VERSION,
+              hasUpdate: false,
+            });
+          }
+        })
+        .catch((error) => {
+          console.warn("⚠️ Erro ao verificar atualização:", error);
+          if (event.ports && event.ports[0]) {
+            event.ports[0].postMessage({
+              type: "UPDATE_CHECK_RESULT",
+              error: error.message,
+            });
+          }
+        }),
     );
   }
 
@@ -455,8 +496,8 @@ self.addEventListener("push", (event) => {
     data = {
       title: event.data ? event.data.text() : "Nova notificação",
       body: "",
-      icon: "/assets/icons/icon-192x192.png",
-      badge: "/assets/icons/icon-192x192.png",
+      icon: "/assets/icons/icon-192x192.ico",
+      badge: "/assets/icons/icon-192x192.ico",
       tag: "notification",
       requireInteraction: true,
       data: {},
@@ -465,8 +506,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body || "Você tem uma nova notificação",
-    icon: data.icon || "/assets/icons/icon-192x192.png",
-    badge: data.badge || "/assets/icons/icon-192x192.png",
+    icon: data.icon || "/assets/icons/icon-192x192.ico",
+    badge: data.badge || "/assets/icons/icon-192x192.ico",
     vibrate: [200, 100, 200],
     tag: data.tag || "notification-" + Date.now(),
     requireInteraction:
@@ -655,13 +696,13 @@ self.addEventListener("install", (event) => {
         version: CACHE_VERSION,
         cacheName: CACHE_NAME,
         installedAt: new Date().toISOString(),
-        assets: STATIC_ASSETS.length
+        assets: STATIC_ASSETS.length,
       };
       const response = new Response(JSON.stringify(versionData), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" },
       });
-      return cache.put('version.json', response);
-    })
+      return cache.put("version.json", response);
+    }),
   );
 });
 

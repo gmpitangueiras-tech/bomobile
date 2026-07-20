@@ -24,8 +24,10 @@
  * - Hash SHA-256 em imagens para integridade
  * - Auditoria de visualização (registra quem visualizou cada ocorrência)
  * - Compressão otimizada de imagens
+ * - Modo Rápido (modo_criacao) e Completar BO Rápido
+ * - Método completarRapido() para finalizar BOs Rápidos
+ * - Busca e listagem com modo_criacao
  */
-
 class OcorrenciaManager {
   constructor() {
     this.initialized = false;
@@ -93,6 +95,9 @@ class OcorrenciaManager {
       "ocorrencia_original_id",
       "forma_solicitacao",
       "criado_em",
+      "modo_criacao",
+      "completado_em",
+      "completado_por",
     ];
   }
 
@@ -258,7 +263,7 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // REGISTRO DE AUDITORIA DE VISUALIZAÇÃO
+  // REGISTRO DE AUDITORIA DE VISUALIZAÇÃO - CORRIGIDO
   // ============================================
 
   async registrarVisualizacao(ocorrenciaId) {
@@ -269,39 +274,70 @@ class OcorrenciaManager {
       const client = supabaseClient.getClient();
       if (!client) return;
 
-      // Verificar se já existe registro de visualização para esta ocorrência pelo usuário
+      // Verificar se a tabela existe
+      try {
+        const { error: tableCheck } = await client
+          .from("visualizacoes_ocorrencias")
+          .select("id", { count: "exact", head: true })
+          .limit(1);
+
+        if (tableCheck && tableCheck.code === "42P01") {
+          console.debug("ℹ️ Tabela visualizacoes_ocorrencias não encontrada");
+          return;
+        }
+      } catch (e) {
+        console.debug(
+          "ℹ️ Erro ao verificar tabela visualizacoes_ocorrencias:",
+          e.message,
+        );
+        return;
+      }
+
+      // Buscar registro existente
       const { data: existing, error: checkError } = await client
         .from("visualizacoes_ocorrencias")
-        .select("id, visualizado_em")
+        .select("id, visualizado_em, visualizacoes")
         .eq("ocorrencia_id", ocorrenciaId)
         .eq("usuario_id", user.id)
         .maybeSingle();
 
-      if (checkError && checkError.code !== "PGRST116") {
+      if (checkError) {
         console.warn("Erro ao verificar visualização:", checkError);
         return;
       }
 
+      // CORREÇÃO: Usar upsert em vez de client.raw
       if (existing) {
-        // Atualizar timestamp
-        await client
+        // Atualizar registro existente - incrementar contador
+        const novoContador = (existing.visualizacoes || 0) + 1;
+        const { error: updateError } = await client
           .from("visualizacoes_ocorrencias")
           .update({
             visualizado_em: new Date().toISOString(),
-            visualizacoes: client.raw("visualizacoes + 1"),
+            visualizacoes: novoContador,
           })
           .eq("id", existing.id);
+
+        if (updateError) {
+          console.warn("Erro ao atualizar visualização:", updateError);
+        }
       } else {
-        // Criar novo registro
-        await client.from("visualizacoes_ocorrencias").insert({
-          ocorrencia_id: ocorrenciaId,
-          usuario_id: user.id,
-          visualizado_em: new Date().toISOString(),
-          visualizacoes: 1,
-        });
+        // Inserir novo registro
+        const { error: insertError } = await client
+          .from("visualizacoes_ocorrencias")
+          .insert({
+            ocorrencia_id: ocorrenciaId,
+            usuario_id: user.id,
+            visualizado_em: new Date().toISOString(),
+            visualizacoes: 1,
+          });
+
+        if (insertError) {
+          console.warn("Erro ao inserir visualização:", insertError);
+        }
       }
     } catch (error) {
-      console.warn("Erro ao registrar visualização:", error);
+      console.debug("⚠️ Erro ao registrar visualização:", error.message);
     }
   }
 
@@ -383,6 +419,12 @@ class OcorrenciaManager {
   // CRUD OCORRÊNCIAS
   // ============================================
 
+  /**
+   * Cria uma nova ocorrência
+   * @param {Object} dados - Dados da ocorrência
+   * @param {string} dados.modo_criacao - 'rapido' ou 'completo'
+   * @returns {Promise<Object>}
+   */
   async criar(dados) {
     try {
       const user = authManager.getUser();
@@ -447,6 +489,10 @@ class OcorrenciaManager {
         motivo_rejeicao: null,
         campos_alterados: null,
         versao_original: null,
+        // 🔥 NOVO: Campos para modo Rápido
+        modo_criacao: dados.modo_criacao || "completo",
+        completado_em: null,
+        completado_por: null,
       };
 
       delete ocorrencia.envolvidos;
@@ -460,7 +506,12 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      console.log("✅ Ocorrência criada:", data.id);
+      console.log(
+        "✅ Ocorrência criada:",
+        data.id,
+        "| Modo:",
+        data.modo_criacao,
+      );
 
       await authManager.logCriarOcorrencia(user.id, data.id);
 
@@ -469,6 +520,8 @@ class OcorrenciaManager {
         "CRIAR_OCORRENCIA",
         "ocorrencias",
         data.id,
+        null,
+        { modo_criacao: data.modo_criacao },
       );
 
       return { success: true, data };
@@ -478,6 +531,11 @@ class OcorrenciaManager {
     }
   }
 
+  /**
+   * Lista ocorrências com filtros
+   * @param {Object} filtros - Filtros para listagem
+   * @returns {Promise<Object>}
+   */
   async listar(filtros = {}) {
     try {
       const user = authManager.getUser();
@@ -545,6 +603,11 @@ class OcorrenciaManager {
     }
   }
 
+  /**
+   * Busca uma ocorrência pelo ID
+   * @param {string} id - ID da ocorrência
+   * @returns {Promise<Object>}
+   */
   async buscar(id) {
     try {
       const user = authManager.getUser();
@@ -570,14 +633,121 @@ class OcorrenciaManager {
         data.criador = dadosCriador;
       }
 
-      // Registrar visualização (auditoria)
+      // Registrar visualização (auditoria) - COM FALLBACK SEGURO
       if (data) {
-        await this.registrarVisualizacao(id);
+        try {
+          await this.registrarVisualizacao(id);
+        } catch (error) {
+          console.debug("⚠️ Erro ao registrar visualização:", error.message);
+        }
       }
 
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao buscar ocorrência:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 🔥 NOVO: Completa um BO Rápido
+   * @param {string} id - ID da ocorrência
+   * @param {Object} dados - Dados adicionais para completar
+   * @returns {Promise<Object>}
+   */
+  async completarRapido(id, dados) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        return { success: false, error: "Usuário não autenticado" };
+      }
+
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      // Buscar ocorrência
+      const { data: ocorrencia, error: buscaError } = await this.buscar(id);
+      if (buscaError || !ocorrencia) {
+        return { success: false, error: "Ocorrência não encontrada" };
+      }
+
+      // Verificar se é um BO Rápido
+      if (ocorrencia.modo_criacao !== "rapido") {
+        return {
+          success: false,
+          error: "Esta ocorrência não está no modo Rápido",
+        };
+      }
+
+      // Verificar se já foi completado
+      if (ocorrencia.completado_em) {
+        return {
+          success: false,
+          error: "Esta ocorrência já foi completada",
+        };
+      }
+
+      // Verificar se está cancelada
+      if (ocorrencia.status === "cancelled") {
+        return {
+          success: false,
+          error: "Ocorrência cancelada não pode ser completada",
+        };
+      }
+
+      // Preparar dados para atualização
+      const dadosAtualizados = {
+        ...dados,
+        modo_criacao: "completo",
+        completado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
+        completado_por: user.id,
+        status: navigator.onLine ? "synced" : "pending_sync",
+        atualizado_em: new Date(
+          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+        )
+          .toISOString()
+          .slice(0, 19),
+        atualizado_por: user.id,
+      };
+
+      // Se não tiver forma_solicitacao, definir padrão
+      if (!dadosAtualizados.forma_solicitacao) {
+        dadosAtualizados.forma_solicitacao = "Diretamente com a ocorrência";
+      }
+
+      // Atualizar ocorrência
+      const { data, error } = await client
+        .from("ocorrencias")
+        .update(dadosAtualizados)
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log("✅ BO Rápido completado:", id);
+
+      // Registrar log
+      await authManager.logFinalizarOcorrencia(user.id, id);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "COMPLETAR_RAPIDO",
+        "ocorrencias",
+        id,
+        { modo_criacao: "rapido" },
+        { modo_criacao: "completo", completado_por: user.id },
+      );
+
+      return { success: true, data };
+    } catch (error) {
+      console.error("❌ Erro ao completar BO Rápido:", error);
       return { success: false, error: error.message };
     }
   }
@@ -2093,6 +2263,15 @@ class OcorrenciaManager {
         ).length,
         rectification_rejected: data.filter(
           (o) => o.status === "rectification_rejected",
+        ).length,
+        // 🔥 NOVO: Estatísticas por modo
+        rapido: data.filter((o) => o.modo_criacao === "rapido").length,
+        completo: data.filter((o) => o.modo_criacao === "completo").length,
+        rapido_completado: data.filter(
+          (o) => o.modo_criacao === "rapido" && o.completado_em !== null,
+        ).length,
+        rapido_pendente: data.filter(
+          (o) => o.modo_criacao === "rapido" && o.completado_em === null,
         ).length,
       };
 

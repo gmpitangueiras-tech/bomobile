@@ -1,24 +1,13 @@
 /**
- * PDF EXPORT - Exportação de Documentos
+ * PDF EXPORT - Exportação de Documentos (Versão Completa)
  * Guarda Municipal de Pitangueiras - PR
  *
  * Este módulo gerencia:
- * - Exportação de ocorrências para PDF
+ * - Exportação de ocorrências para PDF com layout profissional
  * - Exportação de relatórios para PDF
  * - Exportação de abordagens para PDF
+ * - Inclusão de imagens anexas
  * - Personalização de layout
- * - Múltiplos formatos de saída
- * - Compressão e otimização
- *
- * MELHORIAS APLICADAS:
- * - Exportação de relatórios completos (ocorrências + abordagens)
- * - Múltiplos formatos (PDF, CSV, XLSX - via bibliotecas)
- * - Personalização de layout (marca d'água, cabeçalho, rodapé)
- * - Otimização de tamanho de arquivo
- * - Exportação em lote
- * - Suporte a imagens e anexos
- * - Configurações de página (orientação, margens)
- * - Pré-visualização antes de exportar
  *
  * Depende de: jsPDF, jsPDF-AutoTable, authManager, ocorrenciaManager
  */
@@ -30,21 +19,24 @@
 class PDFExport {
   constructor() {
     this.initialized = false;
+    this._jsPDF = null;
     this.defaultOptions = {
       orientation: "portrait",
       unit: "mm",
       format: "a4",
       compress: true,
       margins: {
-        top: 15,
-        bottom: 15,
-        left: 10,
-        right: 10,
+        top: 20,
+        bottom: 20,
+        left: 15,
+        right: 15,
       },
       watermark: {
-        text: "Guarda Municipal - Pitangueiras/PR",
-        opacity: 0.1,
-        fontSize: 40,
+        text: "CÓPIA OFICIAL - GUARDA MUNICIPAL DE PITANGUEIRAS/PR",
+        opacity: 0.08,
+        fontSize: 32,
+        color: "#000000",
+        angle: 45,
       },
       header: {
         show: true,
@@ -56,15 +48,24 @@ class PDFExport {
         show: true,
         includePageNumbers: true,
         includeDate: true,
+        includeHash: true,
       },
       images: {
-        compress: true,
-        maxWidth: 600,
-        quality: 0.8,
+        maxWidth: 80,
+        maxHeight: 60,
+        quality: 0.7,
+      },
+      sections: {
+        dados: true,
+        solicitante: true,
+        envolvidos: true,
+        observacoes: true,
+        anexos: true,
+        assinatura: true,
+        historico: true,
       },
     };
 
-    // Mapeamento de status para cores
     this.statusColors = {
       draft: "#94a3b8",
       pending_sync: "#f59e0b",
@@ -75,21 +76,7 @@ class PDFExport {
       rectification_rejected: "#dc2626",
     };
 
-    // Mapeamento de tipos para ícones
-    this.tipoIcons = {
-      furto: "🚗",
-      roubo: "💰",
-      vandalismo: "🔨",
-      dano_ao_patrimonio: "🏠",
-      ameaca: "⚠️",
-      lesao_corporal: "🏥",
-      perturbacao: "🔊",
-      acidente: "🚨",
-      incendio: "🔥",
-      desaparecimento: "🔍",
-      atendimento_social: "🤝",
-      outro: "📌",
-    };
+    this.imageCache = {};
   }
 
   // ============================================
@@ -97,49 +84,54 @@ class PDFExport {
   // ============================================
 
   async init() {
-    if (this.initialized) return;
+    if (this.initialized) return true;
 
-    // Verificar se as bibliotecas estão carregadas
     try {
-      if (typeof window.jspdf === "undefined" && typeof jsPDF === "undefined") {
-        console.warn("⚠️ jsPDF não encontrado. Carregando...");
+      // Tentar obter jsPDF de várias fontes
+      if (typeof jsPDF !== "undefined") {
+        this._jsPDF = jsPDF;
+      } else if (typeof window.jspdf !== "undefined" && window.jspdf.jsPDF) {
+        this._jsPDF = window.jspdf.jsPDF;
+      } else if (typeof window.jsPDF !== "undefined") {
+        this._jsPDF = window.jsPDF;
+      }
+
+      if (!this._jsPDF) {
+        console.warn("⚠️ jsPDF não encontrado. Tentando carregar...");
         await this.loadLibrary(
           "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
         );
+        if (typeof jsPDF !== "undefined") {
+          this._jsPDF = jsPDF;
+        } else if (typeof window.jspdf !== "undefined" && window.jspdf.jsPDF) {
+          this._jsPDF = window.jspdf.jsPDF;
+        }
       }
 
-      if (
-        typeof window.jspdf?.autoTable === "undefined" &&
-        typeof jsPDF?.autoTable === "undefined"
-      ) {
+      if (!this._jsPDF) {
+        throw new Error("jsPDF não disponível mesmo após carregamento");
+      }
+
+      if (typeof this._jsPDF.prototype.autoTable === "undefined") {
         console.warn("⚠️ jsPDF-AutoTable não encontrado. Carregando...");
         await this.loadLibrary(
           "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js",
         );
-      }
-
-      // Verificar disponibilidade
-      if (
-        typeof jsPDF === "undefined" &&
-        typeof window.jspdf?.jsPDF === "undefined"
-      ) {
-        throw new Error("Bibliotecas PDF não disponíveis");
+        if (typeof window.jspdf !== "undefined" && window.jspdf.autoTable) {
+          window.jspdf.autoTable(this._jsPDF);
+        }
       }
 
       this.initialized = true;
-      console.log("📄 PDF Export inicializado");
+      console.log("📄 PDF Export inicializado com sucesso");
       return true;
     } catch (error) {
       console.error("❌ Erro ao inicializar PDF Export:", error);
+      this.initialized = false;
       return false;
     }
   }
 
-  /**
-   * Carrega uma biblioteca dinamicamente
-   * @param {string} url - URL da biblioteca
-   * @returns {Promise<void>}
-   */
   loadLibrary(url) {
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
@@ -147,75 +139,103 @@ class PDFExport {
       script.onload = () => resolve();
       script.onerror = () => reject(new Error(`Erro ao carregar: ${url}`));
       document.head.appendChild(script);
-
-      // Timeout de segurança
-      setTimeout(() => {
-        resolve();
-      }, 5000);
+      setTimeout(() => resolve(), 8000);
     });
   }
 
-  /**
-   * Obtém a instância do jsPDF
-   * @returns {Object} - Instância do jsPDF
-   */
   getJSPDF() {
-    if (typeof window.jspdf !== "undefined" && window.jspdf.jsPDF) {
-      return window.jspdf.jsPDF;
+    if (!this._jsPDF) {
+      throw new Error("jsPDF não inicializado. Chame init() primeiro.");
     }
-    if (typeof jsPDF !== "undefined") {
-      return jsPDF;
+    return this._jsPDF;
+  }
+
+  // ============================================
+  // CARREGAR IMAGEM
+  // ============================================
+
+  async carregarImagemBase64(url) {
+    if (!url) return null;
+    if (this.imageCache[url]) return this.imageCache[url];
+
+    try {
+      const response = await fetch(url, { mode: "cors" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result;
+          this.imageCache[url] = base64;
+          resolve(base64);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.warn("Erro ao carregar imagem:", url, error.message);
+      return null;
     }
-    throw new Error("jsPDF não disponível");
   }
 
   // ============================================
   // EXPORTAÇÃO DE OCORRÊNCIA
   // ============================================
 
-  /**
-   * Exporta uma ocorrência para PDF
-   * @param {string} ocorrenciaId - ID da ocorrência
-   * @param {Object} options - Opções de exportação
-   * @returns {Promise<Object>} { success, data?, error? }
-   */
   async exportarOcorrencia(ocorrenciaId, options = {}) {
     try {
       await this.init();
 
-      // Buscar ocorrência
       const result = await ocorrenciaManager.buscar(ocorrenciaId);
       if (!result.success || !result.data) {
         throw new Error("Ocorrência não encontrada");
       }
-
       const ocorrencia = result.data;
 
-      // Buscar envolvidos
       const envolvidosResult =
         await ocorrenciaManager.listarEnvolvidos(ocorrenciaId);
       const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
 
-      // Buscar anexos
       const anexosResult = await ocorrenciaManager.listarAnexos(ocorrenciaId);
       const anexos = anexosResult.success ? anexosResult.data : [];
 
-      // Merge de opções
+      const historicoResult =
+        await ocorrenciaManager.buscarHistorico(ocorrenciaId);
+      const historico = historicoResult.success ? historicoResult.data : [];
+
       const opts = { ...this.defaultOptions, ...options };
 
-      // Gerar PDF
+      const imagensUrls = anexos
+        .filter((a) => a.tipo_arquivo === "image" || a.tipo === "image")
+        .map((a) => a.url);
+      const imagensCarregadas = await Promise.all(
+        imagensUrls.map(async (url) => ({
+          url,
+          base64: await this.carregarImagemBase64(url),
+        })),
+      );
+
+      const anexosComImagens = anexos.map((anexo) => {
+        if (anexo.tipo_arquivo === "image" || anexo.tipo === "image") {
+          const encontrado = imagensCarregadas.find(
+            (img) => img.url === anexo.url,
+          );
+          return { ...anexo, base64: encontrado ? encontrado.base64 : null };
+        }
+        return anexo;
+      });
+
       const doc = await this.gerarPDFOcorrencia(
         ocorrencia,
         envolvidos,
-        anexos,
+        anexosComImagens,
+        historico,
         opts,
       );
 
-      // Salvar
       const nomeArquivo = `Ocorrencia_${ocorrencia.numero_ocorrencia || "Rascunho"}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(nomeArquivo);
 
-      console.log(`✅ PDF da ocorrência ${ocorrenciaId} gerado com sucesso`);
       return { success: true, fileName: nomeArquivo };
     } catch (error) {
       console.error("❌ Erro ao exportar ocorrência:", error);
@@ -223,44 +243,471 @@ class PDFExport {
     }
   }
 
-  /**
-   * Gera o PDF da ocorrência
-   * @param {Object} ocorrencia - Dados da ocorrência
-   * @param {Array} envolvidos - Lista de envolvidos
-   * @param {Array} anexos - Lista de anexos
-   * @param {Object} options - Opções de exportação
-   * @returns {Object} - Instância do jsPDF
-   */
-  async gerarPDFOcorrencia(ocorrencia, envolvidos, anexos, options) {
+  // ============================================
+  // GERAR PDF OCORRÊNCIA
+  // ============================================
+
+  async gerarPDFOcorrencia(ocorrencia, envolvidos, anexos, historico, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
+    const pageWidth = doc.internal.pageSize.width;
+    const margin = options.margins.left || 15;
+    let y = 15;
+
+    const titulo = `Ocorrência ${ocorrencia.numero_ocorrencia || "Rascunho"} - ${this.getTipoLabel(ocorrencia.tipo_ocorrencia)}`;
+    doc.setProperties({
+      title: titulo,
+      author: ocorrencia.criador?.nome_completo || "Guarda Municipal",
+      subject: `Registro de Ocorrência - ${ocorrencia.tipo_ocorrencia || "Sem tipo"}`,
+      keywords: `Guarda Municipal, Ocorrência, ${ocorrencia.tipo_ocorrencia || ""}`,
+      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
+    });
 
     // Cabeçalho
-    await this.adicionarCabecalho(doc, options);
+    doc.setFillColor(0, 63, 135);
+    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
+      align: "center",
+    });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text("Sistema de Registro de Ocorrências", pageWidth / 2, y + 14, {
+      align: "center",
+    });
+    doc.setFontSize(8);
+    doc.text(`Documento: ${titulo}`, pageWidth / 2, y + 22, {
+      align: "center",
+    });
+    y += 32;
 
-    // Título
-    await this.adicionarTitulo(doc, ocorrencia, options);
+    const numero =
+      ocorrencia.numero_ocorrencia ||
+      ocorrencia.numero_temporario ||
+      "Rascunho";
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 63, 135);
+    doc.text(`Ocorrência #${numero}`, margin, y);
+    y += 8;
 
-    // Dados da ocorrência
-    await this.adicionarDadosOcorrencia(doc, ocorrencia, options);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Status: ${this.getStatusLabel(ocorrencia.status)}`, margin, y);
+    doc.text(
+      `Tipo: ${this.getTipoLabel(ocorrencia.tipo_ocorrencia)}`,
+      margin + 70,
+      y,
+    );
+    y += 6;
 
-    // Dados do solicitante
-    await this.adicionarDadosSolicitante(doc, ocorrencia, options);
+    if (ocorrencia.hash_pericial) {
+      doc.setFontSize(7);
+      doc.setTextColor(0, 63, 135);
+      doc.setFont("helvetica", "italic");
+      doc.text(`Hash SHA-256: ${ocorrencia.hash_pericial}`, margin, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+    }
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 4;
+
+    // Informações Gerais
+    const infoData = [
+      {
+        label: "Criado em:",
+        value: new Date(ocorrencia.criado_em).toLocaleString("pt-BR"),
+      },
+      {
+        label: "Data/Hora Início:",
+        value: ocorrencia.data_hora_inicio
+          ? new Date(ocorrencia.data_hora_inicio).toLocaleString("pt-BR")
+          : "Não informado",
+      },
+      {
+        label: "Data/Hora Encerramento:",
+        value: ocorrencia.data_hora_encerramento
+          ? new Date(ocorrencia.data_hora_encerramento).toLocaleString("pt-BR")
+          : "Não encerrado",
+      },
+      {
+        label: "Criado por:",
+        value: ocorrencia.criador?.nome_completo || "Desconhecido",
+      },
+    ];
+
+    if (ocorrencia.local_ocorrencia)
+      infoData.push({ label: "Local:", value: ocorrencia.local_ocorrencia });
+    if (ocorrencia.bairro_ocorrencia)
+      infoData.push({ label: "Bairro:", value: ocorrencia.bairro_ocorrencia });
+    if (ocorrencia.referencia)
+      infoData.push({ label: "Referência:", value: ocorrencia.referencia });
+    if (ocorrencia.latitude && ocorrencia.longitude) {
+      infoData.push({
+        label: "Coordenadas:",
+        value: `${ocorrencia.latitude.toFixed(6)}, ${ocorrencia.longitude.toFixed(6)}`,
+      });
+    }
+
+    doc.setDrawColor(200, 200, 200);
+    doc.roundedRect(
+      margin,
+      y - 2,
+      pageWidth - 2 * margin,
+      10 + infoData.length * 6,
+      3,
+      3,
+      "S",
+    );
+    doc.setFillColor(245, 247, 250);
+    doc.roundedRect(
+      margin,
+      y - 2,
+      pageWidth - 2 * margin,
+      10 + infoData.length * 6,
+      3,
+      3,
+      "F",
+    );
+
+    y = y + 4;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 63, 135);
+    doc.text("INFORMAÇÕES GERAIS", margin + 4, y);
+    y += 4;
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(30, 41, 59);
+
+    infoData.forEach((item) => {
+      doc.setFontSize(9);
+      doc.text(`${item.label}`, margin + 6, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${item.value}`, margin + 50, y);
+      doc.setFont("helvetica", "normal");
+      y += 6;
+    });
+    y += 4;
+
+    // Solicitante
+    if (
+      options.sections.solicitante !== false &&
+      (ocorrencia.nome_solicitante || ocorrencia.telefone_solicitante)
+    ) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 30, 3, 3, "S");
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 30, 3, 3, "F");
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text("DADOS DO SOLICITANTE", margin + 4, y + 4);
+      y += 8;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+
+      const solicitanteData = [
+        { label: "Nome:", value: ocorrencia.nome_solicitante || "Anônimo" },
+        { label: "CPF:", value: ocorrencia.cpf_solicitante || "Não informado" },
+        {
+          label: "Telefone:",
+          value: ocorrencia.telefone_solicitante || "Não informado",
+        },
+        {
+          label: "Endereço:",
+          value: ocorrencia.endereco_solicitante || "Não informado",
+        },
+      ];
+
+      let sx = margin + 6;
+      let sy = y;
+      solicitanteData.forEach((item) => {
+        if (
+          item.value &&
+          item.value !== "Não informado" &&
+          item.value !== "Anônimo"
+        ) {
+          doc.setFontSize(8);
+          doc.text(`${item.label}`, sx, sy);
+          doc.setFont("helvetica", "bold");
+          doc.text(`${item.value}`, sx + 30, sy);
+          doc.setFont("helvetica", "normal");
+          sy += 5;
+        }
+      });
+      y = sy + 4;
+    }
 
     // Envolvidos
-    await this.adicionarEnvolvidos(doc, envolvidos, options);
+    if (options.sections.envolvidos !== false && envolvidos.length > 0) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(
+        margin,
+        y - 2,
+        pageWidth - 2 * margin,
+        10 + envolvidos.length * 12,
+        3,
+        3,
+        "S",
+      );
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(
+        margin,
+        y - 2,
+        pageWidth - 2 * margin,
+        10 + envolvidos.length * 12,
+        3,
+        3,
+        "F",
+      );
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text(`ENVOLVIDOS (${envolvidos.length})`, margin + 4, y + 4);
+      y += 8;
+
+      envolvidos.forEach((env, idx) => {
+        const tipo = this.getTipoEnvolvidoLabel(env.tipo);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${idx + 1}. ${tipo}:`, margin + 6, y);
+        doc.setFont("helvetica", "normal");
+        doc.text(`${env.nome_completo || "N/A"}`, margin + 40, y);
+        if (env.cpf) {
+          doc.text(`CPF: ${env.cpf}`, margin + 100, y);
+        }
+        y += 6;
+      });
+      y += 4;
+    }
 
     // Observações
-    await this.adicionarObservacoes(doc, ocorrencia, options);
+    if (options.sections.observacoes !== false && ocorrencia.observacoes) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 20, 3, 3, "S");
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 20, 3, 3, "F");
 
-    // Anexos
-    await this.adicionarAnexos(doc, anexos, options);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text("OBSERVAÇÕES", margin + 4, y + 4);
+      y += 8;
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+      const textoQuebrado = doc.splitTextToSize(
+        ocorrencia.observacoes,
+        pageWidth - 2 * margin - 12,
+      );
+      doc.text(textoQuebrado, margin + 6, y);
+      y += textoQuebrado.length * 5 + 4;
+    }
+
+    // Anexos (imagens)
+    const imagensParaExibir = anexos.filter(
+      (a) => a.base64 && (a.tipo_arquivo === "image" || a.tipo === "image"),
+    );
+    if (options.sections.anexos !== false && imagensParaExibir.length > 0) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 15, 3, 3, "S");
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 15, 3, 3, "F");
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text(
+        `ANEXOS (${imagensParaExibir.length} IMAGENS)`,
+        margin + 4,
+        y + 4,
+      );
+      y += 10;
+
+      const maxHeight = options.images.maxHeight || 50;
+      const spacing = 6;
+      const cols = 2;
+      const imgWidth = (pageWidth - 2 * margin - (cols - 1) * spacing) / cols;
+
+      let imgX = margin + 6;
+      let imgY = y;
+      let colCount = 0;
+
+      for (const img of imagensParaExibir) {
+        try {
+          const base64 = img.base64;
+          if (!base64) continue;
+          const imgObj = new Image();
+          imgObj.src = base64;
+          await new Promise((resolve) => {
+            if (imgObj.complete) resolve();
+            else imgObj.onload = resolve;
+          });
+          const aspectRatio = imgObj.width / imgObj.height;
+          let w = Math.min(imgWidth, 70);
+          let h = w / aspectRatio;
+          if (h > maxHeight) {
+            h = maxHeight;
+            w = h * aspectRatio;
+          }
+          doc.addImage(base64, "JPEG", imgX, imgY, w, h);
+          doc.setFontSize(6);
+          doc.setTextColor(100, 100, 100);
+          const nome = img.nome_arquivo || "Imagem";
+          const nomeExibido =
+            nome.length > 20 ? nome.slice(0, 18) + "..." : nome;
+          doc.text(nomeExibido, imgX, imgY + h + 4);
+
+          imgX += w + spacing;
+          colCount++;
+          if (colCount >= cols) {
+            imgX = margin + 6;
+            imgY += h + 10;
+            colCount = 0;
+          }
+        } catch (e) {
+          console.warn("Erro ao adicionar imagem:", e.message);
+        }
+      }
+      y = imgY + 10;
+    }
+
+    // Histórico
+    if (
+      options.sections.historico !== false &&
+      historico &&
+      historico.length > 1
+    ) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(
+        margin,
+        y - 2,
+        pageWidth - 2 * margin,
+        15 + Math.min(historico.length, 4) * 10,
+        3,
+        3,
+        "S",
+      );
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(
+        margin,
+        y - 2,
+        pageWidth - 2 * margin,
+        15 + Math.min(historico.length, 4) * 10,
+        3,
+        3,
+        "F",
+      );
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text("HISTÓRICO DE VERSÕES", margin + 4, y + 4);
+      y += 8;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+
+      const sorted = [...historico].sort(
+        (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
+      );
+      const mostrar = sorted.slice(0, 4);
+      mostrar.forEach((item) => {
+        const versao = item.numero_versao || 1;
+        const data = new Date(item.criado_em).toLocaleString("pt-BR");
+        const isOriginal = item.is_original;
+        const status = this.getStatusLabel(item.status);
+        doc.text(
+          `${isOriginal ? "Original" : `v${versao}`} - ${data} (${status})`,
+          margin + 6,
+          y,
+        );
+        y += 6;
+      });
+      if (sorted.length > 4) {
+        doc.text(`+ ${sorted.length - 4} outras versões`, margin + 6, y);
+        y += 6;
+      }
+      y += 4;
+    }
 
     // Rodapé
-    await this.adicionarRodape(doc, options);
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(
+        margin,
+        doc.internal.pageSize.height - 12,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 12,
+      );
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
+        margin,
+        doc.internal.pageSize.height - 5,
+      );
+      if (options.footer.includeHash && ocorrencia.hash_pericial) {
+        const hashShort = ocorrencia.hash_pericial.substring(0, 16) + "...";
+        doc.text(
+          `Hash: ${hashShort}`,
+          pageWidth / 2,
+          doc.internal.pageSize.height - 5,
+          { align: "center" },
+        );
+      }
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 5,
+        { align: "right" },
+      );
+    }
 
     // Marca d'água
-    await this.adicionarMarcaDagua(doc, options);
+    if (options.watermark) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(options.watermark.fontSize || 32);
+        doc.setTextColor(200, 200, 200);
+        doc.setFont("helvetica", "bold");
+        try {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+              angle: options.watermark.angle || 45,
+            },
+          );
+        } catch (e) {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+            },
+          );
+        }
+      }
+    }
 
     return doc;
   }
@@ -269,21 +716,12 @@ class PDFExport {
   // EXPORTAÇÃO DE RELATÓRIO
   // ============================================
 
-  /**
-   * Exporta um relatório para PDF
-   * @param {string} tipo - Tipo do relatório
-   * @param {Object} dados - Dados do relatório
-   * @param {Object} options - Opções de exportação
-   * @returns {Promise<Object>} { success, data?, error? }
-   */
   async exportarRelatorio(tipo, dados, options = {}) {
     try {
       await this.init();
 
-      // Merge de opções
       const opts = { ...this.defaultOptions, ...options };
 
-      // Gerar PDF conforme tipo
       let doc;
       switch (tipo) {
         case "desempenho":
@@ -299,13 +737,11 @@ class PDFExport {
           doc = await this.gerarPDFRetificacoes(dados, opts);
           break;
         default:
-          throw new Error("Tipo de relatório não suportado");
+          throw new Error(`Tipo de relatório não suportado: ${tipo}`);
       }
 
-      // Salvar
       const nomeArquivo = `Relatorio_${tipo}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(nomeArquivo);
-
       console.log(`✅ Relatório ${tipo} exportado com sucesso`);
       return { success: true, fileName: nomeArquivo };
     } catch (error) {
@@ -314,47 +750,67 @@ class PDFExport {
     }
   }
 
-  /**
-   * Gera PDF do relatório de desempenho
-   */
+  // ============================================
+  // PDF - RELATÓRIO DE DESEMPENHO
+  // ============================================
+
   async gerarPDFDesempenho(dados, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
+    const pageWidth = doc.internal.pageSize.width;
+    const margin = options.margins?.left || 15;
 
-    await this.adicionarCabecalho(doc, options);
-
-    // Título
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    doc.text("Relatório de Desempenho", 105, 40, { align: "center" });
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 48, {
-      align: "center",
+    doc.setProperties({
+      title: options.title || "Relatório de Desempenho - Guarda Municipal",
+      author: options.author || "Guarda Municipal de Pitangueiras - PR",
+      subject: options.subject || "Desempenho operacional dos guardas",
+      keywords:
+        options.keywords ||
+        "Guarda Municipal, Desempenho, Ocorrências, Abordagens",
+      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
     });
 
-    // Resumo
-    let y = 60;
-    const total = dados.total || dados.ranking?.length || 0;
-    const totalOcorrencias = dados.totalOcorrencias || 0;
-    const totalAbordagens = dados.totalAbordagens || 0;
+    let y = 15;
+    doc.setFillColor(0, 63, 135);
+    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
+      align: "center",
+    });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      options.title || "Relatório de Desempenho",
+      pageWidth / 2,
+      y + 14,
+      { align: "center" },
+    );
+    y += 28;
 
     doc.setFontSize(12);
     doc.setFont("helvetica", "bold");
-    doc.text("Resumo do Período", 20, y);
+    doc.setTextColor(0, 63, 135);
+    doc.text(options.title || "Relatório de Desempenho", margin, y);
     y += 8;
-
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Total de Guardas: ${total}`, 25, y);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, margin, y);
+    y += 8;
+
+    const totalGuardas = dados.totalGuardas || dados.ranking?.length || 0;
+    const totalOcorrencias = dados.totalOcorrencias || 0;
+    const totalAbordagens = dados.totalAbordagens || 0;
+
+    doc.text(`Total de Guardas: ${totalGuardas}`, margin, y);
     y += 6;
-    doc.text(`Total de Ocorrências: ${totalOcorrencias}`, 25, y);
+    doc.text(`Total de Ocorrências: ${totalOcorrencias}`, margin, y);
     y += 6;
-    doc.text(`Total de Abordagens: ${totalAbordagens}`, 25, y);
+    doc.text(`Total de Abordagens: ${totalAbordagens}`, margin, y);
     y += 10;
 
-    // Tabela de Ranking
     if (dados.ranking && dados.ranking.length > 0) {
       const tableData = dados.ranking.map((item, index) => [
         index + 1,
@@ -364,8 +820,7 @@ class PDFExport {
         item.ocorrencias?.finalizadas || 0,
         `${item.taxa_resolucao || 0}%`,
         item.abordagens?.total || 0,
-        item.total_atendimentos ||
-          (item.ocorrencias?.total || 0) + (item.abordagens?.total || 0),
+        item.total_atendimentos || 0,
       ]);
 
       doc.autoTable({
@@ -387,7 +842,6 @@ class PDFExport {
           fillColor: [0, 63, 135],
           textColor: [255, 255, 255],
           fontSize: 9,
-          halign: "center",
         },
         columnStyles: {
           0: { cellWidth: 15, halign: "center" },
@@ -399,51 +853,120 @@ class PDFExport {
           6: { cellWidth: 20, halign: "center" },
           7: { cellWidth: 20, halign: "center" },
         },
-        styles: {
-          fontSize: 8,
-          cellPadding: 3,
-        },
-        alternateRowStyles: {
-          fillColor: [245, 247, 250],
-        },
+        styles: { fontSize: 8, cellPadding: 3 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
       });
     }
 
-    await this.adicionarRodape(doc, options);
-    await this.adicionarMarcaDagua(doc, options);
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(
+        margin,
+        doc.internal.pageSize.height - 12,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 12,
+      );
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
+        margin,
+        doc.internal.pageSize.height - 5,
+      );
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 5,
+        { align: "right" },
+      );
+    }
+
+    if (options.watermark) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(options.watermark.fontSize || 32);
+        doc.setTextColor(200, 200, 200);
+        doc.setFont("helvetica", "bold");
+        try {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+              angle: options.watermark.angle || 45,
+            },
+          );
+        } catch (e) {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+            },
+          );
+        }
+      }
+    }
 
     return doc;
   }
 
-  /**
-   * Gera PDF da lista de ocorrências
-   */
+  // ============================================
+  // PDF - RELATÓRIO DE OCORRÊNCIAS (LISTA)
+  // ============================================
+
   async gerarPDFListaOcorrencias(dados, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
+    const pageWidth = doc.internal.pageSize.width;
+    const margin = options.margins?.left || 15;
 
-    await this.adicionarCabecalho(doc, options);
-
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    doc.text("Lista de Ocorrências", 105, 40, { align: "center" });
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 48, {
-      align: "center",
+    doc.setProperties({
+      title: options.title || "Lista de Ocorrências - Guarda Municipal",
+      author: options.author || "Guarda Municipal de Pitangueiras - PR",
+      subject: options.subject || "Listagem de ocorrências registradas",
+      keywords: options.keywords || "Guarda Municipal, Ocorrências, Listagem",
+      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
     });
 
-    let y = 60;
+    let y = 15;
+    doc.setFillColor(0, 63, 135);
+    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
+      align: "center",
+    });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(options.title || "Lista de Ocorrências", pageWidth / 2, y + 14, {
+      align: "center",
+    });
+    y += 28;
 
-    // Resumo
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 63, 135);
+    doc.text(options.title || "Lista de Ocorrências", margin, y);
+    y += 8;
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Total: ${dados.length || 0} ocorrência(s)`, 20, y);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, margin, y);
+    y += 8;
+
+    const ocorrencias = dados.ocorrencias || [];
+    doc.text(`Total: ${ocorrencias.length || 0} ocorrência(s)`, margin, y);
     y += 10;
 
-    if (dados && dados.length > 0) {
-      const tableData = dados.map((item) => [
+    if (ocorrencias.length > 0) {
+      const tableData = ocorrencias.map((item) => [
         item.numero_ocorrencia || item.numero_temporario || "Rascunho",
         new Date(item.criado_em).toLocaleDateString("pt-BR"),
         item.tipo_ocorrencia || "Não informado",
@@ -459,7 +982,6 @@ class PDFExport {
           fillColor: [0, 63, 135],
           textColor: [255, 255, 255],
           fontSize: 9,
-          halign: "center",
         },
         columnStyles: {
           0: { cellWidth: 35 },
@@ -468,70 +990,140 @@ class PDFExport {
           3: { cellWidth: 50 },
           4: { cellWidth: 30, halign: "center" },
         },
-        styles: {
-          fontSize: 8,
-          cellPadding: 3,
-        },
-        alternateRowStyles: {
-          fillColor: [245, 247, 250],
-        },
+        styles: { fontSize: 8, cellPadding: 3 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
       });
     }
 
-    await this.adicionarRodape(doc, options);
-    await this.adicionarMarcaDagua(doc, options);
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(
+        margin,
+        doc.internal.pageSize.height - 12,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 12,
+      );
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
+        margin,
+        doc.internal.pageSize.height - 5,
+      );
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 5,
+        { align: "right" },
+      );
+    }
+
+    if (options.watermark) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(options.watermark.fontSize || 32);
+        doc.setTextColor(200, 200, 200);
+        doc.setFont("helvetica", "bold");
+        try {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+              angle: options.watermark.angle || 45,
+            },
+          );
+        } catch (e) {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+            },
+          );
+        }
+      }
+    }
 
     return doc;
   }
 
-  /**
-   * Gera PDF de abordagens
-   */
+  // ============================================
+  // PDF - RELATÓRIO DE ABORDAGENS
+  // ============================================
+
   async gerarPDFAbordagens(dados, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
+    const pageWidth = doc.internal.pageSize.width;
+    const margin = options.margins?.left || 15;
 
-    await this.adicionarCabecalho(doc, options);
+    doc.setProperties({
+      title: options.title || "Relatório de Abordagens - Guarda Municipal",
+      author: options.author || "Guarda Municipal de Pitangueiras - PR",
+      subject: options.subject || "Relatório de abordagens operacionais",
+      keywords:
+        options.keywords || "Guarda Municipal, Abordagens, Veículos, Pessoas",
+      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
+    });
 
-    doc.setFontSize(18);
+    let y = 15;
+    doc.setFillColor(0, 63, 135);
+    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("Relatório de Abordagens", 105, 40, { align: "center" });
+    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
+      align: "center",
+    });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      options.title || "Relatório de Abordagens",
+      pageWidth / 2,
+      y + 14,
+      { align: "center" },
+    );
+    y += 28;
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 63, 135);
+    doc.text(options.title || "Relatório de Abordagens", margin, y);
+    y += 8;
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 48, {
-      align: "center",
-    });
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, margin, y);
+    y += 8;
 
-    let y = 60;
-
-    // Resumo
     const veiculos = dados.veiculos || [];
     const pessoas = dados.pessoas || [];
 
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Total de Veículos: ${veiculos.length}`, 20, y);
+    doc.text(`Total de Veículos: ${veiculos.length}`, margin, y);
     y += 6;
-    doc.text(`Total de Pessoas: ${pessoas.length}`, 20, y);
+    doc.text(`Total de Pessoas: ${pessoas.length}`, margin, y);
     y += 10;
 
-    // Veículos
     if (veiculos.length > 0) {
-      doc.setFontSize(11);
+      doc.setFontSize(10);
       doc.setFont("helvetica", "bold");
-      doc.text("Veículos", 20, y);
+      doc.setTextColor(0, 63, 135);
+      doc.text("Veículos", margin, y);
       y += 6;
 
-      const tableData = veiculos
-        .slice(0, 20)
-        .map((v) => [
-          v.placa || "N/A",
-          v.marca_modelo || "N/A",
-          v.cor || "N/A",
-          v.motivo || "N/A",
-          v.fase || "advertencia",
-        ]);
+      const tableData = veiculos.map((v) => [
+        v.placa || "N/A",
+        v.marca_modelo || "N/A",
+        v.cor || "N/A",
+        v.motivo || "N/A",
+        v.fase || "advertencia",
+      ]);
 
       doc.autoTable({
         startY: y,
@@ -541,42 +1133,33 @@ class PDFExport {
           fillColor: [0, 63, 135],
           textColor: [255, 255, 255],
           fontSize: 8,
-          halign: "center",
         },
         columnStyles: {
           0: { cellWidth: 30 },
           1: { cellWidth: 40 },
           2: { cellWidth: 25 },
           3: { cellWidth: 50 },
-          4: { cellWidth: 30, halign: "center" },
+          4: { cellWidth: 30 },
         },
-        styles: {
-          fontSize: 7,
-          cellPadding: 2,
-        },
-        alternateRowStyles: {
-          fillColor: [245, 247, 250],
-        },
+        styles: { fontSize: 8, cellPadding: 2 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
       });
-
       y = doc.lastAutoTable.finalY + 5;
     }
 
-    // Pessoas
     if (pessoas.length > 0) {
-      doc.setFontSize(11);
+      doc.setFontSize(10);
       doc.setFont("helvetica", "bold");
-      doc.text("Pessoas", 20, y);
+      doc.setTextColor(0, 63, 135);
+      doc.text("Pessoas", margin, y);
       y += 6;
 
-      const tableData = pessoas
-        .slice(0, 20)
-        .map((p) => [
-          p.nome || "N/A",
-          p.cpf || "N/A",
-          p.motivo || "N/A",
-          p.fase || "advertencia",
-        ]);
+      const tableData = pessoas.map((p) => [
+        p.nome || "N/A",
+        p.cpf || "N/A",
+        p.motivo || "N/A",
+        p.fase || "advertencia",
+      ]);
 
       doc.autoTable({
         startY: y,
@@ -586,76 +1169,155 @@ class PDFExport {
           fillColor: [0, 63, 135],
           textColor: [255, 255, 255],
           fontSize: 8,
-          halign: "center",
         },
         columnStyles: {
           0: { cellWidth: 50 },
           1: { cellWidth: 35 },
           2: { cellWidth: 50 },
-          3: { cellWidth: 35, halign: "center" },
+          3: { cellWidth: 35 },
         },
-        styles: {
-          fontSize: 7,
-          cellPadding: 2,
-        },
-        alternateRowStyles: {
-          fillColor: [245, 247, 250],
-        },
+        styles: { fontSize: 8, cellPadding: 2 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
       });
     }
 
-    await this.adicionarRodape(doc, options);
-    await this.adicionarMarcaDagua(doc, options);
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(
+        margin,
+        doc.internal.pageSize.height - 12,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 12,
+      );
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
+        margin,
+        doc.internal.pageSize.height - 5,
+      );
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 5,
+        { align: "right" },
+      );
+    }
+
+    if (options.watermark) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(options.watermark.fontSize || 32);
+        doc.setTextColor(200, 200, 200);
+        doc.setFont("helvetica", "bold");
+        try {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+              angle: options.watermark.angle || 45,
+            },
+          );
+        } catch (e) {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+            },
+          );
+        }
+      }
+    }
 
     return doc;
   }
 
-  /**
-   * Gera PDF de retificações
-   */
+  // ============================================
+  // PDF - RELATÓRIO DE RETIFICAÇÕES
+  // ============================================
+
   async gerarPDFRetificacoes(dados, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
+    const pageWidth = doc.internal.pageSize.width;
+    const margin = options.margins?.left || 15;
 
-    await this.adicionarCabecalho(doc, options);
-
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    doc.text("Relatório de Retificações", 105, 40, { align: "center" });
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 105, 48, {
-      align: "center",
+    doc.setProperties({
+      title: options.title || "Relatório de Retificações - Guarda Municipal",
+      author: options.author || "Guarda Municipal de Pitangueiras - PR",
+      subject: options.subject || "Relatório de retificações de ocorrências",
+      keywords:
+        options.keywords || "Guarda Municipal, Retificações, Ocorrências",
+      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
     });
 
-    let y = 60;
-
-    const aprovadas = dados.filter((d) => d.status === "rectified");
-    const pendentes = dados.filter((d) => d.status === "pending_rectification");
-    const rejeitadas = dados.filter(
-      (d) => d.status === "rectification_rejected",
+    let y = 15;
+    doc.setFillColor(0, 63, 135);
+    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
+      align: "center",
+    });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      options.title || "Relatório de Retificações",
+      pageWidth / 2,
+      y + 14,
+      { align: "center" },
     );
+    y += 28;
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 63, 135);
+    doc.text(options.title || "Relatório de Retificações", margin, y);
+    y += 8;
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Aprovadas: ${aprovadas.length}`, 20, y);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, margin, y);
+    y += 8;
+
+    const retificacoes = dados.retificacoes || [];
+    const aprovadas = retificacoes.filter(
+      (r) => r.status === "rectified",
+    ).length;
+    const pendentes = retificacoes.filter(
+      (r) => r.status === "pending_rectification",
+    ).length;
+    const rejeitadas = retificacoes.filter(
+      (r) => r.status === "rectification_rejected",
+    ).length;
+
+    doc.text(`Total: ${retificacoes.length}`, margin, y);
     y += 6;
-    doc.text(`Pendentes: ${pendentes.length}`, 20, y);
+    doc.text(`Aprovadas: ${aprovadas}`, margin, y);
     y += 6;
-    doc.text(`Rejeitadas: ${rejeitadas.length}`, 20, y);
+    doc.text(`Pendentes: ${pendentes}`, margin, y);
+    y += 6;
+    doc.text(`Rejeitadas: ${rejeitadas}`, margin, y);
     y += 10;
 
-    if (dados.length > 0) {
-      const tableData = dados
-        .slice(0, 30)
-        .map((item) => [
-          item.numero_ocorrencia || "N/A",
-          new Date(item.criado_em).toLocaleDateString("pt-BR"),
-          item.tipo_ocorrencia || "N/A",
-          this.getStatusLabel(item.status),
-          item.motivo_rejeicao || "-",
-        ]);
+    if (retificacoes.length > 0) {
+      const tableData = retificacoes.map((item) => [
+        item.numero || "N/A",
+        item.data_solicitacao
+          ? new Date(item.data_solicitacao).toLocaleDateString("pt-BR")
+          : "N/A",
+        item.tipo || "N/A",
+        this.getStatusLabel(item.status),
+        item.motivo_rejeicao || "-",
+      ]);
 
       doc.autoTable({
         startY: y,
@@ -665,7 +1327,6 @@ class PDFExport {
           fillColor: [0, 63, 135],
           textColor: [255, 255, 255],
           fontSize: 8,
-          halign: "center",
         },
         columnStyles: {
           0: { cellWidth: 30 },
@@ -674,421 +1335,75 @@ class PDFExport {
           3: { cellWidth: 30, halign: "center" },
           4: { cellWidth: 50 },
         },
-        styles: {
-          fontSize: 7,
-          cellPadding: 2,
-        },
-        alternateRowStyles: {
-          fillColor: [245, 247, 250],
-        },
+        styles: { fontSize: 7, cellPadding: 2 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
       });
     }
-
-    await this.adicionarRodape(doc, options);
-    await this.adicionarMarcaDagua(doc, options);
-
-    return doc;
-  }
-
-  // ============================================
-  // COMPONENTES DO PDF
-  // ============================================
-
-  /**
-   * Adiciona cabeçalho ao PDF
-   */
-  async adicionarCabecalho(doc, options) {
-    if (!options.header?.show) return;
-
-    const jsPDF = this.getJSPDF();
-    const pageWidth = doc.internal.pageSize.width;
-
-    // Logo - usar texto com ícone
-    doc.setFillColor(0, 63, 135);
-    doc.rect(0, 0, pageWidth, 22, "F");
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, 8, {
-      align: "center",
-    });
-
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "normal");
-    doc.text("Sistema de Registro de Ocorrências", pageWidth / 2, 14, {
-      align: "center",
-    });
-
-    if (options.header.includeDate) {
-      const data = new Date().toLocaleString("pt-BR");
-      doc.setFontSize(7);
-      doc.text(`Data: ${data}`, pageWidth - 10, 6, { align: "right" });
-    }
-
-    if (options.header.includeUser && authManager.isLoggedIn()) {
-      const user = authManager.getUser();
-      if (user) {
-        doc.setFontSize(7);
-        doc.text(`Usuário: ${user.nome_completo}`, pageWidth - 10, 12, {
-          align: "right",
-        });
-      }
-    }
-
-    if (options.header.includeVersion) {
-      doc.setFontSize(6);
-      doc.text(`Versão: ${CONFIG.VERSAO}`, pageWidth - 10, 18, {
-        align: "right",
-      });
-    }
-  }
-
-  /**
-   * Adiciona título ao PDF
-   */
-  async adicionarTitulo(doc, ocorrencia, options) {
-    const numero =
-      ocorrencia.numero_ocorrencia ||
-      ocorrencia.numero_temporario ||
-      "Rascunho";
-    const status = this.getStatusLabel(ocorrencia.status);
-    const statusColor = this.statusColors[ocorrencia.status] || "#94a3b8";
-
-    let y = 30;
-
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Relatório de Ocorrência`, 20, y);
-    y += 8;
-
-    doc.setTextColor(30, 41, 59);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Número: ${numero}`, 20, y);
-    y += 6;
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Status: ${status}`, 20, y);
-    y += 6;
-    doc.text(
-      `Criado em: ${new Date(ocorrencia.criado_em).toLocaleString("pt-BR")}`,
-      20,
-      y,
-    );
-    y += 6;
-
-    if (ocorrencia.criador) {
-      doc.text(
-        `Criado por: ${ocorrencia.criador.nome_completo || "Desconhecido"}`,
-        20,
-        y,
-      );
-      y += 6;
-    }
-
-    y += 4;
-    return y;
-  }
-
-  /**
-   * Adiciona dados da ocorrência ao PDF
-   */
-  async adicionarDadosOcorrencia(doc, ocorrencia, options) {
-    let y = doc.lastAutoTable?.finalY || 50;
-
-    if (y < 50) y = 50;
-
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("Dados da Ocorrência", 20, y);
-    y += 8;
-
-    const dados = [
-      { label: "Tipo", value: this.getTipoLabel(ocorrencia.tipo_ocorrencia) },
-      { label: "Local", value: ocorrencia.local_ocorrencia || "Não informado" },
-      {
-        label: "Bairro",
-        value: ocorrencia.bairro_ocorrencia || "Não informado",
-      },
-      { label: "Referência", value: ocorrencia.referencia || "Não informado" },
-      {
-        label: "Data/Hora Início",
-        value: new Date(ocorrencia.data_hora_inicio).toLocaleString("pt-BR"),
-      },
-      {
-        label: "Data/Hora Encerramento",
-        value: ocorrencia.data_hora_encerramento
-          ? new Date(ocorrencia.data_hora_encerramento).toLocaleString("pt-BR")
-          : "Não encerrado",
-      },
-    ];
-
-    if (ocorrencia.latitude && ocorrencia.longitude) {
-      dados.push({
-        label: "Localização",
-        value: `${ocorrencia.latitude.toFixed(6)}, ${ocorrencia.longitude.toFixed(6)}`,
-      });
-    }
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    dados.forEach((item) => {
-      doc.text(`${item.label}: ${item.value}`, 25, y);
-      y += 6;
-    });
-
-    y += 4;
-    return y;
-  }
-
-  /**
-   * Adiciona dados do solicitante ao PDF
-   */
-  async adicionarDadosSolicitante(doc, ocorrencia, options) {
-    let y = doc.lastAutoTable?.finalY || 50;
-
-    if (y < 50) y = 50;
-
-    const temDados =
-      ocorrencia.nome_solicitante ||
-      ocorrencia.cpf_solicitante ||
-      ocorrencia.telefone_solicitante;
-
-    if (!temDados) return y;
-
-    y += 6;
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("Dados do Solicitante", 20, y);
-    y += 8;
-
-    const dados = [
-      { label: "Nome", value: ocorrencia.nome_solicitante || "Anônimo" },
-      { label: "CPF", value: ocorrencia.cpf_solicitante || "Não informado" },
-      { label: "RG", value: ocorrencia.rg_solicitante || "Não informado" },
-      {
-        label: "Telefone",
-        value: ocorrencia.telefone_solicitante || "Não informado",
-      },
-      {
-        label: "Endereço",
-        value: ocorrencia.endereco_solicitante || "Não informado",
-      },
-      {
-        label: "Bairro",
-        value: ocorrencia.bairro_solicitante || "Não informado",
-      },
-    ];
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    dados.forEach((item) => {
-      doc.text(`${item.label}: ${item.value}`, 25, y);
-      y += 6;
-    });
-
-    y += 4;
-    return y;
-  }
-
-  /**
-   * Adiciona envolvidos ao PDF
-   */
-  async adicionarEnvolvidos(doc, envolvidos, options) {
-    let y = doc.lastAutoTable?.finalY || 50;
-
-    if (y < 50) y = 50;
-
-    y += 6;
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Envolvidos (${envolvidos.length})`, 20, y);
-    y += 8;
-
-    if (envolvidos.length === 0) {
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      doc.text("Nenhum envolvido cadastrado", 25, y);
-      y += 6;
-      return y;
-    }
-
-    const tableData = envolvidos.map((env) => [
-      this.getTipoEnvolvidoLabel(env.tipo),
-      env.nome_completo || "N/A",
-      env.cpf || "N/A",
-      env.telefone || "N/A",
-    ]);
-
-    doc.autoTable({
-      startY: y,
-      head: [["Tipo", "Nome", "CPF", "Telefone"]],
-      body: tableData,
-      headStyles: {
-        fillColor: [0, 63, 135],
-        textColor: [255, 255, 255],
-        fontSize: 8,
-        halign: "center",
-      },
-      columnStyles: {
-        0: { cellWidth: 30 },
-        1: { cellWidth: 60 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 40 },
-      },
-      styles: {
-        fontSize: 8,
-        cellPadding: 3,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 247, 250],
-      },
-    });
-
-    y = doc.lastAutoTable.finalY;
-    return y;
-  }
-
-  /**
-   * Adiciona observações ao PDF
-   */
-  async adicionarObservacoes(doc, ocorrencia, options) {
-    let y = doc.lastAutoTable?.finalY || 50;
-
-    if (y < 50) y = 50;
-
-    if (!ocorrencia.observacoes) return y;
-
-    y += 6;
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("Observações", 20, y);
-    y += 8;
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-
-    // Quebrar texto em linhas
-    const splitText = doc.splitTextToSize(ocorrencia.observacoes, 170);
-    doc.text(splitText, 25, y);
-    y += splitText.length * 5 + 6;
-
-    return y;
-  }
-
-  /**
-   * Adiciona anexos ao PDF
-   */
-  async adicionarAnexos(doc, anexos, options) {
-    let y = doc.lastAutoTable?.finalY || 50;
-
-    if (y < 50) y = 50;
-
-    if (anexos.length === 0) return y;
-
-    y += 6;
-    doc.setTextColor(0, 63, 135);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Anexos (${anexos.length})`, 20, y);
-    y += 8;
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    anexos.forEach((anexo) => {
-      const tipo = anexo.tipo_arquivo || "document";
-      const icon = this.tipoIcons[tipo] || "📎";
-      doc.text(
-        `${icon} ${anexo.nome_arquivo} (${this.formatarTamanho(anexo.tamanho || 0)})`,
-        25,
-        y,
-      );
-      y += 6;
-    });
-
-    y += 4;
-    return y;
-  }
-
-  /**
-   * Adiciona rodapé ao PDF
-   */
-  async adicionarRodape(doc, options) {
-    if (!options.footer?.show) return;
 
     const pageCount = doc.internal.getNumberOfPages();
-    const pageWidth = doc.internal.pageSize.width;
-    const pageHeight = doc.internal.pageSize.height;
-
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
-
-      // Linha separadora
       doc.setDrawColor(200, 200, 200);
-      doc.line(10, pageHeight - 12, pageWidth - 10, pageHeight - 12);
-
-      doc.setTextColor(150, 150, 150);
+      doc.line(
+        margin,
+        doc.internal.pageSize.height - 12,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 12,
+      );
       doc.setFontSize(7);
-      doc.setFont("helvetica", "normal");
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
+        margin,
+        doc.internal.pageSize.height - 5,
+      );
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        doc.internal.pageSize.height - 5,
+        { align: "right" },
+      );
+    }
 
-      let text = "Guarda Municipal de Pitangueiras - PR";
-
-      if (options.footer.includeDate) {
-        text += ` | ${new Date().toLocaleString("pt-BR")}`;
-      }
-
-      doc.text(text, 10, pageHeight - 5);
-
-      if (options.footer.includePageNumbers) {
-        doc.text(
-          `Página ${i} de ${pageCount}`,
-          pageWidth - 10,
-          pageHeight - 5,
-          { align: "right" },
-        );
+    if (options.watermark) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(options.watermark.fontSize || 32);
+        doc.setTextColor(200, 200, 200);
+        doc.setFont("helvetica", "bold");
+        try {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+              angle: options.watermark.angle || 45,
+            },
+          );
+        } catch (e) {
+          doc.text(
+            options.watermark.text,
+            pageWidth / 2,
+            doc.internal.pageSize.height / 2,
+            {
+              align: "center",
+            },
+          );
+        }
       }
     }
-  }
 
-  /**
-   * Adiciona marca d'água ao PDF
-   */
-  async adicionarMarcaDagua(doc, options) {
-    if (!options.watermark) return;
-
-    const pageWidth = doc.internal.pageSize.width;
-    const pageHeight = doc.internal.pageSize.height;
-
-    doc.setFontSize(options.watermark.fontSize || 40);
-    doc.setTextColor(200, 200, 200);
-    doc.setFont("helvetica", "bold");
-    doc.text(options.watermark.text, pageWidth / 2, pageHeight / 2, {
-      align: "center",
-      angle: 45,
-    });
+    return doc;
   }
 
   // ============================================
   // EXPORTAÇÃO EM LOTE
   // ============================================
 
-  /**
-   * Exporta múltiplas ocorrências para PDF (lote)
-   * @param {Array} ids - Lista de IDs de ocorrências
-   * @param {Object} options - Opções de exportação
-   * @returns {Promise<Object>}
-   */
   async exportarLote(ids, options = {}) {
     try {
       await this.init();
-
       const resultados = [];
       const erros = [];
 
@@ -1108,7 +1423,6 @@ class PDFExport {
       console.log(
         `📄 ${resultados.length} ocorrências exportadas, ${erros.length} erros`,
       );
-
       return {
         success: erros.length === 0,
         resultados,
@@ -1124,31 +1438,20 @@ class PDFExport {
   }
 
   // ============================================
-  // EXPORTAÇÃO COMO CSV
+  // EXPORTAÇÃO CSV
   // ============================================
 
-  /**
-   * Exporta dados como CSV
-   * @param {Array} dados - Dados a serem exportados
-   * @param {string} nomeArquivo - Nome do arquivo
-   * @param {Object} opcoes - Opções de exportação
-   * @returns {Object} { success, data?, error? }
-   */
   exportarCSV(dados, nomeArquivo = "dados.csv", opcoes = {}) {
     try {
-      if (!dados || dados.length === 0) {
+      if (!dados || dados.length === 0)
         throw new Error("Nenhum dado para exportar");
-      }
 
-      // Gerar cabeçalhos
       const cabecalhos = Object.keys(dados[0]);
       let csv = cabecalhos.join(",") + "\n";
 
-      // Gerar linhas
       dados.forEach((linha) => {
         const valores = cabecalhos.map((chave) => {
           const valor = linha[chave] || "";
-          // Se o valor contém vírgula ou aspas, colocar entre aspas
           if (
             typeof valor === "string" &&
             (valor.includes(",") || valor.includes('"') || valor.includes("\n"))
@@ -1160,7 +1463,6 @@ class PDFExport {
         csv += valores.join(",") + "\n";
       });
 
-      // Baixar arquivo
       const blob = new Blob(["\uFEFF" + csv], {
         type: "text/csv;charset=utf-8;",
       });
@@ -1244,4 +1546,4 @@ class PDFExport {
 const pdfExport = new PDFExport();
 window.pdfExport = pdfExport;
 
-console.log("📄 PDF Export carregado");
+console.log("📄 PDF Export carregado (versão completa)");

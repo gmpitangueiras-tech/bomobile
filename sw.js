@@ -58,7 +58,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/modules/usuarios.js",
   BASE_PATH + "js/modules/utils.js",
   BASE_PATH + "manifest.json",
-  BASE_PATH + "assets/icons/icon-192x192.ico",
+  BASE_PATH + "assets/icons/icon-192x192.png",
   BASE_PATH + "assets/icons/icon-512x512.png",
   // Leaflet para offline
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",

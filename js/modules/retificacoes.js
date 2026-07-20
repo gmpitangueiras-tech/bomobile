@@ -9,9 +9,10 @@
  * - Rejeição de retificações com motivo
  * - Histórico de alterações
  * - Badge de notificação
+ * - EXPORTAÇÃO DE RETIFICAÇÕES PARA PDF
  *
  * Depende de: authManager (global), supabaseClient (global),
- *             ocorrenciaManager (global), utils, ui
+ *             ocorrenciaManager (global), pdfExport (global), utils, ui
  */
 
 // ============================================
@@ -48,6 +49,11 @@ let estado = {
   retificacoes: [],
   carregando: false,
   total: 0,
+  filtros: {
+    dataInicio: "",
+    dataFim: "",
+    status: "todos", // 'todos', 'pending', 'approved', 'rejected'
+  },
 };
 
 // ============================================
@@ -90,6 +96,12 @@ export async function renderRetificacoes(container, appInstance) {
       verDetalhesRetificacao(id, appInstance);
     window._retificacoesRecarregar = () =>
       renderRetificacoes(container, appInstance);
+    window._retificacoesExportarPDF = () =>
+      exportarRetificacoesPDF(container, appInstance);
+    window._retificacoesAplicarFiltros = () =>
+      aplicarFiltros(container, appInstance);
+    window._retificacoesLimparFiltros = () =>
+      limparFiltros(container, appInstance);
   } catch (error) {
     console.error("❌ Erro ao renderizar retificações:", error);
     container.innerHTML = `
@@ -115,6 +127,7 @@ async function carregarRetificacoes() {
   estado.carregando = true;
 
   try {
+    // Buscar retificações pendentes
     const result = await ocorrenciaManager.buscarRetificacoesPendentes();
 
     if (result.success) {
@@ -124,6 +137,51 @@ async function carregarRetificacoes() {
       estado.retificacoes = [];
       estado.total = 0;
       console.warn("Erro ao carregar retificações:", result.error);
+    }
+
+    // Buscar também retificações aprovadas e rejeitadas para o relatório completo
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (client) {
+      try {
+        // Buscar retificações aprovadas (rectified)
+        const { data: aprovadas, error: errAprovadas } = await client
+          .from("ocorrencias")
+          .select("*")
+          .eq("status", "rectified")
+          .order("criado_em", { ascending: false });
+
+        if (!errAprovadas && aprovadas) {
+          // Adicionar ao estado com tipo
+          aprovadas.forEach((r) => {
+            r._tipo_retificacao = "aprovada";
+          });
+          estado.retificacoes = [...estado.retificacoes, ...aprovadas];
+        }
+
+        // Buscar retificações rejeitadas
+        const { data: rejeitadas, error: errRejeitadas } = await client
+          .from("ocorrencias")
+          .select("*")
+          .eq("status", "rectification_rejected")
+          .order("criado_em", { ascending: false });
+
+        if (!errRejeitadas && rejeitadas) {
+          rejeitadas.forEach((r) => {
+            r._tipo_retificacao = "rejeitada";
+          });
+          estado.retificacoes = [...estado.retificacoes, ...rejeitadas];
+        }
+
+        // Ordenar por data (mais recente primeiro)
+        estado.retificacoes.sort(
+          (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
+        );
+
+        estado.total = estado.retificacoes.length;
+      } catch (e) {
+        console.warn("Erro ao buscar histórico de retificações:", e);
+      }
     }
   } catch (error) {
     console.error("Erro ao carregar retificações:", error);
@@ -141,6 +199,38 @@ async function carregarRetificacoes() {
 function renderizarLista(container, appInstance) {
   const retificacoes = estado.retificacoes;
   const total = estado.total;
+  const temFiltros =
+    estado.filtros.dataInicio ||
+    estado.filtros.dataFim ||
+    estado.filtros.status !== "todos";
+
+  // Aplicar filtros
+  let retificacoesFiltradas = retificacoes;
+  if (estado.filtros.status !== "todos") {
+    const statusMap = {
+      pending: "pending_rectification",
+      approved: "rectified",
+      rejected: "rectification_rejected",
+    };
+    const statusFiltro = statusMap[estado.filtros.status];
+    if (statusFiltro) {
+      retificacoesFiltradas = retificacoesFiltradas.filter(
+        (r) => r.status === statusFiltro,
+      );
+    }
+  }
+  if (estado.filtros.dataInicio) {
+    retificacoesFiltradas = retificacoesFiltradas.filter(
+      (r) => r.criado_em >= estado.filtros.dataInicio,
+    );
+  }
+  if (estado.filtros.dataFim) {
+    retificacoesFiltradas = retificacoesFiltradas.filter(
+      (r) => r.criado_em <= estado.filtros.dataFim + "T23:59:59",
+    );
+  }
+
+  const totalFiltrado = retificacoesFiltradas.length;
 
   let html = `
     <div class="container" style="padding-bottom:100px;">
@@ -149,15 +239,59 @@ function renderizarLista(container, appInstance) {
         <div>
           <h2 style="color:var(--azul-bandeira);margin:0;">
             <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
-            Solicitações de Retificação Pendentes
+            Solicitações de Retificação
           </h2>
           <p style="color:var(--cinza-medio);margin-top:4px;font-size:14px;">
-            ${total} solicitação(ões) aguardando sua análise
+            ${total} solicitação(ões) no total
+            ${estado.filtros.status !== "todos" ? ` (filtrado: ${totalFiltrado})` : ""}
           </p>
         </div>
-        <button onclick="window._retificacoesRecarregar()" class="btn-secondary" style="padding:6px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-          <i class="fas fa-sync-alt"></i> Atualizar
-        </button>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          <button onclick="window._retificacoesExportarPDF()" class="btn-primary" 
+            style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--verde-bandeira);">
+            <i class="fas fa-file-pdf" style="margin-right:4px;"></i> Exportar PDF
+          </button>
+          <button onclick="window._retificacoesRecarregar()" class="btn-secondary" 
+            style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="filtros-container" style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;">
+          <div style="flex:1;min-width:100px;">
+            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Status</label>
+            <select id="filtroStatusRet" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;" onchange="window._retificacoesAplicarFiltros()">
+              <option value="todos" ${estado.filtros.status === "todos" ? "selected" : ""}>Todos</option>
+              <option value="pending" ${estado.filtros.status === "pending" ? "selected" : ""}>⏳ Pendentes</option>
+              <option value="approved" ${estado.filtros.status === "approved" ? "selected" : ""}>✅ Aprovadas</option>
+              <option value="rejected" ${estado.filtros.status === "rejected" ? "selected" : ""}>❌ Rejeitadas</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:100px;">
+            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Início</label>
+            <input type="date" id="filtroDataInicioRet" value="${estado.filtros.dataInicio || ""}" 
+              style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;"
+              onchange="window._retificacoesAplicarFiltros()">
+          </div>
+          <div style="flex:1;min-width:100px;">
+            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Fim</label>
+            <input type="date" id="filtroDataFimRet" value="${estado.filtros.dataFim || ""}" 
+              style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;"
+              onchange="window._retificacoesAplicarFiltros()">
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button onclick="window._retificacoesAplicarFiltros()" class="btn-primary" style="padding:4px 10px;font-size:11px;min-height:32px;width:auto;border-radius:8px;">
+              <i class="fas fa-search"></i>
+            </button>
+            <button onclick="window._retificacoesLimparFiltros()" class="btn-secondary" style="padding:4px 10px;font-size:11px;min-height:32px;width:auto;border-radius:8px;">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+        ${temFiltros ? `<div style="margin-top:4px;font-size:10px;color:var(--azul-bandeira);"><i class="fas fa-filter"></i> Filtros aplicados</div>` : ""}
       </div>
 
       <!-- Lista de retificações -->
@@ -171,7 +305,7 @@ function renderizarLista(container, appInstance) {
         <p style="margin-top:8px;color:var(--cinza-medio);">Carregando...</p>
       </div>
     `;
-  } else if (retificacoes.length === 0) {
+  } else if (retificacoesFiltradas.length === 0) {
     html += `
       <div style="text-align:center;padding:60px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
         <div style="font-size:64px;color:var(--verde-bandeira);margin-bottom:16px;">
@@ -179,27 +313,76 @@ function renderizarLista(container, appInstance) {
         </div>
         <h3 style="color:var(--cinza-escuro);">Tudo em ordem!</h3>
         <p style="color:var(--cinza-medio);font-size:14px;">
-          Não há solicitações de retificação pendentes no momento.
+          ${temFiltros ? "Nenhuma retificação encontrada com os filtros aplicados." : "Não há solicitações de retificação pendentes no momento."}
         </p>
-        <p style="color:var(--cinza-medio);font-size:13px;margin-top:4px;">
-          Todas as retificações foram analisadas.
-        </p>
-        <button onclick="window.app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
-          <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar ao início
-        </button>
+        ${
+          temFiltros
+            ? `
+          <button onclick="window._retificacoesLimparFiltros()" class="btn-secondary" style="margin-top:10px;">
+            <i class="fas fa-undo"></i> Limpar Filtros
+          </button>
+        `
+            : `
+          <p style="color:var(--cinza-medio);font-size:13px;margin-top:4px;">
+            Todas as retificações foram analisadas.
+          </p>
+          <button onclick="window.app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+            <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar ao início
+          </button>
+        `
+        }
       </div>
     `;
   } else {
-    // Ordenar por data (mais antiga primeiro)
-    const sorted = [...retificacoes].sort((a, b) => {
-      const dateA = a.solicitada_em || a.criado_em || "";
-      const dateB = b.solicitada_em || b.criado_em || "";
-      return dateA.localeCompare(dateB);
-    });
+    // Agrupar por status
+    const pendentes = retificacoesFiltradas.filter(
+      (r) => r.status === "pending_rectification",
+    );
+    const aprovadas = retificacoesFiltradas.filter(
+      (r) => r.status === "rectified",
+    );
+    const rejeitadas = retificacoesFiltradas.filter(
+      (r) => r.status === "rectification_rejected",
+    );
 
-    sorted.forEach((ret) => {
-      html += renderRetificacaoItem(ret, appInstance);
-    });
+    // Mostrar pendentes primeiro
+    if (pendentes.length > 0) {
+      html += `
+        <div style="margin-bottom:12px;">
+          <h4 style="font-size:13px;color:var(--aviso);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+            <span class="badge badge-pending" style="font-size:10px;">⏳</span>
+            Pendentes (${pendentes.length})
+          </h4>
+          ${pendentes.map((ret) => renderRetificacaoItem(ret, appInstance)).join("")}
+        </div>
+      `;
+    }
+
+    // Aprovadas
+    if (aprovadas.length > 0) {
+      html += `
+        <div style="margin-bottom:12px;">
+          <h4 style="font-size:13px;color:var(--verde-bandeira);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+            <span class="badge badge-synced" style="font-size:10px;">✅</span>
+            Aprovadas (${aprovadas.length})
+          </h4>
+          ${aprovadas.map((ret) => renderRetificacaoItem(ret, appInstance)).join("")}
+        </div>
+      `;
+    }
+
+    // Rejeitadas
+    if (rejeitadas.length > 0) {
+      html += `
+        <div style="margin-bottom:12px;">
+          <h4 style="font-size:13px;color:var(--erro);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+            <span class="badge badge-cancelled" style="font-size:10px;">❌</span>
+            Rejeitadas (${rejeitadas.length})
+          </h4>
+          ${rejeitadas.map((ret) => renderRetificacaoItem(ret, appInstance)).join("")}
+        </div>
+      `;
+    }
   }
 
   html += `
@@ -228,6 +411,21 @@ function renderRetificacaoItem(ret, appInstance) {
     ? `<span class="badge badge-tipo badge-tipo-${ret.tipo_ocorrencia}" style="font-size:10px;">${tipoLabel}</span>`
     : "";
 
+  // Determinar status para exibição
+  let statusLabel = "Pendente";
+  let statusClass = "badge-pending";
+  let statusIcon = "⏳";
+
+  if (ret.status === "rectified") {
+    statusLabel = "Aprovada";
+    statusClass = "badge-synced";
+    statusIcon = "✅";
+  } else if (ret.status === "rectification_rejected") {
+    statusLabel = "Rejeitada";
+    statusClass = "badge-cancelled";
+    statusIcon = "❌";
+  }
+
   // Verificar se tem campos alterados
   let camposAlterados = [];
   if (ret.campos_alterados) {
@@ -241,7 +439,6 @@ function renderRetificacaoItem(ret, appInstance) {
   // Buscar nome do solicitante
   let nomeSolicitante = "Desconhecido";
   if (ret.solicitada_por) {
-    // Tentar buscar do cache ou fazer uma consulta
     nomeSolicitante = ret.solicitante_nome || "Guarda Municipal";
   }
 
@@ -254,9 +451,21 @@ function renderRetificacaoItem(ret, appInstance) {
   // Contar campos alterados
   const totalCampos = camposAlterados.length;
 
+  const isPendente = ret.status === "pending_rectification";
+
   return `
-    <div class="card-revisao" style="margin-bottom:16px;border-left:4px solid var(--aviso);position:relative;">
-      ${ret.prioridade ? `<div style="position:absolute;top:-8px;right:12px;background:var(--erro);color:white;padding:2px 12px;border-radius:12px;font-size:9px;font-weight:700;text-transform:uppercase;">Urgente</div>` : ""}
+    <div class="card-revisao" style="margin-bottom:16px;border-left:4px solid ${
+      isPendente
+        ? "var(--aviso)"
+        : ret.status === "rectified"
+          ? "var(--verde-bandeira)"
+          : "var(--erro)"
+    };position:relative;">
+      ${
+        ret.prioridade
+          ? `<div style="position:absolute;top:-8px;right:12px;background:var(--erro);color:white;padding:2px 12px;border-radius:12px;font-size:9px;font-weight:700;text-transform:uppercase;">Urgente</div>`
+          : ""
+      }
       
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
@@ -267,8 +476,8 @@ function renderRetificacaoItem(ret, appInstance) {
             <i class="fas fa-calendar"></i> ${dataSolicitacao}
           </span>
         </div>
-        <span class="badge badge-pending" style="font-size:12px;padding:4px 14px;">
-          ⏳ Pendente
+        <span class="badge ${statusClass}" style="font-size:12px;padding:4px 14px;">
+          ${statusIcon} ${statusLabel}
         </span>
       </div>
 
@@ -287,11 +496,29 @@ function renderRetificacaoItem(ret, appInstance) {
         </div>
       </div>
 
-      <div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
-        <i class="fas fa-quote-left" style="color:var(--aviso);margin-right:4px;"></i>
-        <strong>Justificativa da retificação:</strong>
-        <span>${ret.solicitacao_retificacao_justificativa || "Não informada"}</span>
-      </div>
+      ${
+        ret.solicitacao_retificacao_justificativa
+          ? `
+        <div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
+          <i class="fas fa-quote-left" style="color:var(--aviso);margin-right:4px;"></i>
+          <strong>Justificativa:</strong>
+          <span>${ret.solicitacao_retificacao_justificativa}</span>
+        </div>
+      `
+          : ""
+      }
+
+      ${
+        ret.motivo_rejeicao
+          ? `
+        <div style="margin-top:8px;padding:8px 12px;background:#fee2e2;border-radius:var(--border-radius);font-size:13px;color:#991b1b;border-left:3px solid var(--erro);">
+          <i class="fas fa-times-circle" style="color:var(--erro);margin-right:4px;"></i>
+          <strong>Motivo da rejeição:</strong>
+          <span>${ret.motivo_rejeicao}</span>
+        </div>
+      `
+          : ""
+      }
 
       ${
         totalCampos > 0
@@ -331,20 +558,37 @@ function renderRetificacaoItem(ret, appInstance) {
           : ""
       }
 
-      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-        <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}')" 
-          style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
-          <i class="fas fa-check"></i> Aprovar
-        </button>
-        <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}')" 
-          style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
-          <i class="fas fa-times"></i> Rejeitar
-        </button>
-        <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}')" 
-          style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
-          <i class="fas fa-eye"></i> Ver completa
-        </button>
-      </div>
+      ${
+        isPendente
+          ? `
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
+          <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}')" 
+            style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
+            <i class="fas fa-check"></i> Aprovar
+          </button>
+          <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}')" 
+            style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
+            <i class="fas fa-times"></i> Rejeitar
+          </button>
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}')" 
+            style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
+            <i class="fas fa-eye"></i> Ver completa
+          </button>
+        </div>
+      `
+          : `
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}')" 
+            style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);flex:1;">
+            <i class="fas fa-eye"></i> Ver detalhes
+          </button>
+          <button class="btn-secondary" onclick="window._retificacoesExportarDetalhe('${ret.id}')" 
+            style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--verde-muito-claro);color:var(--verde-escuro);flex:1;">
+            <i class="fas fa-file-pdf"></i> PDF
+          </button>
+        </div>
+      `
+      }
     </div>
   `;
 }
@@ -421,6 +665,7 @@ export async function rejeitarRetificacao(id, container, appInstance) {
       `Informe o motivo da rejeição da retificação #${numero}:`,
       "Rejeitar Retificação",
       "Digite o motivo da rejeição...",
+      5,
     );
 
     if (!motivo) {
@@ -535,6 +780,21 @@ export async function verDetalhesRetificacao(id, appInstance) {
 
     const tipoLabel = getTipoLabel(ret.tipo_ocorrencia);
 
+    // Determinar status
+    let statusLabel = "Pendente";
+    let statusClass = "badge-pending";
+    let statusIcon = "⏳";
+
+    if (ret.status === "rectified") {
+      statusLabel = "Aprovada";
+      statusClass = "badge-synced";
+      statusIcon = "✅";
+    } else if (ret.status === "rectification_rejected") {
+      statusLabel = "Rejeitada";
+      statusClass = "badge-cancelled";
+      statusIcon = "❌";
+    }
+
     let html = `
       <div class="modal" style="max-width:650px;width:100%;max-height:95vh;overflow-y:auto;">
         <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
@@ -557,7 +817,7 @@ export async function verDetalhesRetificacao(id, appInstance) {
                 <i class="fas fa-calendar"></i> Solicitado em: ${dataSolicitacao}
               </p>
             </div>
-            <span class="badge badge-pending" style="font-size:12px;">⏳ Pendente</span>
+            <span class="badge ${statusClass}" style="font-size:12px;">${statusIcon} ${statusLabel}</span>
           </div>
 
           ${
@@ -567,6 +827,18 @@ export async function verDetalhesRetificacao(id, appInstance) {
               <i class="fas fa-quote-left" style="color:var(--aviso);margin-right:4px;"></i>
               <strong>Justificativa:</strong>
               <span>${ret.solicitacao_retificacao_justificativa}</span>
+            </div>
+          `
+              : ""
+          }
+
+          ${
+            ret.motivo_rejeicao
+              ? `
+            <div style="padding:8px 12px;background:#fee2e2;border-radius:var(--border-radius);font-size:13px;color:#991b1b;border-left:3px solid var(--erro);margin-bottom:12px;">
+              <i class="fas fa-times-circle" style="color:var(--erro);margin-right:4px;"></i>
+              <strong>Motivo da rejeição:</strong>
+              <span>${ret.motivo_rejeicao}</span>
             </div>
           `
               : ""
@@ -634,7 +906,11 @@ export async function verDetalhesRetificacao(id, appInstance) {
             </div>
             <div>
               <span style="color:var(--cinza-medio);">Data/Hora Início:</span>
-              <strong>${ret.data_hora_inicio ? formatarDataHoraLocal(ret.data_hora_inicio) : "Não informado"}</strong>
+              <strong>${
+                ret.data_hora_inicio
+                  ? formatarDataHoraLocal(ret.data_hora_inicio)
+                  : "Não informado"
+              }</strong>
             </div>
             <div style="grid-column: span 2;">
               <span style="color:var(--cinza-medio);">Observações:</span>
@@ -655,7 +931,9 @@ export async function verDetalhesRetificacao(id, appInstance) {
                 .map(
                   (env) => `
                 <div style="padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-                  <span class="badge badge-azul" style="font-size:9px;">${getTipoEnvolvidoLabel(env.tipo)}</span>
+                  <span class="badge badge-azul" style="font-size:9px;">${getTipoEnvolvidoLabel(
+                    env.tipo,
+                  )}</span>
                   <strong>${env.nome_completo}</strong>
                   ${env.cpf ? ` - ${env.cpf}` : ""}
                 </div>
@@ -678,9 +956,15 @@ export async function verDetalhesRetificacao(id, appInstance) {
                 .map(
                   (anexo) => `
                 <div style="padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;display:flex;align-items:center;gap:8px;">
-                  <i class="fas ${getIconAnexo(anexo.tipo_arquivo)}" style="color:var(--azul-bandeira);"></i>
+                  <i class="fas ${getIconAnexo(
+                    anexo.tipo_arquivo,
+                  )}" style="color:var(--azul-bandeira);"></i>
                   <span>${anexo.nome_arquivo}</span>
-                  ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);font-size:12px;"><i class="fas fa-external-link-alt"></i></a>` : ""}
+                  ${
+                    anexo.url
+                      ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);font-size:12px;"><i class="fas fa-external-link-alt"></i></a>`
+                      : ""
+                  }
                 </div>
               `,
                 )
@@ -691,14 +975,24 @@ export async function verDetalhesRetificacao(id, appInstance) {
           }
         </div>
         <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
-          <div style="display:flex;gap:8px;">
-            <button onclick="window._retificacoesAprovar('${ret.id}')" class="btn-success" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;">
-              <i class="fas fa-check" style="margin-right:6px;"></i> Aprovar
+          ${
+            ret.status === "pending_rectification"
+              ? `
+            <div style="display:flex;gap:8px;">
+              <button onclick="window._retificacoesAprovar('${ret.id}')" class="btn-success" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;">
+                <i class="fas fa-check" style="margin-right:6px;"></i> Aprovar
+              </button>
+              <button onclick="window._retificacoesRejeitar('${ret.id}')" class="btn-danger" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;">
+                <i class="fas fa-times" style="margin-right:6px;"></i> Rejeitar
+              </button>
+            </div>
+          `
+              : `
+            <button onclick="window._retificacoesExportarDetalhe('${ret.id}')" class="btn-primary" style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--verde-bandeira);color:var(--branco);">
+              <i class="fas fa-file-pdf" style="margin-right:6px;"></i> Exportar PDF
             </button>
-            <button onclick="window._retificacoesRejeitar('${ret.id}')" class="btn-danger" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;">
-              <i class="fas fa-times" style="margin-right:6px;"></i> Rejeitar
-            </button>
-          </div>
+          `
+          }
           <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
             style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Fechar
@@ -710,12 +1004,174 @@ export async function verDetalhesRetificacao(id, appInstance) {
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
 
-    // Registrar funções de aprovação/rejeição dentro do modal
-    // As funções globais já estão registradas
+    // Registrar função para exportar detalhe
+    window._retificacoesExportarDetalhe = (retId) => {
+      exportarDetalheRetificacao(retId, appInstance);
+    };
+
+    // Fechar modal ao clicar fora
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
   } catch (error) {
     console.error("Erro ao ver detalhes da retificação:", error);
     appInstance.showToast("Erro ao carregar detalhes", "error");
   }
+}
+
+// ============================================
+// EXPORTAÇÃO PDF - LISTA DE RETIFICAÇÕES
+// ============================================
+
+export async function exportarRetificacoesPDF(container, appInstance) {
+  try {
+    if (
+      typeof pdfExport === "undefined" ||
+      typeof pdfExport.exportarRelatorio !== "function"
+    ) {
+      appInstance.showToast("Módulo PDF não disponível", "error");
+      return;
+    }
+
+    const retificacoes = estado.retificacoes || [];
+    if (retificacoes.length === 0) {
+      appInstance.showToast("Nenhuma retificação para exportar", "warning");
+      return;
+    }
+
+    appInstance.showToast("Gerando PDF de retificações...", "info");
+
+    // Preparar dados para o relatório
+    const dadosRelatorio = retificacoes.map((r) => ({
+      numero: r.numero_ocorrencia || r.numero_temporario || "Sem número",
+      tipo: getTipoLabel(r.tipo_ocorrencia),
+      data_solicitacao: r.solicitada_em || r.criado_em,
+      status: r.status,
+      justificativa: r.solicitacao_retificacao_justificativa || "-",
+      motivo_rejeicao: r.motivo_rejeicao || "-",
+      local: r.local_ocorrencia || "Não informado",
+      campos_alterados: r.campos_alterados
+        ? (() => {
+            try {
+              const campos = JSON.parse(r.campos_alterados);
+              return campos.map((c) => c.label || c.campo).join(", ");
+            } catch (e) {
+              return "-";
+            }
+          })()
+        : "-",
+    }));
+
+    // Usar a função de exportação de relatório do pdfExport
+    const result = await pdfExport.exportarRelatorio(
+      "retificacoes",
+      dadosRelatorio,
+      {
+        title: "Relatório de Retificações",
+        author: "Guarda Municipal de Pitangueiras - PR",
+        subject: "Lista de retificações de ocorrências",
+        keywords: "Guarda Municipal, Retificações, Ocorrências",
+        watermark: {
+          text: "CÓPIA OFICIAL - GUARDA MUNICIPAL DE PITANGUEIRAS/PR",
+          opacity: 0.08,
+          fontSize: 32,
+          color: "#000000",
+          angle: 45,
+        },
+      },
+    );
+
+    if (result.success) {
+      appInstance.showToast(
+        `PDF gerado com ${retificacoes.length} retificações!`,
+        "success",
+      );
+    } else {
+      appInstance.showToast("Erro ao gerar PDF: " + result.error, "error");
+    }
+  } catch (error) {
+    console.error("Erro ao exportar retificações PDF:", error);
+    appInstance.showToast("Erro ao gerar PDF", "error");
+  }
+}
+
+// ============================================
+// EXPORTAÇÃO PDF - DETALHE DA RETIFICAÇÃO
+// ============================================
+
+export async function exportarDetalheRetificacao(id, appInstance) {
+  try {
+    if (
+      typeof pdfExport === "undefined" ||
+      typeof pdfExport.exportarOcorrencia !== "function"
+    ) {
+      appInstance.showToast("Módulo PDF não disponível", "error");
+      return;
+    }
+
+    appInstance.showToast("Gerando PDF da retificação...", "info");
+
+    const result = await pdfExport.exportarOcorrencia(id, {
+      title: "Detalhes da Retificação",
+      watermark: {
+        text: "CÓPIA OFICIAL - GUARDA MUNICIPAL DE PITANGUEIRAS/PR",
+        opacity: 0.08,
+        fontSize: 32,
+        color: "#000000",
+        angle: 45,
+      },
+    });
+
+    if (result.success) {
+      appInstance.showToast("PDF gerado com sucesso!", "success");
+    } else {
+      appInstance.showToast("Erro ao gerar PDF: " + result.error, "error");
+    }
+  } catch (error) {
+    console.error("Erro ao exportar detalhe da retificação:", error);
+    appInstance.showToast("Erro ao gerar PDF", "error");
+  }
+}
+
+// ============================================
+// FILTROS
+// ============================================
+
+export function aplicarFiltros(container, appInstance) {
+  const status = document.getElementById("filtroStatusRet")?.value || "todos";
+  const dataInicio =
+    document.getElementById("filtroDataInicioRet")?.value || "";
+  const dataFim = document.getElementById("filtroDataFimRet")?.value || "";
+
+  if (dataInicio && dataFim && dataFim < dataInicio) {
+    appInstance.showToast(
+      "Data final deve ser maior ou igual à data inicial",
+      "warning",
+    );
+    return;
+  }
+
+  estado.filtros = { status, dataInicio, dataFim };
+  renderizarLista(container, appInstance);
+}
+
+export function limparFiltros(container, appInstance) {
+  estado.filtros = {
+    dataInicio: "",
+    dataFim: "",
+    status: "todos",
+  };
+
+  const fields = ["filtroStatusRet", "filtroDataInicioRet", "filtroDataFimRet"];
+  fields.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+
+  renderizarLista(container, appInstance);
+  appInstance.showToast("Filtros removidos", "info");
 }
 
 // ============================================
@@ -817,4 +1273,8 @@ export default {
   rejeitarRetificacao,
   verDetalhesRetificacao,
   carregarRetificacoes,
+  exportarRetificacoesPDF,
+  exportarDetalheRetificacao,
+  aplicarFiltros,
+  limparFiltros,
 };

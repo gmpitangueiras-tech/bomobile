@@ -1,32 +1,97 @@
 /**
- * MÓDULO DETALHE OCORRÊNCIA - Visualização e Ações
+ * MÓDULO DETALHE OCORRÊNCIA - Visualização completa com abas
  * Guarda Municipal de Pitangueiras - PR
  *
- * Este módulo gerencia:
- * - Visualização completa de uma ocorrência
- * - Exibição de dados da solicitação, ocorrência, envolvidos e anexos
- * - Ações disponíveis: editar, finalizar, cancelar, solicitar retificação
- * - Aprovação/rejeição de retificações (supervisor)
- * - Histórico de versões
- * - Exibição de campos alterados em retificações
+ * Layout com:
+ * - Cabeçalho com número, status, dados do guarda, localização e data
+ * - Abas: Detalhes, Anexos, Histórico, Gerar PDF
+ * - Seções organizadas com cards modernos
+ * - Galeria de imagens com carrossel
+ * - Timeline de histórico de versões
+ * - Exportação de PDF com opções
+ * - Barra de ações no final da página
  *
  * Depende de: authManager (global), supabaseClient (global),
- *             ocorrenciaManager (global), utils, ui
+ *             ocorrenciaManager (global), pdfExport (global), utils, ui
  */
 
 // ============================================
-// IMPORTAÇÕES
+// CONSTANTES
 // ============================================
 
-// Usamos os objetos globais disponíveis
-// (authManager, supabaseClient, ocorrenciaManager)
+const TIPOS_OCORRENCIA = [
+  { value: "furto", label: "Furto" },
+  { value: "roubo", label: "Roubo" },
+  { value: "vandalismo", label: "Vandalismo" },
+  { value: "dano_ao_patrimonio", label: "Dano ao Patrimônio" },
+  { value: "ameaca", label: "Ameaça" },
+  { value: "lesao_corporal", label: "Lesão Corporal" },
+  { value: "perturbacao", label: "Perturbação" },
+  { value: "acidente", label: "Acidente" },
+  { value: "incendio", label: "Incêndio" },
+  { value: "desaparecimento", label: "Desaparecimento" },
+  { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "outro", label: "Outro" },
+];
+
+const STATUS_ICONS = {
+  draft: "📝",
+  pending_sync: "⏳",
+  synced: "✅",
+  cancelled: "❌",
+  rectified: "🔄",
+  pending_rectification: "⏳",
+  rectification_rejected: "❌",
+};
+
+const TIPO_CORES = {
+  roubo: "badge-tipo-roubo",
+  ameaca: "badge-tipo-ameaca",
+  lesao_corporal: "badge-tipo-lesao_corporal",
+  incendio: "badge-tipo-incendio",
+  furto: "badge-tipo-furto",
+  vandalismo: "badge-tipo-vandalismo",
+  dano_ao_patrimonio: "badge-tipo-dano_ao_patrimonio",
+  perturbacao: "badge-tipo-perturbacao",
+  acidente: "badge-tipo-acidente",
+  desaparecimento: "badge-tipo-desaparecimento",
+  atendimento_social: "badge-tipo-atendimento_social",
+  outro: "badge-tipo-outro",
+};
+
+// ============================================
+// ESTADO DO MÓDULO
+// ============================================
+
+let estado = {
+  abaAtiva: "detalhes", // 'detalhes', 'anexos', 'historico', 'pdf'
+  ocorrencia: null,
+  original: null,
+  envolvidos: [],
+  anexos: [],
+  camposAlterados: [],
+  historico: [],
+  carregando: false,
+  isRetificacao: false,
+  temRetificacoes: false,
+  imagensGaleria: [],
+  pdfOptions: {
+    incluirDados: true,
+    incluirEnvolvidos: true,
+    incluirObservacoes: true,
+    incluirAnexos: true,
+    incluirAssinatura: true,
+    incluirHash: true,
+    incluirVersoes: true,
+  },
+};
 
 // ============================================
 // FUNÇÃO PRINCIPAL
 // ============================================
 
 /**
- * Renderiza a página de detalhe de uma ocorrência
+ * Renderiza a página de detalhe da ocorrência com layout moderno
  * @param {HTMLElement} container - Elemento onde renderizar
  * @param {Object} appInstance - Instância do app
  */
@@ -34,100 +99,81 @@ export async function renderDetalheOcorrencia(container, appInstance) {
   const id = appInstance.currentParams?.id;
 
   if (!id) {
-    container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-          <i class="fas fa-exclamation-triangle"></i>
-        </div>
-        <h3>Ocorrência não encontrada</h3>
-        <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;">
-          Voltar
-        </button>
-      </div>
-    `;
+    container.innerHTML = renderOcorrenciaNaoEncontrada(appInstance);
     return;
   }
 
   // Mostrar loader
-  container.innerHTML = `
-    <div class="container" style="text-align:center;padding:40px 20px;">
-      <div class="spinner-azul" style="margin:0 auto;"></div>
-      <p style="margin-top:12px;color:var(--cinza-medio);">Carregando ocorrência...</p>
-    </div>
-  `;
+  container.innerHTML = renderLoader();
 
   try {
+    estado.carregando = true;
+
     // Buscar ocorrência
     const result = await ocorrenciaManager.buscar(id);
     if (!result.success || !result.data) {
-      container.innerHTML = `
-        <div class="container" style="text-align:center;padding:40px 20px;">
-          <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
-            <i class="fas fa-exclamation-triangle"></i>
-          </div>
-          <h3>Ocorrência não encontrada</h3>
-          <p style="color:var(--cinza-medio);">${result.error || "ID inválido"}</p>
-          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;">
-            Voltar
-          </button>
-        </div>
-      `;
+      container.innerHTML = renderOcorrenciaNaoEncontrada(
+        appInstance,
+        result.error,
+      );
       return;
     }
 
-    const occ = result.data;
+    estado.ocorrencia = result.data;
 
     // Buscar envolvidos
     const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
-    const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
+    estado.envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
 
     // Buscar anexos
     const anexosResult = await ocorrenciaManager.listarAnexos(id);
-    const anexos = anexosResult.success ? anexosResult.data : [];
+    estado.anexos = anexosResult.success ? anexosResult.data : [];
+
+    // Processar imagens para galeria
+    estado.imagensGaleria = estado.anexos.filter(
+      (a) => a.tipo_arquivo === "image" || a.tipo === "image",
+    );
 
     // Verificar se é retificação
-    const isRetificacao = occ.ocorrencia_original_id !== null;
-    let original = null;
-    let camposAlterados = [];
+    estado.isRetificacao = estado.ocorrencia.ocorrencia_original_id !== null;
+    estado.original = null;
 
-    if (isRetificacao) {
+    if (estado.isRetificacao) {
       const origResult = await ocorrenciaManager.buscar(
-        occ.ocorrencia_original_id,
+        estado.ocorrencia.ocorrencia_original_id,
       );
       if (origResult.success) {
-        original = origResult.data;
+        estado.original = origResult.data;
       }
-      if (occ.campos_alterados) {
+      if (estado.ocorrencia.campos_alterados) {
         try {
-          camposAlterados = JSON.parse(occ.campos_alterados);
+          estado.camposAlterados = JSON.parse(
+            estado.ocorrencia.campos_alterados,
+          );
         } catch (e) {
-          console.warn("Erro ao parsear campos alterados:", e);
+          estado.camposAlterados = [];
         }
       }
     }
 
-    // Verificar permissões
-    const podeEditar = authManager.podeEditar(occ);
-    const podeCancelar = authManager.podeCancelar(occ);
-    const podeFinalizar = authManager.podeFinalizar(occ);
-    const podeRetificar = authManager.podeSolicitarRetificacao(occ);
-    const podeVerHistorico = authManager.podeVerHistorico(occ);
-    const isSupervisor = authManager.isSupervisor();
-
     // Verificar se tem retificações
-    const temRetificacoes = await ocorrenciaManager.temRetificacoes(id);
+    estado.temRetificacoes = await ocorrenciaManager.temRetificacoes(id);
+
+    // Buscar histórico completo
+    const historicoResult = await ocorrenciaManager.buscarHistorico(id);
+    estado.historico = historicoResult.success ? historicoResult.data : [];
 
     // Buscar dados do criador
     let criadorNome = "Desconhecido";
     let criadorCPF = "";
-    if (occ.criado_por) {
+    if (estado.ocorrencia.criado_por) {
       try {
         const client = supabaseClient.getClient();
         if (client) {
           const { data: criador } = await client
             .from("usuarios")
             .select("nome_completo, cpf")
-            .eq("id", occ.criado_por)
+            .eq("id", estado.ocorrencia.criado_por)
             .single();
           if (criador) {
             criadorNome = criador.nome_completo;
@@ -139,295 +185,358 @@ export async function renderDetalheOcorrencia(container, appInstance) {
       }
     }
 
-    const cpfExibido = formatarCPFSeguro(criadorCPF);
+    estado.criadorNome = criadorNome;
+    estado.criadorCPF = criadorCPF;
+
+    estado.carregando = false;
 
     // Renderizar
-    renderizarDetalhe(
-      container,
-      occ,
-      original,
-      envolvidos,
-      anexos,
-      camposAlterados,
-      {
-        isRetificacao,
-        temRetificacoes,
-        podeEditar,
-        podeCancelar,
-        podeFinalizar,
-        podeRetificar,
-        podeVerHistorico,
-        isSupervisor,
-        criadorNome,
-        cpfExibido,
-      },
-      appInstance,
-    );
+    renderizarDetalhe(container, appInstance);
 
     // Registrar funções globais
-    window._detalheFinalizar = (id) => finalizarOcorrencia(id, appInstance);
-    window._detalheCancelar = (id) => cancelarOcorrencia(id, appInstance);
-    window._detalheSolicitarRetificacao = (id) =>
-      solicitarRetificacao(id, appInstance);
-    window._detalheAprovarRetificacao = (id) =>
-      aprovarRetificacao(id, appInstance);
-    window._detalheRejeitarRetificacao = (id) =>
-      rejeitarRetificacao(id, appInstance);
-    window._detalheVerHistorico = (id) => verHistorico(id, appInstance);
-    window._detalheEditar = (id) => editarOcorrencia(id, appInstance);
+    window._detalheMudarAba = (aba) => mudarAba(aba, container, appInstance);
+    window._detalheFinalizar = () => finalizarOcorrencia(appInstance);
+    window._detalheCancelar = () => cancelarOcorrencia(appInstance);
+    window._detalheSolicitarRetificacao = () =>
+      solicitarRetificacao(appInstance);
+    window._detalheAprovarRetificacao = () => aprovarRetificacao(appInstance);
+    window._detalheRejeitarRetificacao = () => rejeitarRetificacao(appInstance);
+    window._detalheEditar = () => editarOcorrencia(appInstance);
+    window._detalheGerarPDF = () => gerarPDFCompleto(appInstance);
+    window._detalheVoltar = () => appInstance.navigateTo("ocorrencias");
+    window._detalheVerImagem = (index) => verImagemGaleria(index, appInstance);
+    window._detalheBaixarAnexo = (url, nome) => baixarAnexo(url, nome);
+    window._detalheTogglePDFOption = (option) =>
+      togglePDFOption(option, container, appInstance);
   } catch (error) {
     console.error("❌ Erro ao carregar detalhe:", error);
-    container.innerHTML = `
-      <div class="container" style="text-align:center;padding:40px 20px;">
-        <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
-          <i class="fas fa-exclamation-triangle"></i>
-        </div>
-        <h3>Erro ao carregar ocorrência</h3>
-        <p style="color:var(--cinza-medio);">${error.message}</p>
-        <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;">
-          Voltar
-        </button>
-      </div>
-    `;
+    estado.carregando = false;
+    container.innerHTML = renderErro(error, appInstance);
   }
 }
 
 // ============================================
-// RENDERIZAÇÃO DO DETALHE
+// RENDERIZAÇÃO PRINCIPAL
 // ============================================
 
-function renderizarDetalhe(
-  container,
-  occ,
-  original,
-  envolvidos,
-  anexos,
-  camposAlterados,
-  perms,
-  appInstance,
-) {
-  const {
-    isRetificacao,
-    temRetificacoes,
-    podeEditar,
-    podeCancelar,
-    podeFinalizar,
-    podeRetificar,
-    podeVerHistorico,
-    isSupervisor,
-    criadorNome,
-    cpfExibido,
-  } = perms;
+function renderizarDetalhe(container, appInstance) {
+  const occ = estado.ocorrencia;
+  if (!occ) {
+    container.innerHTML = renderOcorrenciaNaoEncontrada(appInstance);
+    return;
+  }
 
   const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
   const statusClass = getStatusClass(occ.status);
   const statusLabel = getStatusLabel(occ.status);
+  const statusIcon = STATUS_ICONS[occ.status] || "📌";
+  const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
+  const tipoClass = TIPO_CORES[occ.tipo_ocorrencia] || "badge-tipo-outro";
   const dataCriacao = formatarDataHoraLocal(occ.criado_em);
   const dataInicio = occ.data_hora_inicio
     ? formatarDataHoraLocal(occ.data_hora_inicio)
     : "Não informado";
   const dataEncerramento = occ.data_hora_encerramento
     ? formatarDataHoraLocal(occ.data_hora_encerramento)
-    : "Não informado";
-  const versaoInfo = isRetificacao
-    ? `Retificação v${occ.numero_versao || 1}`
-    : temRetificacoes
-      ? "Versão Original (substituída)"
-      : "";
+    : "Não encerrado";
+  const cpfExibido = formatarCPFSeguro(estado.criadorCPF);
+
+  const coords =
+    occ.latitude && occ.longitude
+      ? `${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}`
+      : "Localização não disponível";
+
+  const isSupervisor = authManager.isSupervisor();
+  const isDraft = occ.status === "draft";
   const isPending = occ.status === "pending_rectification";
+  const isSynced = occ.status === "synced";
+  const isCancelled = occ.status === "cancelled";
+
+  // Verificar permissões
+  const podeEditar = authManager.podeEditar(occ);
+  const podeFinalizar = authManager.podeFinalizar(occ);
+  const podeCancelar = authManager.podeCancelar(occ);
+  const podeRetificar = authManager.podeSolicitarRetificacao(occ);
+
+  const temImagens = estado.imagensGaleria.length > 0;
+  const totalAnexos = estado.anexos.length;
 
   let html = `
-    <div class="container" style="padding-bottom:120px;">
-      <!-- Cabeçalho -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
-        <div>
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-            #${numero}
-          </h2>
-          <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;display:flex;flex-wrap:wrap;gap:12px;">
-            <span><i class="fas fa-user" style="margin-right:4px;"></i>
-              <strong>${criadorNome}</strong>
-            </span>
-            <span><i class="fas fa-shield-alt" style="margin-right:4px;"></i>${cpfExibido}</span>
-            ${
-              occ.latitude && occ.longitude
-                ? `
-              <span>
-                <i class="fas fa-map-pin" style="margin-right:4px;"></i>
-                📍 ${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}
-              </span>
-            `
-                : ""
-            }
-            ${
-              occ.hash_pericial
-                ? `
-              <span title="Hash Pericial SHA-256" style="cursor:help;">
-                <i class="fas fa-fingerprint" style="margin-right:4px;color:var(--verde-bandeira);"></i>
-                <span style="font-family:monospace;font-size:10px;">${occ.hash_pericial.substring(0, 16)}...</span>
-              </span>
-            `
-                : ""
-            }
-          </div>
-          <div style="font-size:11px;color:var(--cinza-medio);margin-top:2px;">
-            <i class="fas fa-calendar" style="margin-right:4px;"></i>
-            Criado em ${dataCriacao}
-            ${occ.numero_versao > 1 ? ` • v${occ.numero_versao}` : ""}
-          </div>
-        </div>
-        <span class="badge badge-${statusClass}" style="font-size:13px;padding:4px 16px;white-space:nowrap;">
-          ${statusLabel}
+  <div class="container" style="padding-bottom:100px;" id="detalheContainer">
+    <!-- Cabeçalho: Voltar + Status -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <button onclick="window._detalheVoltar()" 
+        style="background:none;border:none;color:var(--azul-bandeira);font-size:15px;cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:4px;font-weight:600;">
+        <i class="fas fa-arrow-left" style="font-size:14px;"></i> Voltar
+      </button>
+      <span class="badge badge-${statusClass}" style="font-size:12px;padding:6px 16px;font-weight:700;border-radius:30px;display:flex;align-items:center;gap:4px;">
+        ${statusIcon} ${statusLabel}
+      </span>
+    </div>
+
+    <!-- Card do cabeçalho principal -->
+    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px 16px;box-shadow:var(--sombra-media);margin-bottom:12px;">
+      <!-- Linha 1: Número + Tipo + Versão -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-weight:800;font-size:20px;color:var(--azul-bandeira);letter-spacing:-0.5px;">
+          #${numero}
         </span>
+        <span class="badge ${tipoClass}" style="font-size:10px;padding:2px 12px;font-weight:700;">
+          ${tipoLabel}
+        </span>
+        ${occ.numero_versao > 1 ? `<span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">v${occ.numero_versao}</span>` : ""}
       </div>
 
-      ${isPending ? renderAlertaPendente(occ) : ""}
-      ${isRetificacao && occ.justificativa_retificacao ? renderJustificativaRetificacao(occ) : ""}
-      ${isRetificacao && original ? renderVersaoOriginal(occ, original, camposAlterados, appInstance) : ""}
+      <!-- Linha 2: Guarda e CPF -->
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;color:var(--cinza-escuro);padding:4px 0;border-top:1px solid var(--cinza-claro);">
+        <i class="fas fa-user-circle" style="color:var(--azul-bandeira);font-size:16px;"></i>
+        <span style="font-weight:600;">${estado.criadorNome}</span>
+        <span style="color:var(--cinza-medio);">·</span>
+        <span style="color:var(--cinza-medio);font-size:13px;">${cpfExibido}</span>
+      </div>
 
-      <!-- Dados da Solicitação -->
-      ${renderDadosSolicitacao(occ)}
+      <!-- Linha 3: Localização e Data -->
+      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--cinza-medio);padding:3px 0;border-top:1px solid var(--cinza-claro);">
+        <div style="display:flex;align-items:center;gap:4px;">
+          <i class="fas fa-map-pin" style="color:var(--verde-bandeira);font-size:12px;"></i>
+          <span>${coords}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <i class="fas fa-calendar" style="color:var(--azul-bandeira);font-size:12px;"></i>
+          <span>${dataCriacao}</span>
+        </div>
+        ${
+          occ.data_hora_encerramento
+            ? `
+          <div style="display:flex;align-items:center;gap:4px;">
+            <i class="fas fa-check-circle" style="color:var(--verde-bandeira);font-size:12px;"></i>
+            <span>Encerrado: ${dataEncerramento}</span>
+          </div>
+        `
+            : ""
+        }
+      </div>
 
-      <!-- Dados da Ocorrência -->
-      ${renderDadosOcorrencia(occ, dataInicio, dataEncerramento, versaoInfo)}
-
-      <!-- Envolvidos -->
-      ${renderEnvolvidos(envolvidos)}
-
-      <!-- Observações -->
-      ${occ.observacoes && occ.observacoes.trim() !== "" ? renderObservacoes(occ.observacoes) : ""}
-
-      <!-- Anexos -->
-      ${renderAnexos(anexos)}
-
-      <!-- Ações -->
-      ${renderAcoes(
-        occ,
-        {
-          podeEditar,
-          podeCancelar,
-          podeFinalizar,
-          podeRetificar,
-          podeVerHistorico,
-          isSupervisor,
-          isPending,
-          isRetificacao,
-          temRetificacoes,
-        },
-        appInstance,
-      )}
+      <!-- Linha 4: Hash de integridade (se houver) -->
+      ${
+        occ.hash_pericial
+          ? `
+        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--verde-bandeira);padding:3px 0;border-top:1px solid var(--cinza-claro);font-family:monospace;">
+          <i class="fas fa-fingerprint" style="font-size:11px;"></i>
+          <span>Hash: ${occ.hash_pericial.substring(0, 16)}...</span>
+          <span style="font-size:9px;color:var(--cinza-medio);font-weight:400;cursor:help;" title="Hash SHA-256 de integridade">🔒</span>
+        </div>
+      `
+          : ""
+      }
     </div>
-  `;
+
+    <!-- Abas -->
+    <div style="display:flex;gap:2px;margin-bottom:14px;background:var(--branco);border-radius:var(--border-radius);padding:4px;box-shadow:var(--sombra-suave);overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;">
+      ${renderAbas(totalAnexos)}
+    </div>
+
+    <!-- Conteúdo da aba ativa -->
+    <div id="abaConteudo">
+      ${renderConteudoAba(appInstance)}
+    </div>
+
+    <!-- Botões de ação no final -->
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
+      ${renderBotoesAcao(occ, { podeEditar, podeFinalizar, podeCancelar, podeRetificar, isSupervisor, isDraft, isPending, isSynced, isCancelled }, appInstance)}
+    </div>
+  </div>
+`;
 
   container.innerHTML = html;
 }
 
 // ============================================
-// RENDERIZAÇÃO DE SEÇÕES
+// RENDERIZAÇÃO: ABAS
 // ============================================
 
-function renderAlertaPendente(occ) {
-  return `
-    <div style="background:#fef3c7;padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:16px;">
-      <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:#92400e;">
-        <i class="fas fa-clock" style="margin-right:6px;"></i>
-        Solicitação de Retificação Pendente
-      </p>
-      <p style="font-size:14px;color:#92400e;margin:0;">
-        ${occ.solicitacao_retificacao_justificativa || "Aguardando análise do supervisor."}
-      </p>
-    </div>
-  `;
+function renderAbas(totalAnexos) {
+  const aba = estado.abaAtiva;
+
+  const abas = [
+    { id: "detalhes", label: "Detalhes", icon: "fa-file-alt" },
+    { id: "anexos", label: `Anexos (${totalAnexos})`, icon: "fa-paperclip" },
+    { id: "historico", label: "Histórico", icon: "fa-history" },
+    { id: "pdf", label: "Gerar PDF", icon: "fa-file-pdf" },
+  ];
+
+  return abas
+    .map(
+      (a) => `
+      <button onclick="window._detalheMudarAba('${a.id}')" 
+        class="aba-btn"
+        style="
+          flex:1;
+          padding:8px 4px;
+          border:none;
+          border-radius:var(--border-radius);
+          font-size:11px;
+          font-weight:${aba === a.id ? "700" : "500"};
+          cursor:pointer;
+          transition:all 0.2s ease;
+          background:${aba === a.id ? "var(--azul-bandeira)" : "transparent"};
+          color:${aba === a.id ? "var(--branco)" : "var(--cinza-medio)"};
+          white-space:nowrap;
+          min-height:36px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap:4px;
+        "
+      >
+        <i class="fas ${a.icon}" style="font-size:12px;"></i>
+        <span>${a.label}</span>
+      </button>
+    `,
+    )
+    .join("");
 }
 
-function renderJustificativaRetificacao(occ) {
-  return `
-    <div style="background:var(--azul-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);margin-bottom:16px;">
-      <p style="font-size:13px;font-weight:600;margin:0 0 4px 0;color:var(--azul-bandeira);">
-        <i class="fas fa-quote-left" style="margin-right:6px;"></i>
-        Justificativa da Retificação
-      </p>
-      <p style="font-size:14px;color:var(--cinza-escuro);margin:0;">
-        ${occ.justificativa_retificacao}
-      </p>
-    </div>
-  `;
+// ============================================
+// RENDERIZAÇÃO: CONTEÚDO DAS ABAS
+// ============================================
+
+function renderConteudoAba(appInstance) {
+  switch (estado.abaAtiva) {
+    case "detalhes":
+      return renderAbaDetalhes(appInstance);
+    case "anexos":
+      return renderAbaAnexos(appInstance);
+    case "historico":
+      return renderAbaHistorico(appInstance);
+    case "pdf":
+      return renderAbaPDF(appInstance);
+    default:
+      return renderAbaDetalhes(appInstance);
+  }
 }
 
-function renderVersaoOriginal(occ, original, camposAlterados, appInstance) {
-  let html = `
-    <div style="background:var(--verde-muito-claro);padding:12px 16px;border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:16px;">
-      <p style="font-size:14px;font-weight:600;margin:0 0 6px 0;color:var(--verde-escuro);">
-        <i class="fas fa-code-branch" style="margin-right:6px;"></i>
-        Esta é uma retificação da ocorrência #${original.numero_ocorrencia || original.numero_temporario || "original"}
-      </p>
-      <p style="font-size:13px;color:var(--cinza-escuro);margin:0;">
-        Status: ${getStatusLabel(occ.status)} 
-        ${
-          occ.status === "pending_rectification"
-            ? "⏳ Aguardando aprovação"
-            : occ.status === "rectified"
-              ? "✅ Aprovada"
-              : occ.status === "rectification_rejected"
-                ? "❌ Rejeitada"
-                : ""
-        }
-      </p>
-    </div>
-  `;
+// ============================================
+// BOTÕES DE AÇÃO - IGUAL À IMAGEM
+// ============================================
 
-  if (camposAlterados.length > 0) {
-    html += `
-      <div style="margin-bottom:16px;">
-        <h4 style="color:var(--azul-bandeira);font-size:14px;margin:0 0 8px 0;">
-          <i class="fas fa-edit"></i> Campos Alterados
-        </h4>
-        <div style="background:var(--branco);border-radius:var(--border-radius);overflow:hidden;box-shadow:var(--sombra-suave);">
-          ${camposAlterados
-            .map(
-              (campo) => `
-            <div style="display:grid;grid-template-columns:1fr 2fr;gap:4px;padding:8px 12px;border-bottom:1px solid var(--cinza-claro);">
-              <div style="font-weight:600;color:var(--cinza-escuro);font-size:13px;">
-                ${campo.label || campo.campo}
-              </div>
-              <div style="display:flex;gap:8px;align-items:center;font-size:13px;flex-wrap:wrap;">
-                <span style="color:var(--cinza-medio);text-decoration:line-through;font-size:12px;">
-                  ${campo.antes || "(vazio)"}
-                </span>
-                <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:10px;"></i>
-                <span style="color:var(--verde-bandeira);font-weight:500;">
-                  ${campo.depois || "(vazio)"}
-                </span>
-              </div>
-            </div>
-          `,
-            )
-            .join("")}
-        </div>
+function renderBotoesAcao(occ, perms, appInstance) {
+  const {
+    podeEditar,
+    podeFinalizar,
+    podeCancelar,
+    podeRetificar,
+    isSupervisor,
+    isDraft,
+    isPending,
+    isSynced,
+    isCancelled,
+  } = perms;
+
+  const botoes = [];
+
+  // Editar (apenas rascunho)
+  if (isDraft && podeEditar) {
+    botoes.push({
+      label: "EDITAR OCORRÊNCIA",
+      icon: "fa-edit",
+      class: "btn-primary",
+      action: "window._detalheEditar()",
+    });
+  }
+
+  // Finalizar (apenas rascunho)
+  if (isDraft && podeFinalizar) {
+    botoes.push({
+      label: "FINALIZAR OCORRÊNCIA",
+      icon: "fa-check-circle",
+      class: "btn-success",
+      action: "window._detalheFinalizar()",
+    });
+  }
+
+  // Aprovar/Rejeitar retificação (apenas supervisor)
+  if (isPending && isSupervisor) {
+    botoes.push({
+      label: "APROVAR RETIFICAÇÃO",
+      icon: "fa-check",
+      class: "btn-success",
+      action: "window._detalheAprovarRetificacao()",
+    });
+    botoes.push({
+      label: "REJEITAR RETIFICAÇÃO",
+      icon: "fa-times",
+      class: "btn-danger",
+      action: "window._detalheRejeitarRetificacao()",
+    });
+  }
+
+  // Solicitar retificação (apenas finalizada)
+  if (isSynced && podeRetificar) {
+    botoes.push({
+      label: "SOLICITAR RETIFICAÇÃO",
+      icon: "fa-sync-alt",
+      class: "btn-primary",
+      action: "window._detalheSolicitarRetificacao()",
+    });
+  }
+
+  // Cancelar
+  if (!isCancelled && podeCancelar) {
+    botoes.push({
+      label: "CANCELAR OCORRÊNCIA",
+      icon: "fa-times-circle",
+      class: "btn-danger",
+      action: "window._detalheCancelar()",
+    });
+  }
+
+  // Gerar PDF (sempre) - aparece como botão adicional
+  if (botoes.length > 0) {
+    botoes.push({
+      label: "GERAR PDF",
+      icon: "fa-file-pdf",
+      class: "btn-secondary",
+      action: "window._detalheGerarPDF()",
+      style:
+        "background:var(--azul-muito-claro);color:var(--azul-bandeira);border:2px solid var(--azul-bandeira);",
+    });
+  }
+
+  if (botoes.length === 0) {
+    return `
+      <div style="padding:12px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);text-align:center;">
+        <p style="color:var(--cinza-medio);font-size:13px;margin:0;">
+          <i class="fas fa-info-circle"></i>
+          Nenhuma ação disponível.
+        </p>
       </div>
     `;
   }
 
-  html += `
-    <div class="card-revisao" style="margin-bottom:12px;opacity:0.8;">
-      <h4 style="font-size:14px;color:var(--cinza-medio);margin:0 0 8px 0;">
-        <i class="fas fa-history"></i> Versão Original (para referência)
-      </h4>
-      <div class="campo"><span class="rotulo">Local:</span><span class="valor">${original.local_ocorrencia || "Não informado"}</span></div>
-      <div class="campo"><span class="rotulo">Data/Hora Início:</span><span class="valor">${formatarDataHoraLocal(original.data_hora_inicio)}</span></div>
-      <div class="campo"><span class="rotulo">Observações:</span><span class="valor" style="white-space:pre-wrap;">${original.observacoes || "Nenhuma"}</span></div>
-      <button class="btn-secondary" style="margin-top:6px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;" 
-        onclick="app.navigateTo('detalhe-ocorrencia', {id: '${original.id}'})">
-        <i class="fas fa-eye"></i> Ver versão original completa
-      </button>
-    </div>
-  `;
-
-  return html;
+  return botoes
+    .map(
+      (btn) => `
+    <button onclick="${btn.action}" 
+      class="${btn.class}" 
+      style="width:100%;border-radius:12px;min-height:48px;gap:8px;font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:0.5px;${btn.style || ""}">
+      <i class="fas ${btn.icon}" style="font-size:14px;"></i>
+      ${btn.label}
+    </button>
+  `,
+    )
+    .join("");
 }
 
-function renderDadosSolicitacao(occ) {
+// ============================================
+// ABA: DETALHES
+// ============================================
+
+function renderAbaDetalhes(appInstance) {
+  const occ = estado.ocorrencia;
+  if (!occ) return "";
+
+  // Dados da Solicitação
   const camposSolicitacao = [
     { label: "Forma de Solicitação", valor: occ.forma_solicitacao },
     { label: "Nome do Solicitante", valor: occ.nome_solicitante || "Anônimo" },
@@ -462,29 +571,18 @@ function renderDadosSolicitacao(occ) {
     },
   ];
 
-  const preenchidos = camposSolicitacao.filter(
+  const camposSolicitacaoPreenchidos = camposSolicitacao.filter(
     (c) => c.valor && c.valor !== "Não informado" && c.valor !== "Anônimo",
   );
 
-  if (preenchidos.length === 0) return "";
+  // Dados da Ocorrência
+  const dataInicio = occ.data_hora_inicio
+    ? formatarDataHoraLocal(occ.data_hora_inicio)
+    : "Não informado";
+  const dataEncerramento = occ.data_hora_encerramento
+    ? formatarDataHoraLocal(occ.data_hora_encerramento)
+    : "Não encerrado";
 
-  return `
-    <div class="card-revisao" style="margin-top:12px;">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-phone-alt"></i> Dados da Solicitação
-      </h4>
-      ${preenchidos
-        .map(
-          (c) => `
-        <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-      `,
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function renderDadosOcorrencia(occ, dataInicio, dataEncerramento, versaoInfo) {
   const camposOcorrencia = [
     {
       label: "Tipo de Ocorrência",
@@ -508,295 +606,610 @@ function renderDadosOcorrencia(occ, dataInicio, dataEncerramento, versaoInfo) {
     },
     { label: "Data/Hora Início", valor: dataInicio },
     { label: "Data/Hora Encerramento", valor: dataEncerramento },
-    { label: "Versão", valor: occ.numero_versao || 1 },
-    { label: "Status da Versão", valor: versaoInfo || "Versão atual" },
   ];
 
-  return `
-    <div class="card-revisao">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-map-marker-alt"></i> Dados da Ocorrência
+  // Verificar se é retificação
+  let isRetificacao = estado.isRetificacao;
+  let camposAlterados = estado.camposAlterados;
+
+  let html = `
+    <!-- Seção: Dados da Solicitação -->
+    ${
+      camposSolicitacaoPreenchidos.length > 0
+        ? `
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-phone-alt" style="font-size:14px;"></i>
+          Dados da Solicitação
+        </h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
+          ${camposSolicitacaoPreenchidos
+            .map(
+              (c) => `
+            <div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);display:flex;flex-direction:column;">
+              <span style="color:var(--cinza-medio);font-size:10px;text-transform:uppercase;letter-spacing:0.3px;">${c.label}</span>
+              <span style="color:var(--cinza-escuro);font-weight:500;word-break:break-word;">${c.valor}</span>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+      </div>
+    `
+        : ""
+    }
+
+    <!-- Seção: Dados da Ocorrência -->
+    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+      <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+        <i class="fas fa-map-marker-alt" style="font-size:14px;"></i>
+        Dados da Ocorrência
       </h4>
-      ${camposOcorrencia
-        .map(
-          (c) => `
-        <div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>
-      `,
-        )
-        .join("")}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
+        ${camposOcorrencia
+          .map(
+            (c) => `
+          <div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);display:flex;flex-direction:column;">
+            <span style="color:var(--cinza-medio);font-size:10px;text-transform:uppercase;letter-spacing:0.3px;">${c.label}</span>
+            <span style="color:var(--cinza-escuro);font-weight:500;word-break:break-word;">${c.valor}</span>
+          </div>
+        `,
+          )
+          .join("")}
+      </div>
     </div>
+
+    <!-- Seção: Observações -->
+    ${
+      occ.observacoes && occ.observacoes.trim() !== ""
+        ? `
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-pencil-alt" style="font-size:14px;"></i>
+          Observações
+        </h4>
+        <div style="font-size:13px;color:var(--cinza-escuro);line-height:1.6;white-space:pre-wrap;word-break:break-word;background:var(--branco-fumaca);padding:10px;border-radius:var(--border-radius);">
+          ${occ.observacoes}
+        </div>
+      </div>
+    `
+        : ""
+    }
+
+    <!-- Seção: Envolvidos -->
+    ${
+      estado.envolvidos.length > 0
+        ? `
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-users" style="font-size:14px;"></i>
+          Envolvidos (${estado.envolvidos.length})
+        </h4>
+        ${estado.envolvidos
+          .map(
+            (env) => `
+          <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:10px;margin-bottom:6px;border-left:3px solid ${env.tipo === "autor" ? "var(--erro)" : env.tipo === "vitima" ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span class="badge badge-azul" style="font-size:9px;padding:1px 10px;">${getTipoEnvolvidoLabel(env.tipo)}</span>
+              <span style="font-weight:600;font-size:13px;">${env.nome_completo}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:11px;color:var(--cinza-medio);margin-top:4px;">
+              ${env.cpf ? `<div><span style="color:var(--cinza-medio);">CPF:</span> ${env.cpf}</div>` : ""}
+              ${env.telefone ? `<div><span style="color:var(--cinza-medio);">Tel:</span> ${env.telefone}</div>` : ""}
+              ${env.rg ? `<div><span style="color:var(--cinza-medio);">RG:</span> ${env.rg}</div>` : ""}
+              ${env.data_nascimento ? `<div><span style="color:var(--cinza-medio);">Nasc:</span> ${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</div>` : ""}
+            </div>
+            ${env.observacoes ? `<div style="font-size:11px;color:var(--cinza-escuro);margin-top:4px;padding-top:4px;border-top:1px solid var(--cinza-claro);">${env.observacoes}</div>` : ""}
+          </div>
+        `,
+          )
+          .join("")}
+      </div>
+    `
+        : ""
+    }
+
+    <!-- Seção: Retificação (se aplicável) -->
+    ${
+      isRetificacao && camposAlterados.length > 0
+        ? `
+      <div style="background:#fef3c7;border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;border-left:4px solid var(--aviso);">
+        <h4 style="color:#92400e;font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-sync-alt" style="font-size:14px;"></i>
+          Campos Retificados
+        </h4>
+        ${camposAlterados
+          .map(
+            (campo) => `
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:4px;padding:4px 0;border-bottom:1px solid #fde68a;font-size:12px;">
+            <div style="font-weight:600;color:#92400e;">${campo.label || campo.campo}</div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <span style="color:var(--cinza-medio);text-decoration:line-through;font-size:11px;">${campo.antes || "(vazio)"}</span>
+              <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:9px;"></i>
+              <span style="color:var(--verde-bandeira);font-weight:500;">${campo.depois || "(vazio)"}</span>
+            </div>
+          </div>
+        `,
+          )
+          .join("")}
+        ${
+          occ.justificativa_retificacao
+            ? `
+          <div style="margin-top:8px;padding:8px 10px;background:var(--branco);border-radius:var(--border-radius);font-size:12px;color:var(--cinza-escuro);">
+            <strong>Justificativa:</strong> ${occ.justificativa_retificacao}
+          </div>
+        `
+            : ""
+        }
+      </div>
+    `
+        : ""
+    }
   `;
+
+  return html;
 }
 
-function renderEnvolvidos(envolvidos) {
-  let html = `
-    <div class="card-revisao">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-users"></i> Envolvidos (${envolvidos.length})
-      </h4>
-  `;
+// ============================================
+// ABA: ANEXOS
+// ============================================
 
-  if (envolvidos.length === 0) {
+function renderAbaAnexos(appInstance) {
+  const anexos = estado.anexos;
+  const imagens = estado.imagensGaleria;
+  const documentos = anexos.filter(
+    (a) => a.tipo_arquivo !== "image" && a.tipo !== "image",
+  );
+
+  let html = "";
+
+  // Galeria de imagens
+  if (imagens.length > 0) {
     html += `
-      <div style="text-align:center;padding:20px;color:var(--cinza-medio);font-size:14px;">
-        <i class="fas fa-users" style="font-size:24px;display:block;margin-bottom:8px;color:var(--cinza-claro);"></i>
-        Nenhum envolvido cadastrado
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-images" style="font-size:14px;"></i>
+          Fotos (${imagens.length})
+        </h4>
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;">
+          ${imagens
+            .map(
+              (img, index) => `
+            <div onclick="window._detalheVerImagem(${index})" 
+              style="aspect-ratio:1;border-radius:var(--border-radius);overflow:hidden;cursor:pointer;background:var(--cinza-claro);position:relative;border:2px solid var(--cinza-claro);">
+              <img src="${img.url_thumb || img.url}" alt="Anexo ${index + 1}" 
+                style="width:100%;height:100%;object-fit:cover;"
+                loading="lazy"
+                onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+              <div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:24px;">
+                <i class="fas fa-image"></i>
+              </div>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+        ${
+          imagens.length > 3
+            ? `
+          <button onclick="window._detalheVerImagem(0)" 
+            style="width:100%;margin-top:8px;padding:6px;border:none;border-radius:var(--border-radius);background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:12px;font-weight:600;cursor:pointer;">
+            <i class="fas fa-expand"></i> Ver todas as imagens
+          </button>
+        `
+            : ""
+        }
       </div>
     `;
-  } else {
-    envolvidos.forEach((env) => {
-      html += `
-        <div class="envolvido-item-modern">
-          <div class="header">
-            <span class="badge badge-azul">
-              <i class="fas fa-user" style="margin-right:4px;"></i>
-              ${getTipoEnvolvidoLabel(env.tipo)}
-            </span>
-            <span class="nome">${env.nome_completo || "Nome não informado"}</span>
-          </div>
-          <div class="detalhes-grid">
-            ${
-              env.cpf
-                ? `
-              <div class="campo">
-                <i class="fas fa-id-card"></i>
-                <span class="label">CPF:</span>
-                <span class="valor">${env.cpf}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.rg
-                ? `
-              <div class="campo">
-                <i class="fas fa-address-card"></i>
-                <span class="label">RG:</span>
-                <span class="valor">${env.rg}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.telefone
-                ? `
-              <div class="campo">
-                <i class="fas fa-phone"></i>
-                <span class="label">Tel:</span>
-                <span class="valor">${env.telefone}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.data_nascimento
-                ? `
-              <div class="campo">
-                <i class="fas fa-calendar-alt"></i>
-                <span class="label">Nasc:</span>
-                <span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.endereco
-                ? `
-              <div class="campo">
-                <i class="fas fa-map-marker-alt"></i>
-                <span class="label">End:</span>
-                <span class="valor">${env.endereco}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.bairro
-                ? `
-              <div class="campo">
-                <i class="fas fa-location-dot"></i>
-                <span class="label">Bairro:</span>
-                <span class="valor">${env.bairro}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.cidade
-                ? `
-              <div class="campo">
-                <i class="fas fa-city"></i>
-                <span class="label">Cidade:</span>
-                <span class="valor">${env.cidade}</span>
-              </div>
-            `
-                : ""
-            }
-            ${
-              env.observacoes
-                ? `
-              <div class="campo" style="grid-column: 1 / -1;">
-                <i class="fas fa-pencil-alt"></i>
-                <span class="label">Obs:</span>
-                <span class="valor">${env.observacoes}</span>
-              </div>
-            `
-                : ""
-            }
-          </div>
-        </div>
-      `;
-    });
   }
+
+  // Documentos
+  if (documentos.length > 0) {
+    html += `
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-file-alt" style="font-size:14px;"></i>
+          Documentos (${documentos.length})
+        </h4>
+        ${documentos
+          .map(
+            (doc) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--cinza-claro);">
+            <i class="fas ${getIconAnexo(doc.tipo_arquivo)}" style="color:var(--azul-bandeira);font-size:18px;"></i>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:500;word-break:break-word;">${doc.nome_arquivo}</div>
+              <div style="font-size:11px;color:var(--cinza-medio);">${formatarTamanho(doc.tamanho || 0)}</div>
+            </div>
+            ${
+              doc.url
+                ? `
+              <button onclick="window._detalheBaixarAnexo('${doc.url}', '${doc.nome_arquivo}')" 
+                style="padding:6px 10px;border:none;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;font-size:12px;min-height:32px;">
+                <i class="fas fa-download"></i>
+              </button>
+            `
+                : ""
+            }
+          </div>
+        `,
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  if (anexos.length === 0) {
+    html += `
+      <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:8px;">
+          <i class="fas fa-paperclip"></i>
+        </div>
+        <p style="font-weight:500;">Nenhum anexo adicionado</p>
+        <p style="font-size:12px;">Esta ocorrência não possui anexos.</p>
+      </div>
+    `;
+  }
+
+  return html;
+}
+
+// ============================================
+// ABA: HISTÓRICO
+// ============================================
+
+function renderAbaHistorico(appInstance) {
+  const historico = estado.historico;
+
+  if (historico.length === 0) {
+    return `
+      <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:8px;">
+          <i class="fas fa-history"></i>
+        </div>
+        <p style="font-weight:500;">Nenhum histórico disponível</p>
+        <p style="font-size:12px;">Esta ocorrência não possui versões anteriores.</p>
+      </div>
+    `;
+  }
+
+  // Ordenar do mais recente para o mais antigo
+  const sorted = [...historico].sort((a, b) => {
+    const dateA = new Date(a.criado_em);
+    const dateB = new Date(b.criado_em);
+    return dateB - dateA;
+  });
+
+  let html = `
+    <div style="position:relative;padding-left:20px;">
+      <div style="position:absolute;left:4px;top:4px;bottom:4px;width:2px;background:var(--cinza-claro);"></div>
+  `;
+
+  sorted.forEach((item, index) => {
+    const isOriginal = item.is_original;
+    const isAtiva = item.esta_ativa !== false;
+    const statusClass = getStatusClass(item.status);
+    const statusLabel = getStatusLabel(item.status);
+    const data = formatarDataHoraLocal(item.criado_em);
+    const numero =
+      item.numero_ocorrencia || item.numero_temporario || "Rascunho";
+    const isLast = index === sorted.length - 1;
+
+    // Extrair campos alterados
+    let camposAlterados = [];
+    if (item.campos_alterados) {
+      try {
+        camposAlterados = JSON.parse(item.campos_alterados);
+      } catch (e) {}
+    }
+
+    const isActiveVersion =
+      isAtiva && (isOriginal || item.status === "rectified");
+
+    html += `
+      <div style="position:relative;padding-bottom:${isLast ? "0" : "16px"};${!isLast ? "border-left: none;" : ""}">
+        <div style="position:absolute;left:-16px;top:4px;width:12px;height:12px;border-radius:50%;background:${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-medio)"};border:2px solid var(--branco);box-shadow:0 0 0 2px ${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-medio)"};"></div>
+        
+        <div style="background:${isActiveVersion ? "var(--verde-muito-claro)" : "var(--branco)"};border-radius:var(--border-radius);padding:12px;margin-left:12px;box-shadow:var(--sombra-suave);border-left:3px solid ${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-claro)"};">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span style="font-weight:700;font-size:13px;color:${isActiveVersion ? "var(--verde-escuro)" : "var(--cinza-escuro)"};">
+                ${isOriginal ? "📄 Versão Original" : `🔄 Retificação v${item.numero_versao || 1}`}
+              </span>
+              ${isActiveVersion ? `<span class="badge badge-synced" style="font-size:9px;padding:1px 8px;">✅ Ativa</span>` : `<span class="badge badge-draft" style="font-size:9px;padding:1px 8px;">📜 Substituída</span>`}
+              <span class="badge badge-${statusClass}" style="font-size:9px;padding:1px 8px;">${statusLabel}</span>
+            </div>
+            <span style="font-size:11px;color:var(--cinza-medio);">#${numero}</span>
+          </div>
+          
+          <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
+            <i class="fas fa-calendar" style="margin-right:4px;"></i> ${data}
+          </div>
+
+          ${
+            item.justificativa_retificacao
+              ? `
+            <div style="margin-top:6px;padding:6px 10px;background:#fef3c7;border-radius:var(--border-radius);font-size:12px;color:#92400e;border-left:3px solid var(--aviso);">
+              <i class="fas fa-quote-left" style="color:var(--aviso);margin-right:4px;"></i>
+              ${item.justificativa_retificacao}
+            </div>
+          `
+              : ""
+          }
+
+          ${
+            camposAlterados.length > 0
+              ? `
+            <div style="margin-top:6px;font-size:12px;">
+              <details style="cursor:pointer;">
+                <summary style="font-weight:600;color:var(--azul-bandeira);">
+                  <i class="fas fa-edit"></i> ${camposAlterados.length} campo(s) alterado(s)
+                </summary>
+                <div style="margin-top:4px;padding:6px 8px;background:var(--branco-fumaca);border-radius:var(--border-radius);">
+                  ${camposAlterados
+                    .map(
+                      (c) => `
+                    <div style="display:grid;grid-template-columns:1fr 2fr;gap:4px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:11px;">
+                      <span style="font-weight:600;">${c.label || c.campo}:</span>
+                      <span style="display:flex;gap:4px;flex-wrap:wrap;">
+                        <span style="color:var(--cinza-medio);text-decoration:line-through;">${c.antes || "(vazio)"}</span>
+                        <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:8px;"></i>
+                        <span style="color:var(--verde-bandeira);">${c.depois || "(vazio)"}</span>
+                      </span>
+                    </div>
+                  `,
+                    )
+                    .join("")}
+                </div>
+              </details>
+            </div>
+          `
+              : ""
+          }
+
+          <button onclick="window.app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })" 
+            style="margin-top:6px;padding:4px 12px;border:none;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;cursor:pointer;font-weight:600;min-height:28px;">
+            <i class="fas fa-eye" style="margin-right:4px;"></i> Ver versão
+          </button>
+        </div>
+      </div>
+    `;
+  });
 
   html += `</div>`;
   return html;
 }
 
-function renderObservacoes(observacoes) {
+// ============================================
+// ABA: GERAR PDF
+// ============================================
+
+function renderAbaPDF(appInstance) {
+  const occ = estado.ocorrencia;
+  if (!occ) return "";
+
+  const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
+  const options = estado.pdfOptions;
+  const temHistorico = estado.historico && estado.historico.length > 1;
+
   return `
-    <div class="card-revisao">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-pencil-alt"></i> Observações
+    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+      <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+        <i class="fas fa-file-pdf" style="font-size:14px;"></i>
+        Exportar PDF - #${numero}
       </h4>
-      <p style="font-size:14px;white-space:pre-wrap;margin:0;">${observacoes}</p>
+      
+      <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
+        Selecione os conteúdos que deseja incluir no PDF:
+      </p>
+
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+          <input type="checkbox" ${options.incluirDados ? "checked" : ""} 
+            onchange="window._detalheTogglePDFOption('incluirDados')"
+            style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+          <span>📋 Dados da ocorrência</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+          <input type="checkbox" ${options.incluirEnvolvidos ? "checked" : ""} 
+            onchange="window._detalheTogglePDFOption('incluirEnvolvidos')"
+            style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+          <span>👤 Envolvidos (${estado.envolvidos.length})</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+          <input type="checkbox" ${options.incluirObservacoes ? "checked" : ""} 
+            onchange="window._detalheTogglePDFOption('incluirObservacoes')"
+            style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+          <span>📝 Observações</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+          <input type="checkbox" ${options.incluirAnexos ? "checked" : ""} 
+            onchange="window._detalheTogglePDFOption('incluirAnexos')"
+            style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+          <span>📎 Anexos (${estado.anexos.length})</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+          <input type="checkbox" ${options.incluirHash ? "checked" : ""} 
+            onchange="window._detalheTogglePDFOption('incluirHash')"
+            style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+          <span>🔒 Hash de integridade</span>
+        </label>
+        ${
+          temHistorico
+            ? `
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+            <input type="checkbox" ${options.incluirVersoes ? "checked" : ""} 
+              onchange="window._detalheTogglePDFOption('incluirVersoes')"
+              style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+            <span>📜 Histórico de versões (${estado.historico.length})</span>
+          </label>
+        `
+            : ""
+        }
+        ${
+          estado.ocorrencia.assinatura
+            ? `
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+            <input type="checkbox" ${options.incluirAssinatura ? "checked" : ""} 
+              onchange="window._detalheTogglePDFOption('incluirAssinatura')"
+              style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+            <span>✍️ Assinatura</span>
+          </label>
+        `
+            : ""
+        }
+      </div>
+
+      <button onclick="window._detalheGerarPDF()" 
+        class="btn-primary" style="border-radius:12px;min-height:44px;gap:8px;">
+        <i class="fas fa-file-pdf" style="font-size:18px;"></i>
+        Baixar PDF
+      </button>
+
+      <div style="margin-top:8px;font-size:11px;color:var(--cinza-medio);text-align:center;">
+        <i class="fas fa-info-circle"></i>
+        O PDF será gerado com os dados selecionados
+      </div>
     </div>
   `;
 }
 
-function renderAnexos(anexos) {
-  let html = `
-    <div class="card-revisao">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-paperclip"></i> Anexos (${anexos.length})
-      </h4>
-  `;
+// ============================================
+// BARRA DE AÇÕES
+// ============================================
 
-  if (anexos.length === 0) {
-    html += `<p style="color:var(--cinza-medio);font-size:14px;">Nenhum anexo adicionado</p>`;
-  } else {
-    anexos.forEach((anexo) => {
-      const iconClass = getIconAnexo(anexo.tipo_arquivo);
-      const tamanho = formatarTamanho(anexo.tamanho || 0);
-      html += `
-        <div style="font-size:14px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);display:flex;align-items:center;gap:10px;">
-          <i class="fas ${iconClass}" style="color:var(--azul-bandeira);font-size:18px;"></i>
-          <span style="flex:1;">${anexo.nome_arquivo}</span>
-          <span style="color:var(--cinza-medio);font-size:12px;">${tamanho}</span>
-          ${anexo.url ? `<a href="${anexo.url}" target="_blank" style="color:var(--azul-bandeira);"><i class="fas fa-external-link-alt"></i></a>` : ""}
-        </div>
-      `;
+function renderBarraAcoes(occ, perms, appInstance) {
+  const {
+    podeEditar,
+    podeFinalizar,
+    podeCancelar,
+    podeRetificar,
+    isSupervisor,
+    isDraft,
+    isPending,
+    isSynced,
+    isCancelled,
+  } = perms;
+
+  const botoes = [];
+
+  // Editar (apenas rascunho)
+  if (isDraft && podeEditar) {
+    botoes.push({
+      label: "Editar",
+      icon: "fa-edit",
+      class: "btn-primary",
+      action: "window._detalheEditar()",
     });
   }
 
-  html += `</div>`;
-  return html;
+  // Finalizar (apenas rascunho)
+  if (isDraft && podeFinalizar) {
+    botoes.push({
+      label: "Finalizar",
+      icon: "fa-check-circle",
+      class: "btn-success",
+      action: "window._detalheFinalizar()",
+    });
+  }
+
+  // Aprovar/Rejeitar retificação (apenas supervisor)
+  if (isPending && isSupervisor) {
+    botoes.push({
+      label: "Aprovar",
+      icon: "fa-check",
+      class: "btn-success",
+      action: "window._detalheAprovarRetificacao()",
+    });
+    botoes.push({
+      label: "Rejeitar",
+      icon: "fa-times",
+      class: "btn-danger",
+      action: "window._detalheRejeitarRetificacao()",
+    });
+  }
+
+  // Solicitar retificação (apenas finalizada)
+  if (isSynced && podeRetificar) {
+    botoes.push({
+      label: "Solicitar Retificação",
+      icon: "fa-sync-alt",
+      class: "btn-primary",
+      action: "window._detalheSolicitarRetificacao()",
+    });
+  }
+
+  // Cancelar
+  if (!isCancelled && podeCancelar) {
+    botoes.push({
+      label: "Cancelar Ocorrência",
+      icon: "fa-times-circle",
+      class: "btn-danger",
+      action: "window._detalheCancelar()",
+    });
+  }
+
+  // Gerar PDF (sempre)
+  botoes.push({
+    label: "Gerar PDF",
+    icon: "fa-file-pdf",
+    class: "btn-secondary",
+    action: "window._detalheGerarPDF()",
+    style: "background:var(--azul-muito-claro);color:var(--azul-bandeira);",
+  });
+
+  if (botoes.length === 0) {
+    return `
+      <div style="margin-top:16px;padding:12px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);text-align:center;">
+        <p style="color:var(--cinza-medio);font-size:13px;margin:0;">
+          <i class="fas fa-info-circle"></i>
+          Nenhuma ação disponível para esta ocorrência.
+        </p>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="margin-top:16px;padding:12px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-media);">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${botoes
+          .map(
+            (btn) => `
+          <button onclick="${btn.action}" 
+            class="${btn.class}" 
+            style="width:100%;border-radius:12px;min-height:44px;gap:6px;${btn.style || ""}">
+            <i class="fas ${btn.icon}" style="font-size:14px;"></i>
+            ${btn.label}
+          </button>
+        `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// MUDAR ABA
+// ============================================
+
+function mudarAba(aba, container, appInstance) {
+  estado.abaAtiva = aba;
+  renderizarDetalhe(container, appInstance);
 }
 
 // ============================================
 // AÇÕES
 // ============================================
 
-function renderAcoes(occ, perms, appInstance) {
-  const {
-    podeEditar,
-    podeCancelar,
-    podeFinalizar,
-    podeRetificar,
-    podeVerHistorico,
-    isSupervisor,
-    isPending,
-    isRetificacao,
-    temRetificacoes,
-  } = perms;
+export async function finalizarOcorrencia(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
 
-  const id = occ.id;
-
-  let html = `
-    <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
-  `;
-
-  // Aprovar/Rejeitar retificação (apenas supervisor)
-  if (isSupervisor && isPending) {
-    html += `
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn-success" onclick="window._detalheAprovarRetificacao('${id}')" style="flex:1;min-width:120px;border-radius:12px;">
-          <i class="fas fa-check" style="margin-right:6px;"></i> Aprovar Retificação
-        </button>
-        <button class="btn-danger" onclick="window._detalheRejeitarRetificacao('${id}')" style="flex:1;min-width:120px;border-radius:12px;">
-          <i class="fas fa-times" style="margin-right:6px;"></i> Rejeitar Retificação
-        </button>
-      </div>
-    `;
-  }
-
-  // Finalizar
-  if (podeFinalizar) {
-    html += `
-      <button class="btn-success" onclick="window._detalheFinalizar('${id}')" style="border-radius:12px;">
-        <i class="fas fa-check-circle" style="margin-right:6px;"></i> Finalizar Ocorrência
-      </button>
-    `;
-  }
-
-  // Solicitar retificação
-  if (podeRetificar && occ.status === "synced") {
-    html += `
-      <button class="btn-primary" onclick="window._detalheSolicitarRetificacao('${id}')" style="background:var(--azul-bandeira);border-radius:12px;">
-        <i class="fas fa-sync-alt" style="margin-right:6px;"></i> Solicitar Retificação
-      </button>
-    `;
-  }
-
-  // Editar (apenas rascunho)
-  if (podeEditar && occ.status === "draft") {
-    html += `
-      <button class="btn-primary" onclick="window._detalheEditar('${id}')" style="border-radius:12px;">
-        <i class="fas fa-edit" style="margin-right:6px;"></i> Editar Ocorrência
-      </button>
-    `;
-  }
-
-  // Cancelar (apenas supervisor)
-  if (podeCancelar) {
-    html += `
-      <button class="btn-danger" onclick="window._detalheCancelar('${id}')" style="border-radius:12px;">
-        <i class="fas fa-times-circle" style="margin-right:6px;"></i> Cancelar Ocorrência
-      </button>
-    `;
-  }
-
-  // Ver histórico
-  if (podeVerHistorico && (temRetificacoes || isRetificacao)) {
-    html += `
-      <button class="btn-secondary" onclick="window._detalheVerHistorico('${id}')" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);border-radius:12px;">
-        <i class="fas fa-history" style="margin-right:6px;"></i> Ver Histórico
-      </button>
-    `;
-  }
-
-  // Voltar
-  html += `
-    <button class="btn-secondary" onclick="app.navigateTo('dashboard')" style="width:100%;border-radius:12px;">
-      <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar
-    </button>
-  `;
-
-  html += `</div>`;
-  return html;
-}
-
-// ============================================
-// AÇÕES - IMPLEMENTAÇÕES
-// ============================================
-
-async function finalizarOcorrencia(id, appInstance) {
   const confirmado = await appInstance.confirmar(
     "Deseja finalizar esta ocorrência?",
   );
   if (!confirmado) return;
 
-  // Obter data/hora atual para encerramento
   const agora = new Date();
   const timezoneOffset = agora.getTimezoneOffset();
   const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
@@ -810,8 +1223,6 @@ async function finalizarOcorrencia(id, appInstance) {
   if (result.success) {
     appInstance.showToast("Ocorrência finalizada com sucesso!", "success");
     await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
-
-    // Recarregar detalhe
     const container = document.getElementById("detalheOcorrenciaContent");
     if (container) renderDetalheOcorrencia(container, appInstance);
   } else {
@@ -819,11 +1230,15 @@ async function finalizarOcorrencia(id, appInstance) {
   }
 }
 
-async function cancelarOcorrencia(id, appInstance) {
+export async function cancelarOcorrencia(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
+
   const motivo = await appInstance.inputModal(
     "Informe o motivo do cancelamento:",
     "Cancelar Ocorrência",
     "Digite o motivo do cancelamento...",
+    5,
   );
 
   if (!motivo) {
@@ -845,7 +1260,6 @@ async function cancelarOcorrencia(id, appInstance) {
       id,
       motivo,
     );
-
     const container = document.getElementById("detalheOcorrenciaContent");
     if (container) renderDetalheOcorrencia(container, appInstance);
   } else {
@@ -853,425 +1267,18 @@ async function cancelarOcorrencia(id, appInstance) {
   }
 }
 
-async function solicitarRetificacao(id, appInstance) {
-  // Buscar dados da ocorrência
-  const result = await ocorrenciaManager.buscar(id);
-  if (!result.success || !result.data) {
-    appInstance.showToast("Ocorrência não encontrada", "error");
-    return;
-  }
+export async function solicitarRetificacao(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
 
-  const occ = result.data;
-
-  // Buscar envolvidos para exibição
-  const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
-  const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
-
-  const dataInicio = occ.data_hora_inicio
-    ? formatarDataHoraLocal(occ.data_hora_inicio)
-    : "Não informado";
-  const dataEncerramento = occ.data_hora_encerramento
-    ? formatarDataHoraLocal(occ.data_hora_encerramento)
-    : "Não informado";
-
-  // Criar modal de solicitação
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    z-index: 999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px;
-    animation: fadeIn 0.25s ease;
-  `;
-
-  overlay.innerHTML = `
-    <div class="modal" style="max-width:650px;width:100%;max-height:95vh;overflow-y:auto;">
-      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
-        <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-          <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
-          Solicitar Retificação
-        </div>
-        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
-          style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      <div class="modal-body" style="padding:14px 16px 4px 16px;max-height:70vh;overflow-y:auto;">
-        <p style="color:var(--cinza-medio);font-size:14px;margin-bottom:16px;">
-          Preencha apenas os campos que precisam ser corrigidos.
-          <strong>Campos imutáveis</strong> (data/hora, número, forma de solicitação) não podem ser alterados.
-        </p>
-
-        <div style="background:var(--verde-muito-claro);padding:12px;border-radius:var(--border-radius);margin-bottom:16px;border-left:4px solid var(--verde-bandeira);">
-          <p style="font-size:13px;color:var(--verde-escuro);margin:0;">
-            <i class="fas fa-info-circle" style="margin-right:6px;"></i>
-            A retificação criará uma nova versão da ocorrência. A versão original será mantida como histórico.
-            <br><strong>Data/Hora do fato não podem ser alteradas</strong> - são registros históricos.
-          </p>
-        </div>
-
-        <div style="background:var(--cinza-claro);padding:12px;border-radius:var(--border-radius);margin-bottom:16px;opacity:0.7;">
-          <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
-            <i class="fas fa-lock" style="margin-right:6px;"></i>
-            Dados Imutáveis (apenas para referência)
-          </p>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">
-            <div><strong>Número:</strong> ${occ.numero_ocorrencia || occ.numero_temporario || "Rascunho"}</div>
-            <div><strong>Forma de Solicitação:</strong> ${occ.forma_solicitacao || "Não informado"}</div>
-            <div><strong>Data/Hora Início:</strong> ${dataInicio}</div>
-            <div><strong>Data/Hora Encerramento:</strong> ${dataEncerramento}</div>
-            <div><strong>Criado por:</strong> ${occ.criador?.nome_completo || "Desconhecido"}</div>
-            <div><strong>Criado em:</strong> ${formatarDataHoraLocal(occ.criado_em)}</div>
-          </div>
-        </div>
-
-        <form id="formRetificacao" onsubmit="event.preventDefault();">
-          <div class="form-group" style="margin-bottom:14px;">
-            <label for="ret_justificativa" style="display:block;font-size:13px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-pencil-alt" style="margin-right:6px;"></i>
-              Justificativa da Retificação <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <textarea id="ret_justificativa" class="form-control" rows="3" 
-              placeholder="Explique o motivo da correção..." required
-              style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:16px;font-size:14px;transition:all 0.3s ease;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;min-height:60px;resize:vertical;"></textarea>
-            <div class="input-hint" style="font-size:11px;color:var(--cinza-medio);margin-top:3px;display:flex;align-items:center;gap:4px;">
-              <i class="fas fa-info-circle" style="font-size:12px;"></i>
-              Mínimo 10 caracteres
-            </div>
-          </div>
-
-          <div style="border-top:1px solid var(--cinza-claro);padding-top:16px;margin-top:8px;">
-            <p style="font-weight:600;font-size:14px;color:var(--cinza-escuro);margin-bottom:12px;">
-              <i class="fas fa-edit" style="margin-right:6px;"></i>
-              Dados que podem ser corrigidos
-            </p>
-            <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
-              Deixe em branco os campos que NÃO precisam ser alterados
-            </p>
-
-            <!-- Dados do Solicitante -->
-            <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-              <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                <i class="fas fa-user" style="margin-right:6px;"></i> Dados do Solicitante
-              </p>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_nome_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Nome do Solicitante</label>
-                <input type="text" id="ret_nome_solicitante" class="form-control" 
-                  value="${occ.nome_solicitante || ""}" placeholder="Nome completo"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_cpf_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">CPF do Solicitante</label>
-                <input type="text" id="ret_cpf_solicitante" class="form-control" 
-                  value="${occ.cpf_solicitante || ""}" placeholder="123.456.789-00"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_rg_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">RG do Solicitante</label>
-                <input type="text" id="ret_rg_solicitante" class="form-control" 
-                  value="${occ.rg_solicitante || ""}" placeholder="RG do solicitante"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_telefone_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Telefone do Solicitante</label>
-                <input type="text" id="ret_telefone_solicitante" class="form-control" 
-                  value="${occ.telefone_solicitante || ""}" placeholder="(44) 99999-9999"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_endereco_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Endereço do Solicitante</label>
-                <input type="text" id="ret_endereco_solicitante" class="form-control" 
-                  value="${occ.endereco_solicitante || ""}" placeholder="Rua, número, bairro"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_bairro_solicitante" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Bairro do Solicitante</label>
-                <input type="text" id="ret_bairro_solicitante" class="form-control" 
-                  value="${occ.bairro_solicitante || ""}" placeholder="Bairro"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_complemento" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Complemento</label>
-                <input type="text" id="ret_complemento" class="form-control" 
-                  value="${occ.complemento || ""}" placeholder="Apto, bloco, ponto de referência"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_identificacao_adicional" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Identificação Adicional</label>
-                <input type="text" id="ret_identificacao_adicional" class="form-control" 
-                  value="${occ.identificacao_adicional || ""}" placeholder="Informações adicionais"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_codigo_municipal" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Código Municipal</label>
-                <input type="text" id="ret_codigo_municipal" class="form-control" 
-                  value="${occ.codigo_municipal || ""}" placeholder="Código do imóvel"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-            </div>
-
-            <!-- Dados do Local -->
-            <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-              <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                <i class="fas fa-map-marker-alt" style="margin-right:6px;"></i> Dados do Local
-              </p>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_local_ocorrencia" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Local da Ocorrência</label>
-                <input type="text" id="ret_local_ocorrencia" class="form-control" 
-                  value="${occ.local_ocorrencia || ""}" placeholder="Endereço completo"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_rodovia" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Rodovia</label>
-                <input type="text" id="ret_rodovia" class="form-control" 
-                  value="${occ.rodovia || ""}" placeholder="BR-123, km 45"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_bairro_ocorrencia" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Bairro da Ocorrência</label>
-                <input type="text" id="ret_bairro_ocorrencia" class="form-control" 
-                  value="${occ.bairro_ocorrencia || ""}" placeholder="Bairro"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_referencia" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Referência</label>
-                <input type="text" id="ret_referencia" class="form-control" 
-                  value="${occ.referencia || ""}" placeholder="Ponto de referência próximo"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-            </div>
-
-            <!-- Observações -->
-            <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-              <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                <i class="fas fa-pencil-alt" style="margin-right:6px;"></i> Observações
-              </p>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_observacoes" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Observações</label>
-                <textarea id="ret_observacoes" class="form-control" rows="4" 
-                  placeholder="Complemente as informações da ocorrência"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;min-height:60px;resize:vertical;">${occ.observacoes || ""}</textarea>
-              </div>
-            </div>
-
-            <!-- Código Operacional -->
-            <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-              <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                <i class="fas fa-barcode" style="margin-right:6px;"></i> Dados Operacionais
-              </p>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_codigo_operacional" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Código Operacional</label>
-                <input type="text" id="ret_codigo_operacional" class="form-control" 
-                  value="${occ.codigo_operacional || ""}" placeholder="Código da ocorrência"
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-              </div>
-            </div>
-
-            <!-- Tipo de Ocorrência -->
-            <div style="background:var(--azul-muito-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;">
-              <p style="font-weight:600;font-size:13px;color:var(--azul-bandeira);margin-bottom:8px;">
-                <i class="fas fa-tag" style="margin-right:6px;"></i> Tipo de Ocorrência
-              </p>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label for="ret_tipo_ocorrencia" style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:2px;">Tipo de Ocorrência</label>
-                <select id="ret_tipo_ocorrencia" class="form-control" 
-                  style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364758B' d='M6 8L1 3h10z'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center;padding-right:32px;cursor:pointer;">
-                  <option value="">Selecione o tipo...</option>
-                  ${TIPOS_OCORRENCIA.map(
-                    (op) => `
-                    <option value="${op.value}" ${occ.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>
-                  `,
-                  ).join("")}
-                </select>
-              </div>
-            </div>
-
-            <!-- Envolvidos (apenas exibição) -->
-            <div style="background:var(--cinza-claro);padding:10px;border-radius:var(--border-radius);margin-bottom:12px;opacity:0.7;">
-              <p style="font-weight:600;font-size:13px;color:var(--cinza-escuro);margin-bottom:8px;">
-                <i class="fas fa-users" style="margin-right:6px;"></i>
-                Envolvidos (${envolvidos.length}) - Não podem ser alterados na retificação
-              </p>
-              ${
-                envolvidos.length === 0
-                  ? `
-                <p style="font-size:13px;color:var(--cinza-medio);">Nenhum envolvido cadastrado</p>
-              `
-                  : `
-                ${envolvidos
-                  .map(
-                    (env) => `
-                  <div style="font-size:13px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
-                    <span class="badge badge-azul" style="font-size:10px;">${getTipoEnvolvidoLabel(env.tipo)}</span>
-                    <strong>${env.nome_completo}</strong>
-                    ${env.cpf ? ` - ${env.cpf}` : ""}
-                  </div>
-                `,
-                  )
-                  .join("")}
-              `
-              }
-              <p style="font-size:12px;color:var(--cinza-medio);margin-top:6px;">
-                <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-                Para alterar envolvidos, crie uma nova ocorrência
-              </p>
-            </div>
-          </div>
-        </form>
-      </div>
-      <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
-          style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-          Cancelar
-        </button>
-        <button type="button" class="btn-primary" onclick="window._confirmarRetificacao('${id}')" 
-          style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--gradiente-principal);color:var(--branco);">
-          <i class="fas fa-check-circle" style="margin-right:6px;"></i> Solicitar Retificação
-        </button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  // Máscara de CPF
-  const cpfInput = document.getElementById("ret_cpf_solicitante");
-  if (cpfInput) {
-    cpfInput.addEventListener("input", function (e) {
-      let value = this.value.replace(/\D/g, "");
-      if (value.length > 11) value = value.slice(0, 11);
-      if (value.length > 0) {
-        this.value = value.replace(
-          /(\d{3})(\d{3})(\d{3})(\d{2})/,
-          "$1.$2.$3-$4",
-        );
-        if (value.length <= 3) this.value = value;
-        else if (value.length <= 6)
-          this.value = value.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-        else if (value.length <= 9)
-          this.value = value.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-      }
-    });
-  }
-
-  // Máscara de telefone
-  const telefoneInput = document.getElementById("ret_telefone_solicitante");
-  if (telefoneInput) {
-    telefoneInput.addEventListener("input", function (e) {
-      let value = this.value.replace(/\D/g, "");
-      if (value.length > 11) value = value.slice(0, 11);
-      if (value.length > 0) {
-        if (value.length <= 2) {
-          this.value = `(${value}`;
-        } else if (value.length <= 6) {
-          this.value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
-        } else if (value.length <= 10) {
-          this.value = `(${value.slice(0, 2)}) ${value.slice(2, 6)}-${value.slice(6)}`;
-        } else {
-          this.value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7, 11)}`;
-        }
-      }
-    });
-  }
-
-  // Registrar função de confirmação
-  window._confirmarRetificacao = async (occId) => {
-    const justificativa = document.getElementById("ret_justificativa")?.value;
-    if (!justificativa || justificativa.trim().length < 10) {
-      appInstance.showToast(
-        "Justificativa deve ter pelo menos 10 caracteres",
-        "warning",
-      );
-      return;
-    }
-
-    const dadosCorrigidos = {};
-
-    // Coletar campos preenchidos
-    const campos = [
-      "nome_solicitante",
-      "cpf_solicitante",
-      "rg_solicitante",
-      "telefone_solicitante",
-      "endereco_solicitante",
-      "bairro_solicitante",
-      "complemento",
-      "identificacao_adicional",
-      "codigo_municipal",
-      "local_ocorrencia",
-      "rodovia",
-      "bairro_ocorrencia",
-      "referencia",
-      "observacoes",
-      "codigo_operacional",
-      "tipo_ocorrencia",
-    ];
-
-    campos.forEach((campo) => {
-      const el = document.getElementById(`ret_${campo}`);
-      if (el && el.value && el.value.trim() !== "") {
-        dadosCorrigidos[campo] = el.value.trim();
-      }
-    });
-
-    if (Object.keys(dadosCorrigidos).length === 0) {
-      appInstance.showToast(
-        "Nenhum campo foi preenchido para retificação",
-        "warning",
-      );
-      return;
-    }
-
-    const confirmado = await appInstance.confirmar(
-      "Confirma a retificação desta ocorrência? Os dados alterados serão revisados por um supervisor.",
-    );
-    if (!confirmado) return;
-
-    const result = await ocorrenciaManager.solicitarRetificacao(
-      occId,
-      dadosCorrigidos,
-      justificativa,
-    );
-
-    if (!result.success) {
-      appInstance.showToast(
-        "Erro ao solicitar retificação: " + result.error,
-        "error",
-      );
-      return;
-    }
-
-    const modal = document.querySelector(".modal-overlay");
-    if (modal) modal.remove();
-
-    if (result.is_pending) {
-      appInstance.showToast(
-        "Retificação solicitada com sucesso! Aguarde aprovação do supervisor.",
-        "success",
-      );
-    } else {
-      appInstance.showToast("Retificação criada com sucesso!", "success");
-    }
-
-    await authManager.logSolicitarRetificacao(authManager.getUserId(), occId);
-
-    // Recarregar detalhe
-    const detailContainer = document.getElementById("detalheOcorrenciaContent");
-    if (detailContainer) renderDetalheOcorrencia(detailContainer, appInstance);
-  };
+  // Navegar para o formulário de retificação
+  appInstance.navigateTo("detalhe-ocorrencia", { id, action: "retificar" });
 }
 
-async function aprovarRetificacao(id, appInstance) {
+export async function aprovarRetificacao(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
+
   const confirmado = await appInstance.confirmar(
     "Confirma a aprovação desta retificação? A versão original será substituída.",
   );
@@ -1281,7 +1288,6 @@ async function aprovarRetificacao(id, appInstance) {
   if (result.success) {
     appInstance.showToast("Retificação aprovada com sucesso!", "success");
     await authManager.logAprovarRetificacao(authManager.getUserId(), id);
-
     const container = document.getElementById("detalheOcorrenciaContent");
     if (container) renderDetalheOcorrencia(container, appInstance);
   } else {
@@ -1292,11 +1298,15 @@ async function aprovarRetificacao(id, appInstance) {
   }
 }
 
-async function rejeitarRetificacao(id, appInstance) {
+export async function rejeitarRetificacao(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
+
   const motivo = await appInstance.inputModal(
     "Informe o motivo da rejeição da retificação:",
     "Rejeitar Retificação",
     "Digite o motivo da rejeição...",
+    5,
   );
 
   if (!motivo) {
@@ -1313,7 +1323,6 @@ async function rejeitarRetificacao(id, appInstance) {
   if (result.success) {
     appInstance.showToast("Retificação rejeitada", "info");
     await authManager.logRejeitarRetificacao(authManager.getUserId(), id);
-
     const container = document.getElementById("detalheOcorrenciaContent");
     if (container) renderDetalheOcorrencia(container, appInstance);
   } else {
@@ -1324,182 +1333,121 @@ async function rejeitarRetificacao(id, appInstance) {
   }
 }
 
-async function verHistorico(id, appInstance) {
-  const result = await ocorrenciaManager.buscarHistorico(id);
-  if (!result.success) {
-    appInstance.showToast("Erro ao carregar histórico", "error");
+export function editarOcorrencia(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
+  appInstance.navigateTo("nova-ocorrencia", { id });
+}
+
+export async function gerarPDFCompleto(appInstance) {
+  const id = estado.ocorrencia?.id;
+  if (!id) return;
+
+  try {
+    if (
+      typeof pdfExport === "undefined" ||
+      typeof pdfExport.exportarOcorrencia !== "function"
+    ) {
+      appInstance.showToast("Módulo PDF não disponível", "error");
+      return;
+    }
+
+    appInstance.showToast("Gerando PDF...", "info");
+
+    // Preparar opções com base nas seleções do usuário
+    const options = {
+      sections: {
+        dados: estado.pdfOptions.incluirDados,
+        envolvidos: estado.pdfOptions.incluirEnvolvidos,
+        observacoes: estado.pdfOptions.incluirObservacoes,
+        anexos: estado.pdfOptions.incluirAnexos,
+        assinatura: estado.pdfOptions.incluirAssinatura,
+      },
+      integrity: {
+        showHash: estado.pdfOptions.incluirHash,
+        showVersion: true,
+      },
+      footer: {
+        show: true,
+        includePageNumbers: true,
+        includeDate: true,
+        includeHash: estado.pdfOptions.incluirHash,
+      },
+      header: {
+        show: true,
+        includeDate: true,
+        includeUser: true,
+        includeVersion: true,
+      },
+      watermark: {
+        text: "CÓPIA OFICIAL - GUARDA MUNICIPAL DE PITANGUEIRAS/PR",
+        opacity: 0.08,
+        fontSize: 32,
+        color: "#000000",
+        angle: 45,
+      },
+    };
+
+    // Se o usuário desabilitou o hash, não incluir no rodapé
+    if (!estado.pdfOptions.incluirHash) {
+      options.footer.includeHash = false;
+    }
+
+    const result = await pdfExport.exportarOcorrencia(id, options);
+
+    if (result.success) {
+      appInstance.showToast("PDF gerado com sucesso!", "success");
+    } else {
+      appInstance.showToast("Erro ao gerar PDF: " + result.error, "error");
+    }
+  } catch (error) {
+    console.error("Erro ao gerar PDF:", error);
+    appInstance.showToast("Erro ao gerar PDF", "error");
+  }
+}
+
+// ============================================
+// IMAGENS E ANEXOS
+// ============================================
+
+export function verImagemGaleria(index, appInstance) {
+  const imagens = estado.imagensGaleria;
+  if (imagens.length === 0) {
+    appInstance.showToast("Nenhuma imagem disponível", "info");
     return;
   }
 
-  const historico = result.data;
-
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    z-index: 999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px;
-    animation: fadeIn 0.25s ease;
-  `;
-
-  let html = `
-    <div class="modal" style="max-width:600px;width:100%;max-height:95vh;overflow-y:auto;">
-      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
-        <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-          <i class="fas fa-history" style="margin-right:8px;"></i>
-          Histórico da Ocorrência
-        </div>
-        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
-          style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      <div class="modal-body" style="padding:14px 16px 4px 16px;max-height:70vh;overflow-y:auto;">
-  `;
-
-  historico.forEach((item) => {
-    const isOriginal = item.is_original;
-    const isAtiva = item.esta_ativa !== false;
-    const statusClass = getStatusClass(item.status);
-    const statusLabel = getStatusLabel(item.status);
-    const data = formatarDataHoraLocal(item.criado_em);
-    const numero =
-      item.numero_ocorrencia || item.numero_temporario || "Rascunho";
-
-    let camposAlterados = [];
-    if (item.campos_alterados) {
-      try {
-        camposAlterados = JSON.parse(item.campos_alterados);
-      } catch (e) {}
-    }
-
-    html += `
-      <div style="border-left:4px solid ${isAtiva ? "var(--verde-bandeira)" : "var(--cinza-medio)"};padding-left:12px;margin-bottom:16px;background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-          <div>
-            <span style="font-weight:700;color:var(--azul-bandeira);">
-              ${isOriginal ? "📄 Versão Original" : `🔄 Retificação v${item.numero_versao || 1}`}
-            </span>
-            ${isAtiva ? ' <span class="badge badge-synced" style="font-size:10px;">✅ Ativa</span>' : ' <span class="badge badge-draft" style="font-size:10px;">📜 Substituída</span>'}
-            ${item.status === "pending_rectification" ? ' <span class="badge badge-pending" style="font-size:10px;">⏳ Pendente</span>' : ""}
-            ${item.status === "rectification_rejected" ? ' <span class="badge badge-cancelled" style="font-size:10px;">❌ Rejeitada</span>' : ""}
-          </div>
-          <span class="badge badge-${statusClass}" style="font-size:10px;">${statusLabel}</span>
-        </div>
-        <div style="font-size:13px;color:var(--cinza-medio);margin-top:4px;">
-          <i class="fas fa-calendar" style="margin-right:4px;"></i> ${data}
-          <span style="margin-left:12px;"><i class="fas fa-hashtag" style="margin-right:4px;"></i>#${numero}</span>
-          ${
-            item.justificativa_retificacao
-              ? `
-            <div style="margin-top:6px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--cinza-escuro);border-left:3px solid var(--azul-bandeira);">
-              <i class="fas fa-quote-left" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-              ${item.justificativa_retificacao}
-            </div>
-          `
-              : ""
-          }
-          ${
-            item.solicitacao_retificacao_justificativa &&
-            item.status === "pending_rectification"
-              ? `
-            <div style="margin-top:6px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);font-size:13px;color:#92400e;border-left:3px solid var(--aviso);">
-              <i class="fas fa-clock" style="color:var(--aviso);margin-right:4px;"></i>
-              Solicitação: ${item.solicitacao_retificacao_justificativa}
-            </div>
-          `
-              : ""
-          }
-          ${
-            item.motivo_rejeicao
-              ? `
-            <div style="margin-top:6px;padding:8px 12px;background:#fee2e2;border-radius:var(--border-radius);font-size:13px;color:#991b1b;border-left:3px solid var(--erro);">
-              <i class="fas fa-times-circle" style="color:var(--erro);margin-right:4px;"></i>
-              Motivo da rejeição: ${item.motivo_rejeicao}
-            </div>
-          `
-              : ""
-          }
-          ${
-            camposAlterados.length > 0
-              ? `
-            <div style="margin-top:6px;padding:8px 12px;background:var(--verde-muito-claro);border-radius:var(--border-radius);font-size:13px;color:var(--verde-escuro);border-left:3px solid var(--verde-bandeira);">
-              <strong><i class="fas fa-edit" style="margin-right:4px;"></i> Campos Alterados:</strong>
-              ${camposAlterados
-                .map(
-                  (c) => `
-                <div style="margin-top:4px;font-size:12px;padding:4px 8px;background:var(--branco);border-radius:4px;">
-                  <strong>${c.label || c.campo}:</strong>
-                  <span style="color:var(--cinza-medio);text-decoration:line-through;">${c.antes || "(vazio)"}</span>
-                  →
-                  <span style="color:var(--verde-bandeira);">${c.depois || "(vazio)"}</span>
-                </div>
-              `,
-                )
-                .join("")}
-            </div>
-          `
-              : ""
-          }
-        </div>
-        <div style="margin-top:6px;font-size:13px;">
-          <strong>Local:</strong> ${item.local_ocorrencia || "Não informado"}
-        </div>
-        ${
-          !isOriginal && item.retificado_por
-            ? `
-          <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
-            <i class="fas fa-user" style="margin-right:4px;"></i>
-            Retificado por: Supervisor
-          </div>
-        `
-            : ""
-        }
-        ${
-          !isOriginal && item.solicitada_por
-            ? `
-          <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
-            <i class="fas fa-user" style="margin-right:4px;"></i>
-            Solicitado por: Guarda
-          </div>
-        `
-            : ""
-        }
-        <button onclick="app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })" 
-          class="btn-secondary" style="margin-top:8px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;background:var(--azul-muito-claro);color:var(--azul-bandeira);border-radius:8px;">
-          <i class="fas fa-eye" style="margin-right:4px;"></i> Ver Versão
-        </button>
-      </div>
-    `;
-  });
-
-  html += `
-      </div>
-      <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
-          style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-          Fechar
-        </button>
-      </div>
-    </div>
-  `;
-
-  overlay.innerHTML = html;
-  document.body.appendChild(overlay);
+  // Abrir carrossel
+  if (typeof window._consultaAbrirCarrossel === "function") {
+    window._consultaAbrirCarrossel(imagens, index, appInstance);
+  } else {
+    window.open(imagens[index]?.url, "_blank");
+  }
 }
 
-function editarOcorrencia(id, appInstance) {
-  appInstance.showToast("Funcionalidade de edição em desenvolvimento", "info");
+export function baixarAnexo(url, nome) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = nome;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// ============================================
+// PDF OPTIONS
+// ============================================
+
+function togglePDFOption(option, container, appInstance) {
+  estado.pdfOptions[option] = !estado.pdfOptions[option];
+  if (container) {
+    renderizarDetalhe(container, appInstance);
+  } else {
+    const containerEl = document.getElementById("detalheOcorrenciaContent");
+    if (containerEl) {
+      renderizarDetalhe(containerEl, appInstance);
+    }
+  }
 }
 
 // ============================================
@@ -1561,6 +1509,12 @@ function getIconAnexo(tipo) {
   return icons[tipo] || "fa-file";
 }
 
+function formatarTamanho(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1048576).toFixed(1) + " MB";
+}
+
 function formatarDataHoraLocal(date) {
   if (!date) return "";
   const d = typeof date === "string" ? new Date(date) : date;
@@ -1588,30 +1542,48 @@ function formatarCPFSeguro(cpf) {
   return `***.${limpo.substring(3, 6)}.***-${limpo.substring(9, 11)}`;
 }
 
-function formatarTamanho(bytes) {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / 1048576).toFixed(1) + " MB";
+// ============================================
+// RENDERIZAÇÃO: LOADER, ERRO, NÃO ENCONTRADO
+// ============================================
+
+function renderLoader() {
+  return `
+    <div class="container" style="text-align:center;padding:40px 20px;">
+      <div class="spinner-azul" style="margin:0 auto;"></div>
+      <p style="margin-top:12px;color:var(--cinza-medio);">Carregando ocorrência...</p>
+    </div>
+  `;
 }
 
-// ============================================
-// CONSTANTES
-// ============================================
+function renderOcorrenciaNaoEncontrada(appInstance, error = null) {
+  return `
+    <div class="container" style="text-align:center;padding:40px 20px;">
+      <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
+        <i class="fas fa-exclamation-triangle"></i>
+      </div>
+      <h3>Ocorrência não encontrada</h3>
+      <p style="color:var(--cinza-medio);">${error || "ID inválido ou ocorrência não existe."}</p>
+      <button onclick="window.app.navigateTo('ocorrencias')" class="btn-primary" style="margin-top:16px;border-radius:12px;">
+        <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar para lista
+      </button>
+    </div>
+  `;
+}
 
-const TIPOS_OCORRENCIA = [
-  { value: "furto", label: "Furto" },
-  { value: "roubo", label: "Roubo" },
-  { value: "vandalismo", label: "Vandalismo" },
-  { value: "dano_ao_patrimonio", label: "Dano ao Patrimônio" },
-  { value: "ameaca", label: "Ameaça" },
-  { value: "lesao_corporal", label: "Lesão Corporal" },
-  { value: "perturbacao", label: "Perturbação" },
-  { value: "acidente", label: "Acidente" },
-  { value: "incendio", label: "Incêndio" },
-  { value: "desaparecimento", label: "Desaparecimento" },
-  { value: "atendimento_social", label: "Atendimento Social" },
-  { value: "outro", label: "Outro" },
-];
+function renderErro(error, appInstance) {
+  return `
+    <div class="container" style="text-align:center;padding:40px 20px;">
+      <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+        <i class="fas fa-exclamation-triangle"></i>
+      </div>
+      <h3>Erro ao carregar ocorrência</h3>
+      <p style="color:var(--cinza-medio);">${error.message}</p>
+      <button onclick="window._detalheVoltar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
+        <i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar
+      </button>
+    </div>
+  `;
+}
 
 // ============================================
 // EXPORTAÇÕES
@@ -1624,6 +1596,8 @@ export default {
   solicitarRetificacao,
   aprovarRetificacao,
   rejeitarRetificacao,
-  verHistorico,
   editarOcorrencia,
+  gerarPDFCompleto,
+  verImagemGaleria,
+  baixarAnexo,
 };

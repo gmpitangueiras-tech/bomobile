@@ -43,6 +43,19 @@
     ></script>
 
     <!-- ============================================
+    LEAFLET CLUSTER - Plugin para agrupamento de marcadores
+    ============================================ -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.Default.css"
+    />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.0/dist/leaflet.markercluster.js"></script>
+
+    <!-- ============================================
     PWA - MANIFEST
     ============================================ -->
     <link rel="manifest" href="manifest.json" />
@@ -54,7 +67,7 @@
       rel="icon"
       type="image/png"
       sizes="192x192"
-      href="assets/icons/icon-192x192.png"
+      href="assets/icons/icon-192x192.ico"
     />
     <link
       rel="icon"
@@ -65,7 +78,7 @@
     <link
       rel="apple-touch-icon"
       sizes="180x180"
-      href="assets/icons/icon-192x192.png"
+      href="assets/icons/icon-192x192.ico"
     />
     <link
       rel="icon"
@@ -521,12 +534,18 @@
     <script src="js/ocorrencia.js"></script>
     <script src="js/session.js"></script>
 
+    <!-- Módulo Busca Profunda -->
+    <script type="module" src="js/modules/busca-profunda.js"></script>
+
     <!-- App principal (módulo ES6) -->
     <script type="module" src="js/app.js"></script>
 
     <!-- Bibliotecas para PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- PDF Export -->
+    <script src="js/pdf-export.js"></script>
 
     <!-- ============================================
     INICIALIZAÇÃO ADICIONAL

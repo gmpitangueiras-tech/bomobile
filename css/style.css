@@ -292,6 +292,39 @@ body {
   padding: 0 4px;
 }
 
+/* 🔥 NOVO: Badge de notificações no bottom nav */
+#badge-notificacoes {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  background: var(--erro);
+  color: white;
+  font-size: 9px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  border: 2px solid var(--branco);
+  padding: 0 4px;
+}
+
+/* 🔥 NOVO: Badge de notificações no bottom sheet */
+#sheetBadgeNotificacoes {
+  background: #dc2626;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 10px;
+  border-radius: 9999px;
+  display: none;
+  min-width: 20px;
+  text-align: center;
+  line-height: 20px;
+}
+
 /* FAB no bottom nav */
 .nav-fab {
   width: 48px;
@@ -3616,6 +3649,83 @@ body {
 }
 
 /* ============================================
+   🔥 NOVO: NOTIFICAÇÕES - PÁGINA
+   ============================================ */
+
+.notificacao-item {
+  transition: all 0.2s ease;
+}
+
+.notificacao-item:active {
+  transform: scale(0.98);
+}
+
+.notificacao-item.nao-lida {
+  background: var(--azul-muito-claro);
+  border-left: 4px solid var(--azul-bandeira);
+}
+
+.notificacao-item.lida {
+  background: var(--branco);
+  border-left: 4px solid var(--cinza-claro);
+  opacity: 0.8;
+}
+
+.notificacao-item .badge-tipo {
+  font-size: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.notificacao-item .btn-acao {
+  padding: 4px 8px;
+  font-size: 10px;
+  min-height: auto;
+  width: auto;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.notificacao-item .btn-acao:active {
+  transform: scale(0.95);
+}
+
+/* Filtros das notificações */
+#filtrosAvancadosNotif {
+  transition: all 0.3s ease;
+}
+
+/* Notificações vazias */
+.notificacoes-vazias {
+  text-align: center;
+  padding: 60px 20px;
+  background: var(--branco);
+  border-radius: var(--border-radius);
+  box-shadow: var(--sombra-suave);
+}
+
+.notificacoes-vazias .icon {
+  font-size: 64px;
+  color: var(--cinza-claro);
+  margin-bottom: 16px;
+}
+
+.notificacoes-vazias h3 {
+  color: var(--cinza-escuro);
+}
+
+.notificacoes-vazias p {
+  color: var(--cinza-medio);
+  font-size: 14px;
+}
+
+/* ============================================
    MODO NOTURNO AUTOMÁTICO
    ============================================ */
 
@@ -4341,6 +4451,42 @@ body {
 
   .ocorrencia-card .card-thumbnail .badge-count {
     background: rgba(0, 0, 0, 0.85);
+  }
+
+  /* 🔥 NOVO: Notificações no modo noturno */
+  .notificacao-item.nao-lida {
+    background: #0c4a6e;
+    border-left-color: #60a5fa;
+  }
+
+  .notificacao-item.lida {
+    background: #1e293b;
+    border-left-color: #334155;
+  }
+
+  #badge-notificacoes {
+    border-color: #1e293b;
+  }
+
+  #sheetBadgeNotificacoes {
+    background: #dc2626;
+    color: white;
+  }
+
+  .notificacoes-vazias {
+    background: #1e293b;
+  }
+
+  .notificacoes-vazias .icon {
+    color: #334155;
+  }
+
+  .notificacoes-vazias h3 {
+    color: #e2e8f0;
+  }
+
+  .notificacoes-vazias p {
+    color: #94a3b8;
   }
 }
 

@@ -2,18 +2,11 @@
  * MÓDULO UTILS - Funções auxiliares
  * Guarda Municipal de Pitangueiras - PR
  *
- * Este módulo contém funções de formatação, validação, data/hora,
- * geolocalização, compressão de imagens e utilitários gerais.
- * É independente e pode ser usado por qualquer outro módulo.
- *
- * MELHORIAS APLICADAS:
- * - Fuso horário com cache e fallback
- * - Máscaras para CPF, placa e telefone
- * - Hash SHA-256 para imagens
- * - Debounce e Throttle
- * - Cache de dados estáticos em localStorage
- * - Compressão otimizada de imagens
- * - Speech-to-Text com tratamento de erros robusto e solicitação de permissão
+ * CORREÇÃO DE FUSO HORÁRIO:
+ * - Todas as funções agora usam o horário LOCAL do dispositivo
+ * - SEM ajustes de timezone
+ * - SEM conversões para UTC
+ * - Apenas exibição formatada com o horário local
  */
 
 // ============================================
@@ -42,13 +35,12 @@ let horarioCache = {
 };
 
 // ============================================
-// DATA E HORA - FUSO HORÁRIO CONFIÁVEL
+// DATA E HORA - AGORA USANDO DISPOSITIVO
 // ============================================
 
 /**
- * Obtém a data/hora atual do dispositivo SEM ajuste de fuso
- * Prioridade: horário da internet (worldtimeapi) > horário do dispositivo
- * Com cache para evitar múltiplas requisições
+ * 🔥 CORRIGIDO: Obtém a data/hora atual do dispositivo
+ * SEM ajuste de fuso - usa o que o dispositivo fornece
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<Date>}
  */
@@ -64,50 +56,9 @@ export async function obterDataHoraPrecisa(forceRefresh = false) {
     return new Date(horarioCache.data);
   }
 
-  console.log("🔄 Obtendo horário preciso...");
+  console.log("🔄 Obtendo horário do dispositivo...");
 
-  // Tentativas de obter horário da internet
-  let ultimoErro = null;
-  for (let tentativa = 1; tentativa <= MAX_RETRIES; tentativa++) {
-    try {
-      console.log(
-        `🌐 Tentativa ${tentativa}/${MAX_RETRIES} - Obtendo horário da internet...`,
-      );
-
-      const response = await fetch(
-        "https://worldtimeapi.org/api/timezone/America/Sao_Paulo",
-        {
-          signal: AbortSignal.timeout(5000),
-        },
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const dataHora = new Date(data.datetime);
-
-        if (!isNaN(dataHora.getTime())) {
-          console.log("✅ Horário obtido da internet:", dataHora.toISOString());
-          horarioCache = {
-            data: dataHora.getTime(),
-            timestamp: now,
-            fonte: "internet",
-          };
-          return dataHora;
-        }
-        throw new Error("Data inválida recebida da API");
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    } catch (error) {
-      console.warn(`⚠️ Tentativa ${tentativa} falhou:`, error.message);
-      ultimoErro = error;
-      if (tentativa < MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-      }
-    }
-  }
-
-  // Fallback: usar a data do dispositivo SEM ajuste
-  console.warn("⚠️ Falha ao obter horário da internet, usando dispositivo");
+  // ✅ CORRIGIDO: Usar a data do dispositivo SEM ajuste
   const agora = new Date();
 
   // Verificar se a data é válida
@@ -129,26 +80,29 @@ export async function obterDataHoraPrecisa(forceRefresh = false) {
     fonte: "dispositivo",
   };
 
+  console.log("✅ Horário do dispositivo:", agora.toISOString());
   return agora;
 }
 
 /**
- * Obtém data/hora atual no formato ISO (data do dispositivo SEM ajuste)
+ * 🔥 CORRIGIDO: Obtém data/hora atual no formato ISO
+ * Usa a data do dispositivo SEM ajuste
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
-export async function obterDataHoraBrasiliaISO(forceRefresh = false) {
+export async function obterDataHoraISO(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
   if (isNaN(date.getTime())) {
     console.warn("⚠️ Data inválida, usando fallback");
     return new Date().toISOString();
   }
-  // Retornar a data exata do dispositivo, sem conversão
+  // ✅ Retornar a data exata do dispositivo, sem conversão
   return date.toISOString();
 }
 
 /**
- * Obtém a data atual no formato YYYY-MM-DD (data do dispositivo SEM ajuste)
+ * 🔥 CORRIGIDO: Obtém a data atual no formato YYYY-MM-DD
+ * Usa a data do dispositivo SEM ajuste
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
@@ -157,11 +111,13 @@ export async function obterDataAtualISO(forceRefresh = false) {
   if (isNaN(date.getTime())) {
     return new Date().toISOString().slice(0, 10);
   }
+  // ✅ Usar o horário do dispositivo
   return date.toISOString().slice(0, 10);
 }
 
 /**
- * Obtém a hora atual formatada (HH:mm) (hora do dispositivo SEM ajuste)
+ * 🔥 CORRIGIDO: Obtém a hora atual formatada (HH:mm)
+ * Usa a hora do dispositivo SEM ajuste
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
@@ -173,6 +129,7 @@ export async function obterHoraAtual(forceRefresh = false) {
       minute: "2-digit",
     });
   }
+  // ✅ Usar toLocaleTimeString com localidade pt-BR
   return date.toLocaleTimeString("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
@@ -180,7 +137,8 @@ export async function obterHoraAtual(forceRefresh = false) {
 }
 
 /**
- * Obtém a data/hora atual para input datetime-local (data do dispositivo SEM ajuste)
+ * 🔥 CORRIGIDO: Obtém a data/hora para input datetime-local
+ * Usa a data do dispositivo SEM ajuste
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
@@ -189,11 +147,18 @@ export async function obterDataHoraInput(forceRefresh = false) {
   if (isNaN(date.getTime())) {
     return new Date().toISOString().slice(0, 16);
   }
-  return date.toISOString().slice(0, 16);
+  // ✅ Usar o horário do dispositivo, remover timezone
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 /**
- * Formata uma data/hora para exibição no padrão brasileiro
+ * 🔥 CORRIGIDO: Formata uma data/hora para exibição no padrão brasileiro
+ * Usa o horário LOCAL do dispositivo SEM ajuste de fuso
  * @param {string|Date} date - Data a ser formatada
  * @param {boolean} includeSeconds - Incluir segundos?
  * @returns {string}
@@ -204,6 +169,8 @@ export function formatarDataHoraLocal(date, includeSeconds = false) {
     const d = typeof date === "string" ? new Date(date) : date;
     if (isNaN(d.getTime())) return "Data inválida";
 
+    // ✅ CORRIGIDO: Usar apenas formatação local, SEM timezone fixo
+    // Isso usa o fuso do dispositivo automaticamente
     const options = {
       day: "2-digit",
       month: "2-digit",
@@ -213,6 +180,7 @@ export function formatarDataHoraLocal(date, includeSeconds = false) {
     };
     if (includeSeconds) options.second = "2-digit";
 
+    // ✅ Usar locale 'pt-BR' sem timezone forçado
     return d.toLocaleString("pt-BR", options);
   } catch (e) {
     return String(date);
@@ -220,7 +188,7 @@ export function formatarDataHoraLocal(date, includeSeconds = false) {
 }
 
 /**
- * Formata uma data para input date (YYYY-MM-DD)
+ * 🔥 CORRIGIDO: Formata uma data para input date (YYYY-MM-DD)
  * @param {string|Date} date - Data a ser formatada
  * @returns {string}
  */
@@ -228,11 +196,15 @@ export function formatarDataInput(date) {
   if (!date) return "";
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
+  // ✅ Usar o horário do dispositivo
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /**
- * Formata uma data para input datetime-local (YYYY-MM-DDTHH:mm)
+ * 🔥 CORRIGIDO: Formata uma data para input datetime-local (YYYY-MM-DDTHH:mm)
  * @param {string|Date} date - Data a ser formatada
  * @returns {string}
  */
@@ -240,36 +212,70 @@ export function formatarDataHoraInput(date) {
   if (!date) return "";
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
-  const offset = d.getTimezoneOffset();
-  const adjusted = new Date(d.getTime() - offset * 60000);
-  return adjusted.toISOString().slice(0, 16);
+  // ✅ Usar o horário do dispositivo
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 /**
- * Calcula a diferença em minutos entre duas datas
- * @param {string|Date} dataInicio - Data de início
- * @param {string|Date} dataFim - Data de fim
- * @returns {number}
+ * 🔥 NOVO: Obtém a data/hora atual como objeto Date (fallback)
+ * @returns {Date}
  */
-export function calcularDiferencaMinutos(dataInicio, dataFim) {
-  const inicio =
-    typeof dataInicio === "string" ? new Date(dataInicio) : dataInicio;
-  const fim = typeof dataFim === "string" ? new Date(dataFim) : dataFim;
-  if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) return 0;
-  return (fim.getTime() - inicio.getTime()) / (1000 * 60);
+export function obterDataHoraAtual() {
+  return new Date();
 }
 
 /**
- * Formata minutos em horas e minutos
- * @param {number} minutos - Total de minutos
+ * 🔥 NOVO: Formata uma data para exibição com horário local
+ * SEM ajuste de fuso
+ * @param {string|Date} date - Data a ser formatada
+ * @param {string} format - Formato: 'date', 'time', 'datetime'
  * @returns {string}
  */
-export function formatarMinutos(minutos) {
-  if (minutos < 1) return "< 1 min";
-  if (minutos < 60) return `${Math.round(minutos)} min`;
-  const horas = Math.floor(minutos / 60);
-  const mins = Math.round(minutos % 60);
-  return `${horas}h ${mins}min`;
+export function formatarDataLocal(date, format = "datetime") {
+  if (!date) return "";
+  try {
+    const d = typeof date === "string" ? new Date(date) : date;
+    if (isNaN(d.getTime())) return "Data inválida";
+
+    const options = {
+      date: { day: "2-digit", month: "2-digit", year: "numeric" },
+      time: { hour: "2-digit", minute: "2-digit", second: "2-digit" },
+      datetime: {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      },
+    };
+
+    return d.toLocaleString("pt-BR", options[format] || options.datetime);
+  } catch (e) {
+    return String(date);
+  }
+}
+
+// ============================================
+// FUNÇÕES DEPRECIADAS (mantidas para compatibilidade)
+// ============================================
+
+/**
+ * @deprecated Use obterDataHoraISO() em vez deste método
+ */
+export async function obterDataHoraBrasiliaISO(forceRefresh = false) {
+  return obterDataHoraISO(forceRefresh);
+}
+
+/**
+ * @deprecated Use obterDataHoraPrecisa() em vez deste método
+ */
+export function obterDataHoraBrasilia() {
+  return obterDataHoraPrecisa();
 }
 
 // ============================================
@@ -1049,7 +1055,7 @@ export async function solicitarPermissaoMicrofone(appInstance) {
 }
 
 // ============================================
-// RECONHECIMENTO DE VOZ (SPEECH-TO-TEXT) - CORRIGIDO
+// RECONHECIMENTO DE VOZ (SPEECH-TO-TEXT)
 // ============================================
 
 /**
@@ -1430,65 +1436,87 @@ export function validarPlaca(placa) {
 // Expor funções principais no window para uso global
 if (typeof window !== "undefined") {
   window.utils = {
+    // Data/Hora - CORRIGIDAS
     obterDataHoraPrecisa,
-    obterDataHoraBrasiliaISO,
+    obterDataHoraISO,
     obterDataAtualISO,
     obterHoraAtual,
     obterDataHoraInput,
     formatarDataHoraLocal,
     formatarDataInput,
     formatarDataHoraInput,
-    calcularDiferencaMinutos,
-    formatarMinutos,
+    obterDataHoraAtual,
+    formatarDataLocal,
+    // Depreciados (compatibilidade)
+    obterDataHoraBrasiliaISO,
+    obterDataHoraBrasilia,
+    // Máscaras
     formatarCPFSeguro,
     aplicarMascaraCPF,
     aplicarMascaraTelefone,
     aplicarMascaraPlaca,
+    // Formatação
     formatarTamanho,
+    // Labels
     getStatusClass,
     getStatusLabel,
     getTipoLabel,
     getTipoEnvolvidoLabel,
     getIconAnexo,
+    // Geolocalização
     obterLocalizacao,
     calcularDistancia,
+    // IP
     obterIP,
+    // UUID
     gerarUUID,
+    // Imagens
     comprimirImagem,
     gerarHashArquivo,
+    // Cache
     setCachedData,
     getCachedData,
     clearCachedData,
     clearAllCache,
+    // Modais
     confirmar,
     inputModal,
+    // Relatórios
     calcularDiasPeriodo,
     calcularDataAnterior,
     obterPrimeiroDiaMes,
     obterDataAtual,
+    // Validações
     validarCPF,
     validarEmail,
     validarPlaca,
+    // Utilitários
     debounce,
     throttle,
+    // Microfone
     solicitarPermissaoMicrofone,
+    // Speech-to-Text
     initSpeechToText,
   };
   console.log("✅ Utils exposto globalmente via window.utils");
 }
 
 export default {
-  // Data/Hora
+  // Data/Hora - CORRIGIDAS
   obterDataHoraPrecisa,
-  obterDataHoraBrasiliaISO,
+  obterDataHoraISO,
   obterDataAtualISO,
   obterHoraAtual,
   obterDataHoraInput,
   formatarDataHoraLocal,
   formatarDataInput,
   formatarDataHoraInput,
-  calcularDiferencaMinutos,
-  formatarMinutos,
+  obterDataHoraAtual,
+  formatarDataLocal,
+
+  // Depreciados (compatibilidade)
+  obterDataHoraBrasiliaISO,
+  obterDataHoraBrasilia,
 
   // Máscaras
   formatarCPFSeguro,

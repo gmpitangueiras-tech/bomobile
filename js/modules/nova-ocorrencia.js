@@ -11,6 +11,15 @@
  * - Geolocalização
  * - Hash pericial na finalização
  *
+ * MELHORIAS APLICADAS:
+ * - 🔥 ALTERADO: Anexos sem limite (removido MAX_ANEXOS)
+ * - 🔥 NOVO: data_hora_finalizacao automática na finalização
+ * - 🔥 NOVO: Validação de anexos sem limite de quantidade
+ * - 🔥 NOVO: Campo data_hora_finalizacao no resumo
+ * - 🔥 NOVO: Informação de finalização no modo rápido
+ * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
+ * - 🔥 CORRIGIDO: Preenchimento automático do campo data/hora no modo rápido agora usa horário LOCAL do dispositivo
+ *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
  */
@@ -62,6 +71,25 @@ const MODE_COMPLETAR = "completar";
 const TOTAL_ETAPAS = 6;
 
 // ============================================
+// FUNÇÃO AUXILIAR - OBTER DATA/HORA LOCAL PARA INPUT
+// ============================================
+
+/**
+ * 🔥 CORRIGIDO: Obtém a data/hora atual do dispositivo no formato datetime-local
+ * SEM ajuste de fuso - usa exatamente o que o dispositivo mostra
+ * @returns {string} Data/hora no formato YYYY-MM-DDTHH:mm
+ */
+function obterDataHoraLocalInput() {
+  const agora = new Date();
+  const year = agora.getFullYear();
+  const month = String(agora.getMonth() + 1).padStart(2, "0");
+  const day = String(agora.getDate()).padStart(2, "0");
+  const hours = String(agora.getHours()).padStart(2, "0");
+  const minutes = String(agora.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+// ============================================
 // ESTADO DO MÓDULO
 // ============================================
 
@@ -94,6 +122,8 @@ let estado = {
     anexos: [],
     assinaturas: {},
     modo_criacao: MODE_COMPLETO,
+    // 🔥 NOVO: data_hora_finalizacao
+    data_hora_finalizacao: null,
   },
   dadosOriginais: null,
   audioRecorder: null,
@@ -171,6 +201,8 @@ function resetarEstado() {
     anexos: [],
     assinaturas: {},
     modo_criacao: MODE_COMPLETO,
+    // 🔥 NOVO
+    data_hora_finalizacao: null,
   };
   estado.dadosOriginais = null;
   estado.sttInicializado = false;
@@ -235,6 +267,8 @@ async function carregarParaCompletar(id, appInstance) {
       anexos: anexosResult.success ? anexosResult.data : [],
       assinaturas: {},
       modo_criacao: occ.modo_criacao || MODE_RAPIDO,
+      // 🔥 NOVO
+      data_hora_finalizacao: occ.data_hora_finalizacao || null,
     };
 
     estado.dadosOriginais = JSON.parse(JSON.stringify(estado.dados));
@@ -284,7 +318,7 @@ function renderizarEscolhaModo(container, appInstance) {
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">⚡</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Rápido</h3>
-          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">Apenas campos essenciais<br>+ Fotos</p>
+          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">Apenas campos essenciais<br>+ Fotos (ilimitadas)</p>
           <div style="margin-top:8px;font-size:10px;color:var(--azul-bandeira);font-weight:600;">⏱️ ~2 minutos</div>
         </div>
 
@@ -292,7 +326,7 @@ function renderizarEscolhaModo(container, appInstance) {
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">📋</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Completo</h3>
-          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">Todos os campos<br>+ Envolvidos + Assinaturas</p>
+          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">Todos os campos<br>+ Envolvidos + Assinaturas<br>+ Fotos (ilimitadas)</p>
           <div style="margin-top:8px;font-size:10px;color:var(--azul-bandeira);font-weight:600;">⏱️ ~5-8 minutos</div>
         </div>
       </div>
@@ -301,7 +335,7 @@ function renderizarEscolhaModo(container, appInstance) {
         <p style="font-size:12px;color:var(--cinza-escuro);margin:0;">
           <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:6px;"></i>
           <strong>Dica:</strong> Use o modo Rápido para emergências e o modo Completo para registros detalhados.
-          Você pode completar um BO Rápido depois.
+          Você pode completar um BO Rápido depois. Ambos os modos permitem fotos ilimitadas.
         </p>
       </div>
     </div>
@@ -329,7 +363,8 @@ function renderizarEscolhaModo(container, appInstance) {
 // ============================================
 
 function renderizarFormularioRapido(container, appInstance) {
-  const hoje = new Date().toISOString().slice(0, 16);
+  // 🔥 CORRIGIDO: Usar a função auxiliar que retorna o horário LOCAL do dispositivo
+  const hoje = obterDataHoraLocalInput();
 
   const html = `
     <div class="container" style="padding-bottom:100px;">
@@ -376,7 +411,7 @@ function renderizarFormularioRapido(container, appInstance) {
               <div style="flex:1;position:relative;">
                 <input type="datetime-local" id="rapido_data_hora" class="form-control" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;" value="${estado.dados.data_hora_inicio || hoje}">
               </div>
-              <button type="button" onclick="document.getElementById('rapido_data_hora').value = '${new Date().toISOString().slice(0, 16)}'" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
+              <button type="button" onclick="document.getElementById('rapido_data_hora').value = window._obterDataHoraLocalInput()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
                 <i class="fas fa-clock"></i> Agora
               </button>
             </div>
@@ -403,10 +438,11 @@ function renderizarFormularioRapido(container, appInstance) {
             </div>
           </div>
 
+          <!-- 🔥 ALTERADO: Fotos - ilimitado -->
           <div class="form-group" style="margin-bottom:12px;">
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
               <i class="fas fa-camera" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Fotos (opcional - máx 5)
+              Fotos (opcional - ilimitado) 🔥
             </label>
             <div style="display:flex;flex-direction:column;gap:6px;">
               <input type="file" id="rapido_file_input" accept="image/*" multiple style="display:none;" onchange="window._novaOcorrenciaProcessarAnexosRapido(this.files)">
@@ -415,7 +451,7 @@ function renderizarFormularioRapido(container, appInstance) {
               </button>
               <div id="rapido_preview_area" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
               <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
-                <i class="fas fa-info-circle"></i> Máximo 5 imagens. Cada imagem será comprimida para até 1MB.
+                <i class="fas fa-info-circle"></i> Sem limite de quantidade. Cada imagem será comprimida para até 1MB.
               </div>
             </div>
           </div>
@@ -434,6 +470,9 @@ function renderizarFormularioRapido(container, appInstance) {
   `;
 
   container.innerHTML = html;
+
+  // 🔥 CORRIGIDO: Registrar função global para obter data/hora local
+  window._obterDataHoraLocalInput = obterDataHoraLocalInput;
 
   window._novaOcorrenciaProcessarAnexosRapido = (files) => {
     processarAnexosRapido(files, container, appInstance);
@@ -455,7 +494,7 @@ function renderizarFormularioRapido(container, appInstance) {
 }
 
 // ============================================
-// FINALIZAR BO RÁPIDO
+// 🔥 ALTERADO E CORRIGIDO: FINALIZAR BO RÁPIDO COM DATA_HORA_FINALIZACAO E SEM FUSO
 // ============================================
 
 async function finalizarRapido(container, appInstance) {
@@ -477,6 +516,17 @@ async function finalizarRapido(container, appInstance) {
   );
   if (!confirmado) return;
 
+  // 🔥 CORRIGIDO: Data/hora de finalização SEM ajuste de fuso
+  // ✅ Usar data do dispositivo SEM ajuste, construindo a string manualmente
+  const agora = new Date();
+  const year = agora.getFullYear();
+  const month = String(agora.getMonth() + 1).padStart(2, "0");
+  const day = String(agora.getDate()).padStart(2, "0");
+  const hours = String(agora.getHours()).padStart(2, "0");
+  const minutes = String(agora.getMinutes()).padStart(2, "0");
+  const seconds = String(agora.getSeconds()).padStart(2, "0");
+  const dataFinalizacao = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+
   const dados = {
     tipo_ocorrencia: tipo,
     local_ocorrencia: local,
@@ -486,6 +536,8 @@ async function finalizarRapido(container, appInstance) {
     forma_solicitacao: "Diretamente com a ocorrência",
     modo_criacao: MODE_RAPIDO,
     status: navigator.onLine ? "synced" : "pending_sync",
+    // 🔥 CORRIGIDO: data_hora_finalizacao sem ajuste de fuso
+    data_hora_finalizacao: dataFinalizacao,
   };
 
   const localizacao = await appInstance.obterLocalizacao();
@@ -524,18 +576,16 @@ async function finalizarRapido(container, appInstance) {
 }
 
 // ============================================
-// PROCESSAR ANEXOS RÁPIDO
+// 🔥 ALTERADO: PROCESSAR ANEXOS RÁPIDO (SEM LIMITE)
 // ============================================
 
 async function processarAnexosRapido(files, container, appInstance) {
   const anexos = estado.dados.anexos || [];
-  const maxFiles = 5;
+  // 🔥 ALTERADO: Removido limite MAX_ANEXOS
 
   for (const file of files) {
-    if (anexos.length >= maxFiles) {
-      appInstance.showToast(`Máximo de ${maxFiles} fotos atingido`, "warning");
-      break;
-    }
+    // 🔥 ALTERADO: Removida verificação de limite
+    // if (anexos.length >= maxFiles) { ... }
 
     if (!file.type.startsWith("image/")) {
       appInstance.showToast("Apenas imagens são permitidas", "warning");
@@ -706,7 +756,7 @@ function getEtapaSubtitulo(etapa) {
     2: "Preencha os dados principais da ocorrência",
     3: "Cadastre os envolvidos (autores, vítimas, testemunhas)",
     4: "Descreva detalhadamente o ocorrido",
-    5: "Adicione fotos, áudios, assinatura ou documentos",
+    5: "Adicione fotos, áudios, assinatura ou documentos (ilimitado)",
     6: "Revise todos os dados antes de finalizar",
   };
   return subtitulos[etapa] || "";
@@ -895,10 +945,8 @@ function renderEtapa1(dados) {
 // ============================================
 
 function renderEtapa2(dados, appInstance) {
-  const agora = new Date();
-  const timezoneOffset = agora.getTimezoneOffset();
-  const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
-  const dataHoraAtual = adjustedDate.toISOString().slice(0, 16);
+  // 🔥 CORRIGIDO: Usar a função auxiliar que retorna o horário LOCAL do dispositivo
+  const dataHoraAtual = obterDataHoraLocalInput();
 
   let dataInicio = dados.data_hora_inicio || dataHoraAtual;
 
@@ -955,7 +1003,7 @@ function renderEtapa2(dados, appInstance) {
           <i class="fas fa-calendar input-icon-left" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:14px;z-index:2;"></i>
           <input type="datetime-local" id="data_hora_inicio" class="form-control" required value="${dataInicio}" style="min-height:44px;padding-left:36px;">
         </div>
-        <button type="button" onclick="document.getElementById('data_hora_inicio').value = '${dataHoraAtual}'" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
+        <button type="button" onclick="document.getElementById('data_hora_inicio').value = window._obterDataHoraLocalInput()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
           <i class="fas fa-clock"></i> Agora
         </button>
       </div>
@@ -967,7 +1015,7 @@ function renderEtapa2(dados, appInstance) {
           <i class="fas fa-calendar-check input-icon-left" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:14px;z-index:2;"></i>
           <input type="datetime-local" id="data_hora_encerramento" class="form-control" value="${dados.data_hora_encerramento || ""}" style="min-height:44px;padding-left:36px;">
         </div>
-        <button type="button" onclick="document.getElementById('data_hora_encerramento').value = '${dataHoraAtual}'" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
+        <button type="button" onclick="document.getElementById('data_hora_encerramento').value = window._obterDataHoraLocalInput()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
           <i class="fas fa-clock"></i> Agora
         </button>
       </div>
@@ -1058,7 +1106,7 @@ function renderEtapa4(dados, appInstance) {
 }
 
 // ============================================
-// ETAPA 5 - ANEXOS
+// 🔥 ALTERADO: ETAPA 5 - ANEXOS (SEM LIMITE)
 // ============================================
 
 function renderEtapa5(dados, appInstance) {
@@ -1069,6 +1117,7 @@ function renderEtapa5(dados, appInstance) {
       <p style="color:var(--cinza-medio);font-size:14px;">
         <i class="fas fa-info-circle" style="margin-right:4px;"></i>
         Adicione fotos, áudios, assinatura ou documentos como evidência.
+        <strong>Sem limite de quantidade.</strong>
       </p>
     </div>
 
@@ -1076,7 +1125,7 @@ function renderEtapa5(dados, appInstance) {
       <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;"><i class="fas fa-camera"></i> Fotos e Documentos (${anexos.length})</h4>
       <div class="file-upload" onclick="document.getElementById('fileInput').click()">
         <div class="icon"><i class="fas fa-cloud-upload-alt"></i></div>
-        <div class="text"><strong>Clique para adicionar anexos</strong><br><span style="font-size:13px;color:var(--cinza-medio);">Fotos, vídeos ou documentos</span></div>
+        <div class="text"><strong>Clique para adicionar anexos</strong><br><span style="font-size:13px;color:var(--cinza-medio);">Fotos, vídeos ou documentos - sem limite</span></div>
         <input type="file" id="fileInput" multiple accept="image/*,video/*,application/pdf" style="display:none;" onchange="window._novaOcorrenciaProcessarAnexos(this.files)">
       </div>
       <div id="listaAnexos" style="margin-top:12px;">
@@ -1107,7 +1156,7 @@ function renderEtapa5(dados, appInstance) {
 }
 
 // ============================================
-// ETAPA 6 - REVISÃO
+// 🔥 ALTERADO: ETAPA 6 - REVISÃO (COM DATA_HORA_FINALIZACAO)
 // ============================================
 
 function renderEtapa6(dados, appInstance) {
@@ -1138,6 +1187,11 @@ function renderEtapa6(dados, appInstance) {
     { label: "Código Operacional", valor: dados.codigo_operacional },
   ].filter((c) => c.valor && c.valor.toString().trim() !== "");
 
+  // 🔥 NOVO: Mostrar data_hora_finalizacao se já estiver definida
+  const dataFinalizacao = dados.data_hora_finalizacao
+    ? formatarDataHoraLocal(dados.data_hora_finalizacao)
+    : "Será preenchida automaticamente na finalização";
+
   return `
     <div style="margin-bottom:16px;">
       <p style="color:var(--cinza-medio);font-size:14px;">
@@ -1165,6 +1219,11 @@ function renderEtapa6(dados, appInstance) {
         ${camposOcorrencia.map((c) => `<div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>`).join("")}
         <div class="campo"><span class="rotulo">Início:</span><span class="valor">${dados.data_hora_inicio ? formatarDataHoraLocal(dados.data_hora_inicio) : "Não informado"}</span></div>
         ${dados.data_hora_encerramento ? `<div class="campo"><span class="rotulo">Encerramento:</span><span class="valor">${formatarDataHoraLocal(dados.data_hora_encerramento)}</span></div>` : ""}
+        <!-- 🔥 NOVO: Data de finalização -->
+        <div class="campo" style="background:var(--azul-muito-claro);padding:4px 8px;border-radius:4px;">
+          <span class="rotulo" style="color:var(--azul-bandeira);">📌 Finalização:</span>
+          <span class="valor" style="font-weight:500;">${dataFinalizacao}</span>
+        </div>
       </div>
     `
         : ""
@@ -1198,13 +1257,16 @@ function renderEtapa6(dados, appInstance) {
     <div class="card-revisao">
       <h4><i class="fas fa-paperclip"></i> Evidências</h4>
       <div style="font-size:13px;">
-        <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s)</div>
+        <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s) (ilimitado)</div>
       </div>
       ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
     </div>
 
     <div class="alert-finalizar">
       <p><i class="fas fa-info-circle"></i> Ao finalizar, a ocorrência será numerada e não poderá mais ser editada.</p>
+      <p style="font-size:12px;margin-top:4px;color:var(--cinza-medio);">
+        <i class="fas fa-clock"></i> A data/hora de finalização será registrada automaticamente.
+      </p>
     </div>
   `;
 }
@@ -1479,11 +1541,12 @@ function removerEnvolvido(index, appInstance) {
 }
 
 // ============================================
-// ANEXOS - PROCESSAR
+// 🔥 ALTERADO: ANEXOS - PROCESSAR (SEM LIMITE)
 // ============================================
 
 async function processarAnexos(files, appInstance) {
   const anexos = estado.dados.anexos || [];
+  // 🔥 ALTERADO: Removido limite de anexos
 
   for (const file of files) {
     try {
@@ -1548,7 +1611,7 @@ function removerAnexo(index, appInstance) {
 }
 
 // ============================================
-// FINALIZAR OCORRÊNCIA (MODO COMPLETO)
+// 🔥 CORRIGIDO: FINALIZAR OCORRÊNCIA (COM DATA_HORA_FINALIZACAO E SEM FUSO)
 // ============================================
 
 async function finalizarOcorrencia(container, appInstance) {
@@ -1617,19 +1680,27 @@ async function finalizarOcorrencia(container, appInstance) {
   delete dadosParaSalvar.envolvidos;
   delete dadosParaSalvar.anexos;
 
+  // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
   if (dadosParaSalvar.data_hora_inicio) {
     try {
       const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
       if (!isNaN(dateObj.getTime())) {
-        const timezoneOffset = dateObj.getTimezoneOffset();
-        const adjustedDate = new Date(
-          dateObj.getTime() - timezoneOffset * 60000,
-        );
-        dadosParaSalvar.data_hora_inicio = adjustedDate.toISOString();
+        // ✅ Mantém a data exata do dispositivo, sem conversão para UTC
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const day = String(dateObj.getDate()).padStart(2, "0");
+        const hours = String(dateObj.getHours()).padStart(2, "0");
+        const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+        const seconds = String(dateObj.getSeconds()).padStart(2, "0");
+        dadosParaSalvar.data_hora_inicio = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+      } else {
+        // Se a data for inválida, usa a função do utils (que também é segura)
+        const agora = await utils.obterDataHoraInput();
+        dadosParaSalvar.data_hora_inicio = agora;
       }
     } catch (e) {
-      const agora = await appInstance.obterDataHoraPrecisa();
-      dadosParaSalvar.data_hora_inicio = agora.toISOString();
+      const agora = await utils.obterDataHoraInput();
+      dadosParaSalvar.data_hora_inicio = agora;
     }
   }
 
@@ -1637,11 +1708,14 @@ async function finalizarOcorrencia(container, appInstance) {
     try {
       const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
       if (!isNaN(dateObj.getTime())) {
-        const timezoneOffset = dateObj.getTimezoneOffset();
-        const adjustedDate = new Date(
-          dateObj.getTime() - timezoneOffset * 60000,
-        );
-        dadosParaSalvar.data_hora_encerramento = adjustedDate.toISOString();
+        // ✅ Mesma correção para encerramento
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const day = String(dateObj.getDate()).padStart(2, "0");
+        const hours = String(dateObj.getHours()).padStart(2, "0");
+        const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+        const seconds = String(dateObj.getSeconds()).padStart(2, "0");
+        dadosParaSalvar.data_hora_encerramento = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
       } else {
         dadosParaSalvar.data_hora_encerramento = null;
       }
@@ -1649,6 +1723,18 @@ async function finalizarOcorrencia(container, appInstance) {
       dadosParaSalvar.data_hora_encerramento = null;
     }
   }
+
+  // 🔥 NOVO: Data/hora de finalização
+  // ✅ Usar data do dispositivo SEM ajuste
+  const agora = new Date();
+  const year = agora.getFullYear();
+  const month = String(agora.getMonth() + 1).padStart(2, "0");
+  const day = String(agora.getDate()).padStart(2, "0");
+  const hours = String(agora.getHours()).padStart(2, "0");
+  const minutes = String(agora.getMinutes()).padStart(2, "0");
+  const seconds = String(agora.getSeconds()).padStart(2, "0");
+  const dataFinalizacao = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+  dadosParaSalvar.data_hora_finalizacao = dataFinalizacao;
 
   let localizacao = await appInstance.obterLocalizacao({ timeout: 5000 });
   if (
@@ -1665,6 +1751,7 @@ async function finalizarOcorrencia(container, appInstance) {
     status: navigator.onLine ? "synced" : "pending_sync",
     latitude: localizacao.latitude,
     longitude: localizacao.longitude,
+    // 🔥 NOVO: data_hora_finalizacao já incluído acima
   });
 
   if (!result.success) {
@@ -1923,6 +2010,16 @@ async function finalizarCompletarRapido(appInstance) {
   try {
     appInstance.showToast("Finalizando...", "info");
 
+    // 🔥 CORRIGIDO: Data/hora de finalização SEM ajuste de fuso
+    const agora = new Date();
+    const year = agora.getFullYear();
+    const month = String(agora.getMonth() + 1).padStart(2, "0");
+    const day = String(agora.getDate()).padStart(2, "0");
+    const hours = String(agora.getHours()).padStart(2, "0");
+    const minutes = String(agora.getMinutes()).padStart(2, "0");
+    const seconds = String(agora.getSeconds()).padStart(2, "0");
+    const dataFinalizacao = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+
     const dadosAtualizados = {
       forma_solicitacao:
         document.getElementById("completar_forma_solicitacao")?.value || "",
@@ -1939,8 +2036,10 @@ async function finalizarCompletarRapido(appInstance) {
       envolvidos: estado.dados.envolvidos || [],
       anexos: estado.dados.anexos || [],
       modo_criacao: MODE_COMPLETO,
-      completado_em: new Date().toISOString(),
+      completado_em: dataFinalizacao,
       completado_por: authManager.getUserId(),
+      // 🔥 CORRIGIDO: data_hora_finalizacao sem ajuste de fuso
+      data_hora_finalizacao: dataFinalizacao,
       status: "synced",
     };
 

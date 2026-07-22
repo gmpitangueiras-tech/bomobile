@@ -18,6 +18,15 @@
  * - Carrossel de fotos com navegação e swipe
  * - VISUALIZAÇÃO AMPLIADA DE IMAGENS NO MODAL
  * - EXPORTAÇÃO EM PDF (lista e individual)
+ * - 🔥 NOVO: Anexos sem limite (removido MAX_ANEXOS)
+ * - 🔥 NOVO: Data/hora início, encerramento e finalização
+ * - 🔥 NOVO: Retificação de abordagens (solicitar, aprovar, rejeitar)
+ * - 🔥 NOVO: Notificações para retificações
+ * - 🔥 NOVO: Status da abordagem (ativa, encerrada, finalizada, cancelada)
+ * - 🔥 NOVO: Função para finalizar abordagem
+ * - 🔥 NOVO: Botão de finalizar abordagem nos cards (VERDE)
+ * - 🔥 NOVO: Botão de retificar abordagem nos cards (ROXO)
+ * - 🔥 CORRIGIDO: Cores diferenciadas para Finalizar (verde) e Retificar (roxo)
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), pdfExport (global)
@@ -27,12 +36,163 @@
 // CONSTANTES
 // ============================================
 
-const MAX_ANEXOS = 5;
+// 🔥 ALTERADO: Removido MAX_ANEXOS - agora sem limite
+// const MAX_ANEXOS = 5; // REMOVIDO
+
 const MAX_IMAGE_SIZE = 1024 * 1024; // 1MB
 const MAX_IMAGE_WIDTH = 800;
 const IMAGE_QUALITY = 0.7;
 const REINCIDENCIA_LIMITE_ADVERTENCIA = 2;
 const REINCIDENCIA_LIMITE_MULTA = 4;
+
+// ============================================
+// FUNÇÕES AUXILIARES - FORMATAÇÃO
+// ============================================
+
+/**
+ * Formata uma data/hora para exibição no padrão brasileiro
+ * @param {string|Date} date - Data a ser formatada
+ * @param {boolean} includeSeconds - Incluir segundos?
+ * @returns {string}
+ */
+function formatarDataHoraLocal(date, includeSeconds = false) {
+  if (!date) return "";
+  try {
+    const d = typeof date === "string" ? new Date(date) : date;
+    if (isNaN(d.getTime())) return "Data inválida";
+
+    const options = {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    };
+    if (includeSeconds) options.second = "2-digit";
+
+    return d.toLocaleString("pt-BR", options);
+  } catch (e) {
+    return String(date);
+  }
+}
+
+/**
+ * Formata tamanho de arquivo
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatarTamanho(bytes) {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1048576).toFixed(1) + " MB";
+}
+
+/**
+ * Retorna o label do tipo de envolvido
+ * @param {string} tipo
+ * @returns {string}
+ */
+function getTipoEnvolvidoLabel(tipo) {
+  const tipos = {
+    autor: "Autor",
+    vitima: "Vítima",
+    testemunha: "Testemunha",
+    solicitante: "Solicitante",
+    outro: "Outro",
+  };
+  return tipos[tipo] || tipo;
+}
+
+/**
+ * Retorna o label do tipo de ocorrência
+ * @param {string} value
+ * @returns {string}
+ */
+function getTipoLabel(value) {
+  const tipos = [
+    { value: "furto", label: "Furto" },
+    { value: "roubo", label: "Roubo" },
+    { value: "vandalismo", label: "Vandalismo" },
+    { value: "dano_ao_patrimonio", label: "Dano ao Patrimônio" },
+    { value: "ameaca", label: "Ameaça" },
+    { value: "lesao_corporal", label: "Lesão Corporal" },
+    { value: "perturbacao", label: "Perturbação" },
+    { value: "acidente", label: "Acidente" },
+    { value: "incendio", label: "Incêndio" },
+    { value: "desaparecimento", label: "Desaparecimento" },
+    { value: "atendimento_social", label: "Atendimento Social" },
+    { value: "outro", label: "Outro" },
+  ];
+  const encontrado = tipos.find((t) => t.value === value);
+  return encontrado ? encontrado.label : value || "Não informado";
+}
+
+/**
+ * Retorna a classe CSS para o status
+ * @param {string} status
+ * @returns {string}
+ */
+function getStatusClass(status) {
+  const map = {
+    draft: "draft",
+    pending_sync: "pending",
+    synced: "synced",
+    cancelled: "cancelled",
+    rectified: "rectified",
+    pending_rectification: "pending_rectification",
+    rectification_rejected: "rectification_rejected",
+    sync_error: "error",
+  };
+  return map[status] || "draft";
+}
+
+/**
+ * Retorna o label amigável para o status
+ * @param {string} status
+ * @returns {string}
+ */
+function getStatusLabel(status) {
+  const map = {
+    draft: "Rascunho",
+    pending_sync: "Pendente",
+    syncing: "Sincronizando",
+    synced: "Finalizada",
+    cancelled: "Cancelada",
+    rectified: "Retificada",
+    pending_rectification: "Retificação Pendente",
+    rectification_rejected: "Retificação Rejeitada",
+    sync_error: "Erro",
+  };
+  return map[status] || status;
+}
+
+/**
+ * Retorna o ícone Font Awesome para o tipo de anexo
+ * @param {string} tipo
+ * @returns {string}
+ */
+function getIconAnexo(tipo) {
+  const icons = {
+    image: "fa-image",
+    video: "fa-video",
+    document: "fa-file-pdf",
+    audio: "fa-music",
+  };
+  return icons[tipo] || "fa-file";
+}
+
+/**
+ * Gera um UUID v4 (fallback)
+ * @returns {string}
+ */
+function gerarUUID() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 // ============================================
 // ESTADO DO MÓDULO
@@ -62,6 +222,10 @@ let estado = {
   formularioAberto: false,
   dadosFormulario: {},
   carrosselData: null,
+  // 🔥 NOVO: Estado para retificações
+  retificacoesPendentes: [],
+  carregandoRetificacoes: false,
+  abaRetificacao: "pendentes", // 'pendentes', 'historico'
 };
 
 // ============================================
@@ -189,6 +353,609 @@ function aplicarMascaraPlacaInterna(value) {
   if (upper.length <= 6)
     return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4)}`;
   return `${upper.slice(0, 3)}${upper.slice(3, 4)}${upper.slice(4, 5)}${upper.slice(5, 7)}`;
+}
+
+// ============================================
+// 🔥 NOVO: FUNÇÕES DE RETIFICAÇÃO DE ABORDAGENS
+// ============================================
+
+/**
+ * Campos que podem ser retificados em abordagens de veículos
+ */
+const CAMPOS_RETIFICAVEIS_VEICULO = [
+  { campo: "placa", label: "Placa", tipo: "text" },
+  { campo: "marca_modelo", label: "Marca/Modelo", tipo: "text" },
+  { campo: "cor", label: "Cor", tipo: "text" },
+  { campo: "condutor_nome", label: "Nome do Condutor", tipo: "text" },
+  { campo: "condutor_cpf", label: "CPF do Condutor", tipo: "text" },
+  { campo: "local_abordagem", label: "Local da Abordagem", tipo: "text" },
+  { campo: "motivo", label: "Motivo", tipo: "textarea" },
+  { campo: "observacoes", label: "Observações", tipo: "textarea" },
+  { campo: "data_hora_inicio", label: "Data/Hora Início", tipo: "datetime" },
+  {
+    campo: "data_hora_encerramento",
+    label: "Data/Hora Encerramento",
+    tipo: "datetime",
+  },
+];
+
+/**
+ * Campos que podem ser retificados em abordagens de pessoas
+ */
+const CAMPOS_RETIFICAVEIS_PESSOA = [
+  { campo: "nome", label: "Nome", tipo: "text" },
+  { campo: "alcunha", label: "Alcunha", tipo: "text" },
+  { campo: "cpf", label: "CPF", tipo: "text" },
+  { campo: "rg", label: "RG", tipo: "text" },
+  {
+    campo: "caracteristicas_fisicas",
+    label: "Características Físicas",
+    tipo: "textarea",
+  },
+  { campo: "vestimentas", label: "Vestimentas", tipo: "textarea" },
+  { campo: "local_abordagem", label: "Local da Abordagem", tipo: "text" },
+  { campo: "motivo", label: "Motivo", tipo: "textarea" },
+  { campo: "observacoes", label: "Observações", tipo: "textarea" },
+  { campo: "data_hora_inicio", label: "Data/Hora Início", tipo: "datetime" },
+  {
+    campo: "data_hora_encerramento",
+    label: "Data/Hora Encerramento",
+    tipo: "datetime",
+  },
+];
+
+/**
+ * 🔥 NOVO: Abre modal para solicitar retificação de abordagem
+ */
+export function abrirSolicitarRetificacaoAbordagem(id, tipo, appInstance) {
+  const client =
+    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) {
+    appInstance.showToast("Erro ao conectar", "error");
+    return;
+  }
+
+  const tabela =
+    tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+  const camposRetificaveis =
+    tipo === "veiculo"
+      ? CAMPOS_RETIFICAVEIS_VEICULO
+      : CAMPOS_RETIFICAVEIS_PESSOA;
+
+  appInstance.showToast("Carregando dados...", "info");
+
+  client
+    .from(tabela)
+    .select("*")
+    .eq("id", id)
+    .single()
+    .then(({ data, error }) => {
+      if (error) throw error;
+      if (!data) {
+        appInstance.showToast("Abordagem não encontrada", "error");
+        return;
+      }
+
+      // Verificar se já tem retificação pendente
+      if (data.status_retificacao === "pending_rectification") {
+        appInstance.showToast(
+          "Esta abordagem já possui uma retificação pendente",
+          "warning",
+        );
+        return;
+      }
+
+      // Verificar se pode solicitar retificação
+      const user = authManager.getUser();
+      const isSupervisor = authManager.isSupervisor();
+      if (!isSupervisor && data.criado_por !== user.id) {
+        appInstance.showToast(
+          "Apenas o criador ou supervisor pode solicitar retificação",
+          "warning",
+        );
+        return;
+      }
+
+      abrirModalSolicitarRetificacaoAbordagem(
+        data,
+        tipo,
+        camposRetificaveis,
+        appInstance,
+      );
+    })
+    .catch((error) => {
+      console.error("Erro ao carregar abordagem:", error);
+      appInstance.showToast("Erro ao carregar dados", "error");
+    });
+}
+
+/**
+ * 🔥 NOVO: Modal para solicitar retificação de abordagem
+ */
+function abrirModalSolicitarRetificacaoAbordagem(
+  abordagem,
+  tipo,
+  camposRetificaveis,
+  appInstance,
+) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    animation: fadeIn 0.25s ease;
+  `;
+
+  const isVeiculo = tipo === "veiculo";
+  const identificador = isVeiculo ? abordagem.placa : abordagem.nome;
+
+  let camposHTML = camposRetificaveis
+    .map((campo) => {
+      const valorAtual = abordagem[campo.campo] || "";
+      const isDateTime = campo.tipo === "datetime";
+      const isTextarea = campo.tipo === "textarea";
+
+      if (isDateTime) {
+        const valorFormatado = valorAtual
+          ? new Date(valorAtual).toISOString().slice(0, 16)
+          : "";
+        return `
+          <div class="form-group" style="margin-bottom:10px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
+              ${campo.label}
+            </label>
+            <input type="datetime-local" id="retificacao_campo_${campo.campo}" 
+              value="${valorFormatado}"
+              style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:38px;">
+            <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
+              Valor atual: ${valorAtual ? formatarDataHoraLocal(valorAtual) : "Não informado"}
+            </div>
+          </div>
+        `;
+      }
+
+      if (isTextarea) {
+        return `
+          <div class="form-group" style="margin-bottom:10px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
+              ${campo.label}
+            </label>
+            <textarea id="retificacao_campo_${campo.campo}" rows="2" 
+              style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:50px;resize:vertical;">${valorAtual}</textarea>
+            <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
+              Valor atual: ${valorAtual || "Não informado"}
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="form-group" style="margin-bottom:10px;">
+          <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
+            ${campo.label}
+          </label>
+          <input type="text" id="retificacao_campo_${campo.campo}" 
+            value="${valorAtual}"
+            placeholder="Digite o novo valor"
+            style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:38px;">
+          <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
+            Valor atual: ${valorAtual || "Não informado"}
+            </div>
+          </div>
+        `;
+    })
+    .join("");
+
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:550px;width:100%;max-height:95vh;overflow-y:auto;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
+      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
+        <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
+          <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
+          Solicitar Retificação - ${isVeiculo ? "Veículo" : "Pessoa"}
+        </div>
+        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+          style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" style="padding:14px 16px 4px 16px;">
+        <div style="margin-bottom:12px;padding:8px 12px;background:var(--azul-muito-claro);border-radius:var(--border-radius);border-left:4px solid var(--azul-bandeira);">
+          <p style="margin:0;font-size:13px;color:var(--cinza-escuro);">
+            <strong>${isVeiculo ? "Veículo:" : "Pessoa:"}</strong> ${identificador}
+          </p>
+          <p style="margin:4px 0 0 0;font-size:12px;color:var(--cinza-medio);">
+            <i class="fas fa-calendar" style="margin-right:4px;"></i>
+            Data: ${formatarDataHoraLocal(abordagem.criado_em)}
+          </p>
+        </div>
+
+        <p style="font-size:13px;color:var(--cinza-medio);margin-bottom:12px;">
+          <i class="fas fa-info-circle" style="margin-right:4px;"></i>
+          Altere apenas os campos que precisam de correção. Os campos não alterados manterão o valor original.
+        </p>
+
+        <form id="formRetificacaoAbordagem" onsubmit="event.preventDefault();">
+          ${camposHTML}
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
+              Justificativa <span class="required" style="color:var(--erro);">*</span>
+            </label>
+            <textarea id="retificacao_justificativa" rows="3" 
+              placeholder="Explique o motivo da retificação (mínimo 10 caracteres)"
+              style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:60px;resize:vertical;"></textarea>
+            <div class="input-hint" style="font-size:11px;color:var(--cinza-medio);margin-top:3px;">
+              <i class="fas fa-info-circle"></i> Mínimo 10 caracteres
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+          style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
+          Cancelar
+        </button>
+        <button type="button" class="btn-primary" onclick="window._confirmarRetificacaoAbordagem('${abordagem.id}', '${tipo}')" 
+          style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--gradiente-principal);color:var(--branco);">
+          <i class="fas fa-paper-plane" style="margin-right:6px;"></i> Solicitar Retificação
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Registrar função de confirmação
+  window._confirmarRetificacaoAbordagem = async function (id, tipo) {
+    const camposRetificaveis =
+      tipo === "veiculo"
+        ? CAMPOS_RETIFICAVEIS_VEICULO
+        : CAMPOS_RETIFICAVEIS_PESSOA;
+    const dados = {};
+    let temAlteracao = false;
+
+    camposRetificaveis.forEach((campo) => {
+      const input = document.getElementById(`retificacao_campo_${campo.campo}`);
+      if (input) {
+        const valor = input.value.trim();
+        if (campo.tipo === "datetime" && valor) {
+          // Converter para ISO
+          const date = new Date(valor);
+          if (!isNaN(date.getTime())) {
+            dados[campo.campo] = date.toISOString();
+          }
+        } else if (valor) {
+          dados[campo.campo] = valor;
+        }
+        // Se o campo foi preenchido (mesmo que vazio), considera alteração
+        if (input.value !== undefined) {
+          temAlteracao = true;
+        }
+      }
+    });
+
+    const justificativa = document
+      .getElementById("retificacao_justificativa")
+      ?.value?.trim();
+
+    if (!justificativa || justificativa.length < 10) {
+      appInstance.showToast(
+        "Justificativa deve ter pelo menos 10 caracteres",
+        "warning",
+      );
+      return;
+    }
+
+    // Verificar se algum campo foi alterado
+    const camposAlterados = [];
+    camposRetificaveis.forEach((campo) => {
+      const input = document.getElementById(`retificacao_campo_${campo.campo}`);
+      if (input) {
+        const valorAtual = abordagem[campo.campo] || "";
+        const valorNovo = input.value.trim();
+        if (String(valorAtual).trim() !== String(valorNovo).trim()) {
+          camposAlterados.push({
+            campo: campo.campo,
+            label: campo.label,
+            antes: valorAtual,
+            depois: valorNovo,
+          });
+        }
+      }
+    });
+
+    if (camposAlterados.length === 0) {
+      appInstance.showToast("Nenhum campo foi alterado", "warning");
+      return;
+    }
+
+    const confirmado = await appInstance.confirmar(
+      `Deseja solicitar retificação para esta abordagem?\n\n${camposAlterados.length} campo(s) serão alterados.`,
+      "Confirmar Retificação",
+    );
+
+    if (!confirmado) return;
+
+    try {
+      appInstance.showToast("Solicitando retificação...", "info");
+
+      const client =
+        typeof supabaseClient !== "undefined"
+          ? supabaseClient.getClient()
+          : null;
+      if (!client) throw new Error("Erro ao conectar");
+
+      const tabela =
+        tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+      const user = authManager.getUser();
+      const isSupervisor = authManager.isSupervisor();
+
+      // Preparar dados da retificação
+      const dadosRetificados = {
+        ...abordagem,
+        ...dados,
+        id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
+        abordagem_original_id: abordagem.id,
+        justificativa_retificacao: isSupervisor ? justificativa : null,
+        retificado_em: isSupervisor ? new Date().toISOString() : null,
+        retificado_por: isSupervisor ? user.id : null,
+        solicitacao_retificacao_justificativa: isSupervisor
+          ? null
+          : justificativa,
+        solicitada_em: isSupervisor ? null : new Date().toISOString(),
+        solicitada_por: isSupervisor ? null : user.id,
+        aprovada_em: isSupervisor ? new Date().toISOString() : null,
+        aprovada_por: isSupervisor ? user.id : null,
+        rejeitada_em: null,
+        rejeitada_por: null,
+        motivo_rejeicao: null,
+        status_retificacao: isSupervisor
+          ? "rectified"
+          : "pending_rectification",
+        esta_ativa: isSupervisor ? true : false,
+        numero_versao: (abordagem.numero_versao || 1) + 1,
+        criado_em: new Date().toISOString(),
+        atualizado_em: new Date().toISOString(),
+        criado_por: abordagem.criado_por,
+        campos_alterados: JSON.stringify(camposAlterados),
+        versao_original: JSON.stringify(abordagem),
+      };
+
+      delete dadosRetificados.id;
+
+      // Se for supervisor, desativa a versão original
+      if (isSupervisor) {
+        const { error: updateError } = await client
+          .from(tabela)
+          .update({
+            esta_ativa: false,
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", abordagem.id);
+
+        if (updateError) throw updateError;
+      }
+
+      // Inserir a retificação
+      const { data: novaAbordagem, error: insertError } = await client
+        .from(tabela)
+        .insert([dadosRetificados])
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // 🔥 NOVO: Registrar log pericial
+      await registrarLogPericialAbordagem(
+        isSupervisor
+          ? "RETIFICAR_ABORDAGEM"
+          : "SOLICITAR_RETIFICACAO_ABORDAGEM",
+        tabela,
+        novaAbordagem.id,
+        abordagem,
+        novaAbordagem,
+      );
+
+      // 🔥 NOVO: Notificar supervisores (se não for supervisor)
+      if (!isSupervisor) {
+        await notificarSupervisoresRetificacaoAbordagem(novaAbordagem, tipo);
+      }
+
+      // 🔥 NOVO: Notificar solicitante (se for supervisor)
+      if (isSupervisor) {
+        await notificarSolicitanteRetificacaoAbordagem(
+          novaAbordagem,
+          tipo,
+          "aprovada",
+        );
+      }
+
+      const modal = document.querySelector(".modal-overlay");
+      if (modal) modal.remove();
+
+      appInstance.showToast(
+        isSupervisor
+          ? "✅ Retificação aplicada com sucesso!"
+          : "✅ Solicitação de retificação enviada!",
+        "success",
+      );
+
+      // Recarregar lista de abordagens
+      const container = document.getElementById("consultaContainer");
+      if (container) {
+        await carregarAbordagens(container, appInstance);
+      }
+    } catch (error) {
+      console.error("Erro ao solicitar retificação:", error);
+      appInstance.showToast(
+        "Erro ao solicitar retificação: " + error.message,
+        "error",
+      );
+    }
+  };
+}
+
+/**
+ * 🔥 NOVO: Registrar log pericial para abordagens
+ */
+async function registrarLogPericialAbordagem(
+  acao,
+  tabela,
+  registroId,
+  dadosAnt,
+  dadosNov,
+) {
+  try {
+    const user = authManager.getUser();
+    if (!user) return;
+
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return;
+
+    let ip = null;
+    try {
+      const response = await fetch("https://api.ipify.org?format=json");
+      const data = await response.json();
+      ip = data.ip;
+    } catch (e) {}
+
+    let latitude = null;
+    let longitude = null;
+    try {
+      if (navigator.geolocation) {
+        const position = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve(pos),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 10000 },
+          );
+        });
+        if (position) {
+          latitude = position.coords.latitude;
+          longitude = position.coords.longitude;
+        }
+      }
+    } catch (e) {}
+
+    const logData = {
+      usuario_id: user.id,
+      acao: acao,
+      tabela_afetada: tabela,
+      registro_id: registroId?.toString(),
+      dados_anteriores: dadosAnt,
+      dados_novos: dadosNov,
+      ip_address: ip,
+      user_agent: navigator.userAgent,
+      latitude: latitude?.toString(),
+      longitude: longitude?.toString(),
+      criado_em: new Date().toISOString(),
+    };
+
+    await client.from("logs_periciais").insert([logData]);
+  } catch (error) {
+    console.warn("Erro ao registrar log pericial:", error);
+  }
+}
+
+/**
+ * 🔥 NOVO: Notificar supervisores sobre retificação pendente
+ */
+async function notificarSupervisoresRetificacaoAbordagem(abordagem, tipo) {
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return;
+
+    const { data: supervisores, error } = await client
+      .from("usuarios")
+      .select("id")
+      .eq("perfil", "supervisor")
+      .eq("status", "ativo");
+
+    if (error) throw error;
+    if (!supervisores || supervisores.length === 0) return;
+
+    const identificador = tipo === "veiculo" ? abordagem.placa : abordagem.nome;
+
+    const notificacoes = supervisores.map((s) => ({
+      usuario_id: s.id,
+      titulo: `📋 Retificação de Abordagem Pendente`,
+      mensagem: `${identificador} (${tipo}) solicitou retificação. Aguarda sua análise.`,
+      tipo: "retificacao_pendente",
+      link: "#retificacoes-abordagens",
+      criado_em: new Date().toISOString(),
+    }));
+
+    const batchSize = 50;
+    for (let i = 0; i < notificacoes.length; i += batchSize) {
+      const batch = notificacoes.slice(i, i + batchSize);
+      await client.from("notificacoes").insert(batch);
+    }
+
+    console.log(
+      `✅ ${notificacoes.length} notificações enviadas para supervisores`,
+    );
+  } catch (error) {
+    console.error("Erro ao notificar supervisores:", error);
+  }
+}
+
+/**
+ * 🔥 NOVO: Notificar solicitante sobre aprovação/rejeição
+ */
+async function notificarSolicitanteRetificacaoAbordagem(
+  abordagem,
+  tipo,
+  status,
+  motivo = null,
+) {
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return;
+
+    const solicitanteId = abordagem.solicitada_por;
+    if (!solicitanteId) return;
+
+    const identificador = tipo === "veiculo" ? abordagem.placa : abordagem.nome;
+
+    let titulo = "";
+    let mensagem = "";
+
+    if (status === "aprovada") {
+      titulo = `✅ Retificação Aprovada`;
+      mensagem = `Sua retificação de abordagem (${identificador}) foi aprovada pelo supervisor.`;
+    } else if (status === "rejeitada") {
+      titulo = `❌ Retificação Rejeitada`;
+      mensagem = `Sua retificação de abordagem (${identificador}) foi rejeitada. Motivo: ${motivo}`;
+    }
+
+    await client.from("notificacoes").insert({
+      usuario_id: solicitanteId,
+      titulo: titulo,
+      mensagem: mensagem,
+      tipo:
+        status === "aprovada"
+          ? "retificacao_aprovada"
+          : "retificacao_rejeitada",
+      link: "#consulta",
+      criado_em: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Erro ao notificar solicitante:", error);
+  }
 }
 
 // ============================================
@@ -843,14 +1610,14 @@ export async function renderConsultaOperacional(container, appInstance) {
       <!-- Abas: Todos | Veículos | Pessoas -->
       <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
         <button onclick="window._consultaMudarAba('todos')" id="tabTodos" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "todos" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "todos" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-          <i class="fas fa-list"></i> Todos
-        </button>
+            <i class="fas fa-list"></i> Todos
+          </button>
         <button onclick="window._consultaMudarAba('veiculos')" id="tabVeiculos" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "veiculos" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "veiculos" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-          <i class="fas fa-motorcycle"></i> Veículos
-        </button>
+            <i class="fas fa-motorcycle"></i> Veículos
+          </button>
         <button onclick="window._consultaMudarAba('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "pessoas" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "pessoas" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-          <i class="fas fa-user-friends"></i> Pessoas
-        </button>
+            <i class="fas fa-user-friends"></i> Pessoas
+          </button>
       </div>
 
       <!-- Filtros -->
@@ -961,10 +1728,20 @@ export async function renderConsultaOperacional(container, appInstance) {
     fecharFormularioComConfirmacao(container, appInstance);
   window._consultaAbrirCarrossel = (imagens, index) =>
     abrirCarrosselFotos(imagens, index, appInstance);
+
+  // 🔥 NOVO: Função para solicitar retificação
+  window._consultaSolicitarRetificacao = (id, tipo) =>
+    abrirSolicitarRetificacaoAbordagem(id, tipo, appInstance);
+
+  // 🔥 NOVO: Função para finalizar abordagem
+  window._consultaFinalizarAbordagem = (id, tipo) =>
+    finalizarAbordagem(id, tipo, appInstance);
+
   // Funções de exportação PDF
   window._consultaExportarPDF = () => exportarListaPDF(appInstance);
   window._consultaExportarDetalhePDF = (id, tipo) =>
     exportarDetalhePDF(id, tipo, appInstance);
+
   // Recarregar
   window._consultaRecarregar = () =>
     renderConsultaOperacional(container, appInstance);
@@ -974,6 +1751,432 @@ export async function renderConsultaOperacional(container, appInstance) {
   await carregarRankingReincidentes();
   await carregarAbordagens(container, appInstance);
   configurarScrollInfinito(container, appInstance);
+}
+
+// ============================================
+// 🔥 ALTERADO: FORMULÁRIO DE ABORDAGEM COM DATA/HORA
+// ============================================
+
+export function abrirFormularioAbordagem(appInstance, termoPreenchido = "") {
+  const area = document.getElementById("consultaResultadosArea");
+  if (!area) return;
+
+  const isVeiculo =
+    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
+  estado.arquivosTemp = [];
+  estado.formularioAberto = true;
+
+  const localizacaoAtual =
+    typeof window.app !== "undefined"
+      ? window.app.obterLocalizacaoAtual()
+      : null;
+
+  // 🔥 NOVO: Data/hora atual para os campos
+  const agora = new Date();
+  const dataHoraAtual = agora.toISOString().slice(0, 16);
+  const dataHoraInicio = dataHoraAtual;
+
+  let html = `
+    <div style="background:var(--branco);padding:12px 14px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="font-size:15px;color:var(--azul-bandeira);margin:0;">
+          <i class="fas fa-plus-circle" style="margin-right:6px;"></i> Nova Abordagem/Orientação
+        </h3>
+        <button onclick="window._consultaFecharFormulario()" class="btn-secondary" style="padding:4px 10px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      ${
+        localizacaoAtual
+          ? `
+        <div style="font-size:10px;color:var(--cinza-medio);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-map-pin" style="color:var(--verde-bandeira);"></i>
+          📍 GPS: ${localizacaoAtual.latitude.toFixed(6)}, ${localizacaoAtual.longitude.toFixed(6)}
+        </div>
+      `
+          : ""
+      }
+      <form id="formAbordagem" onsubmit="event.preventDefault();">
+  `;
+
+  if (isVeiculo) {
+    html += `
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Placa *</label>
+        <input type="text" id="formPlaca" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;text-transform:uppercase;font-size:13px;min-height:36px;" required>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <div style="flex:1;">
+          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Marca/Modelo</label>
+          <input type="text" id="formMarcaModelo" placeholder="Ex: Honda Civic" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Cor</label>
+          <input type="text" id="formCor" placeholder="Ex: Prata" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Condutor (Nome)</label>
+        <input type="text" id="formCondutor" placeholder="Nome completo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      </div>
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF do Condutor</label>
+        <input type="text" id="formCondutorCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Nome Completo *</label>
+        <input type="text" id="formNome" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" required>
+      </div>
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Alcunha (Apelido)</label>
+        <input type="text" id="formAlcunha" placeholder="Ex: 'Neguinho', 'Magrão'" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <div style="flex:1;">
+          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF</label>
+          <input type="text" id="formCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">RG</label>
+          <input type="text" id="formRg" placeholder="00.000.000-0" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Características Físicas</label>
+        <textarea id="formCaracteristicas" rows="2" placeholder="Altura, peso, tatuagens, cicatrizes..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:6px;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Vestimentas</label>
+        <textarea id="formVestimentas" rows="2" placeholder="Roupas, calçados, acessórios..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="form-group" style="margin-bottom:6px;">
+      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Local da Abordagem</label>
+      <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+    </div>
+    
+    <!-- 🔥 NOVO: Data/Hora Início e Encerramento -->
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <div style="flex:1;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Data/Hora Início *</label>
+        <input type="datetime-local" id="formDataHoraInicio" value="${dataHoraInicio}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" required>
+      </div>
+      <div style="flex:1;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Data/Hora Encerramento</label>
+        <input type="datetime-local" id="formDataHoraEncerramento" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-bottom:6px;">
+      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Motivo da Abordagem</label>
+      <textarea id="formMotivo" rows="3" placeholder="Descreva o que motivou a orientação..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:6px;">
+      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Observações Adicionais</label>
+      <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+    </div>
+
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <div style="flex:1;">
+        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Fase da Abordagem</label>
+        <select id="formFase" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+          <option value="advertencia">⚠️ Advertência</option>
+          <option value="multa">💰 Multa</option>
+        </select>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="formTemPrazo" style="width:16px;height:16px;accent-color:var(--azul-bandeira);" onchange="document.getElementById('formPrazo').disabled = !this.checked">
+        <label style="font-size:11px;font-weight:600;">📅 Prazo</label>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:6px;">
+      <input type="date" id="formPrazo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" disabled>
+    </div>
+
+    <div class="form-group" style="margin-bottom:6px;">
+      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">
+        <i class="fas fa-camera"></i> Fotos (sem limite de quantidade)
+      </label>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <input type="file" id="abordagemFileInput" accept="image/*" multiple style="display:none;" onchange="window._consultaPreviewImagens(this)">
+        <div style="display:flex;gap:6px;">
+          <button type="button" onclick="document.getElementById('abordagemFileInput').click()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;min-height:36px;">
+            <i class="fas fa-camera"></i> Selecionar Fotos
+          </button>
+          <button type="button" onclick="window._consultaAbrirCameraRapida()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:36px;">
+            <i class="fas fa-camera-retro"></i> Tirar Foto
+          </button>
+        </div>
+        <div id="abordagemPreviewArea" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
+        <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
+          <i class="fas fa-info-circle"></i> Sem limite de quantidade. Cada imagem será comprimida para até 1MB.
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;margin-top:12px;">
+      <button type="button" onclick="window._consultaSalvarAbordagem()" class="btn-primary" style="flex:2;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
+        <i class="fas fa-save"></i> Salvar Orientação
+      </button>
+      <button type="button" onclick="window._consultaFecharFormulario()" class="btn-secondary" style="flex:1;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
+        Cancelar
+      </button>
+    </div>
+  `;
+
+  html += `</form></div>`;
+
+  area.innerHTML = html;
+
+  const cpfInput =
+    document.getElementById("formCpf") ||
+    document.getElementById("formCondutorCpf");
+  if (cpfInput) {
+    cpfInput.addEventListener("input", function (e) {
+      this.value = aplicarMascaraCPFInterna(this.value);
+    });
+  }
+
+  const placaInput = document.getElementById("formPlaca");
+  if (placaInput) {
+    placaInput.addEventListener("input", function (e) {
+      this.value = aplicarMascaraPlacaInterna(this.value);
+    });
+  }
+}
+
+// ============================================
+// 🔥 ALTERADO: SALVAR ABORDAGEM COM DATA/HORA
+// ============================================
+
+export async function salvarAbordagemComAnexos(appInstance) {
+  const isVeiculo =
+    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
+  const user =
+    typeof authManager !== "undefined" ? authManager.getUser() : null;
+
+  if (!user) {
+    appInstance.showToast("Usuário não autenticado", "error");
+    return;
+  }
+
+  const identificador = isVeiculo
+    ? document.getElementById("formPlaca")?.value?.toUpperCase()?.trim()
+    : document.getElementById("formNome")?.value?.trim();
+
+  if (!identificador) {
+    appInstance.showToast(
+      isVeiculo ? "Placa é obrigatória" : "Nome é obrigatório",
+      "warning",
+    );
+    return;
+  }
+
+  // 🔥 NOVO: Validar data/hora início
+  const dataHoraInicio = document.getElementById("formDataHoraInicio")?.value;
+  if (!dataHoraInicio) {
+    appInstance.showToast("Data/Hora Início é obrigatória", "warning");
+    return;
+  }
+
+  appInstance.showToast("Processando...", "info");
+
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) throw new Error("Erro ao conectar ao servidor");
+
+    // 🔥 ALTERADO: Removido limite de arquivos
+    const files = estado.arquivosTemp || [];
+    let anexosUrls = [];
+
+    if (files.length > 0) {
+      const anexosProcessados = await processarAnexosAbordagem(files);
+      anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
+    }
+
+    let localizacao =
+      typeof window.app !== "undefined"
+        ? window.app.obterLocalizacaoAtual()
+        : null;
+    if (!localizacao) {
+      localizacao = await obterLocalizacaoInterna();
+    }
+
+    const dataHoraFormatada = obterDataHoraLocalFormatada();
+
+    // 🔥 NOVO: Preparar dados com data/hora
+    const dados = {
+      criado_por: user.id,
+      local_abordagem: document.getElementById("formLocal")?.value || "",
+      motivo: document.getElementById("formMotivo")?.value || "",
+      observacoes:
+        document.getElementById("formObservacoesAbordagem")?.value || "",
+      fase: document.getElementById("formFase")?.value || "advertencia",
+      anexos: anexosUrls,
+      criado_em: dataHoraFormatada,
+      atualizado_em: dataHoraFormatada,
+      latitude: localizacao?.latitude || null,
+      longitude: localizacao?.longitude || null,
+      // 🔥 NOVO: Data/hora
+      data_hora_inicio: dataHoraInicio,
+      data_hora_encerramento:
+        document.getElementById("formDataHoraEncerramento")?.value || null,
+      data_hora_finalizacao: null, // Só será preenchido na finalização
+      status_abordagem: "ativa",
+    };
+
+    const temPrazo = document.getElementById("formTemPrazo")?.checked || false;
+    if (temPrazo) {
+      dados.prazo = document.getElementById("formPrazo")?.value || null;
+      dados.tem_prazo = true;
+      dados.status_regularizacao = "pendente";
+    }
+
+    if (isVeiculo) {
+      dados.placa = identificador;
+      dados.marca_modelo =
+        document.getElementById("formMarcaModelo")?.value || "";
+      dados.cor = document.getElementById("formCor")?.value || "";
+      dados.condutor_nome =
+        document.getElementById("formCondutor")?.value || "";
+      dados.condutor_cpf =
+        document.getElementById("formCondutorCpf")?.value || "";
+    } else {
+      dados.nome = identificador;
+      dados.alcunha = document.getElementById("formAlcunha")?.value || "";
+      dados.cpf = document.getElementById("formCpf")?.value || "";
+      dados.rg = document.getElementById("formRg")?.value || "";
+      dados.caracteristicas_fisicas =
+        document.getElementById("formCaracteristicas")?.value || "";
+      dados.vestimentas =
+        document.getElementById("formVestimentas")?.value || "";
+    }
+
+    const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+    const { data, error } = await client.from(tabela).insert([dados]).select();
+
+    if (error) throw error;
+
+    estado.arquivosTemp = [];
+    const previewArea = document.getElementById("abordagemPreviewArea");
+    if (previewArea) previewArea.innerHTML = "";
+    const fileInput = document.getElementById("abordagemFileInput");
+    if (fileInput) fileInput.value = "";
+
+    appInstance.showToast("Abordagem registrada com sucesso!", "success");
+
+    const container = document.getElementById("consultaContainer");
+    if (container) {
+      await carregarAbordagens(container, appInstance);
+      await carregarRankingReincidentes();
+    }
+
+    const buscaInput = document.getElementById("consultaBusca");
+    if (buscaInput) buscaInput.value = "";
+
+    fecharFormulario(container, appInstance);
+  } catch (error) {
+    console.error("Erro ao salvar abordagem:", error);
+    appInstance.showToast("Erro ao salvar: " + error.message, "error");
+  }
+}
+
+// ============================================
+// 🔥 NOVO: FINALIZAR ABORDAGEM
+// ============================================
+
+/**
+ * Finaliza uma abordagem (ativa → finalizada)
+ * @param {string} id - ID da abordagem
+ * @param {string} tipo - 'veiculo' ou 'pessoa'
+ * @param {Object} appInstance - Instância do app
+ */
+export async function finalizarAbordagem(id, tipo, appInstance) {
+  try {
+    const confirmado = await appInstance.confirmar(
+      "Deseja finalizar esta abordagem?",
+      "Finalizar Abordagem",
+    );
+
+    if (!confirmado) return;
+
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) throw new Error("Erro ao conectar");
+
+    const tabela =
+      tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+
+    // Buscar a abordagem
+    const { data: abordagem, error: buscaError } = await client
+      .from(tabela)
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (buscaError) throw buscaError;
+    if (!abordagem) throw new Error("Abordagem não encontrada");
+
+    // Verificar se já está finalizada
+    if (abordagem.status_abordagem === "finalizada") {
+      appInstance.showToast("Esta abordagem já está finalizada", "warning");
+      return;
+    }
+
+    // Verificar se está cancelada
+    if (abordagem.status_abordagem === "cancelada") {
+      appInstance.showToast(
+        "Abordagem cancelada não pode ser finalizada",
+        "warning",
+      );
+      return;
+    }
+
+    // 🔥 NOVO: Data/hora de finalização
+
+    const dataFinalizacao = new Date().toISOString();
+
+    // Atualizar status e data de finalização
+    const { data, error } = await client
+      .from(tabela)
+      .update({
+        status_abordagem: "finalizada",
+        data_hora_finalizacao: dataFinalizacao,
+        atualizado_em: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    appInstance.showToast("Abordagem finalizada com sucesso!", "success");
+
+    // 🔥 NOVO: Registrar log pericial
+    await registrarLogPericialAbordagem(
+      "FINALIZAR_ABORDAGEM",
+      tabela,
+      id,
+      abordagem,
+      data,
+    );
+
+    // Recarregar lista
+    const container = document.getElementById("consultaContainer");
+    if (container) {
+      await carregarAbordagens(container, appInstance);
+    }
+  } catch (error) {
+    console.error("Erro ao finalizar abordagem:", error);
+    appInstance.showToast("Erro ao finalizar: " + error.message, "error");
+  }
 }
 
 // ============================================
@@ -1746,7 +2949,7 @@ async function carregarAbordagens(container, appInstance) {
 }
 
 // ============================================
-// RENDERIZAÇÃO: CARDS DE ABORDAGENS
+// 🔥 ALTERADO: RENDERIZAÇÃO DOS CARDS (COM RETIFICAÇÃO, DATA/HORA E CORES DOS BOTÕES)
 // ============================================
 
 function renderAbordagensCards(abordagens, appInstance) {
@@ -1773,6 +2976,35 @@ function renderAbordagensCards(abordagens, appInstance) {
       });
       const guardaNome = ab.usuarios?.nome_completo || "Desconhecido";
 
+      // 🔥 NOVO: Data/hora início e encerramento
+      const dataInicio = ab.data_hora_inicio
+        ? formatarDataHoraLocal(ab.data_hora_inicio)
+        : "Não informado";
+      const dataEncerramento = ab.data_hora_encerramento
+        ? formatarDataHoraLocal(ab.data_hora_encerramento)
+        : "Não encerrado";
+      const dataFinalizacao = ab.data_hora_finalizacao
+        ? formatarDataHoraLocal(ab.data_hora_finalizacao)
+        : null;
+
+      // 🔥 NOVO: Status da abordagem
+      const statusAbordagem = ab.status_abordagem || "ativa";
+      const statusLabel =
+        {
+          ativa: "🟢 Ativa",
+          encerrada: "🟡 Encerrada",
+          finalizada: "✅ Finalizada",
+          cancelada: "❌ Cancelada",
+        }[statusAbordagem] || "🟢 Ativa";
+
+      const statusClass =
+        {
+          ativa: "badge-synced",
+          encerrada: "badge-pending",
+          finalizada: "badge-verde",
+          cancelada: "badge-cancelled",
+        }[statusAbordagem] || "badge-synced";
+
       let faseLabel = "PRIMEIRA ORIENTAÇÃO";
       let faseClass = "badge-primeira";
       if (
@@ -1790,6 +3022,17 @@ function renderAbordagensCards(abordagens, appInstance) {
       } else if (ab.fase === "advertencia") {
         faseLabel = "ADVERTÊNCIA";
         faseClass = "badge-pending";
+      }
+
+      // 🔥 NOVO: Status de retificação
+      const statusRetificacao = ab.status_retificacao || "none";
+      let badgeRetificacao = "";
+      if (statusRetificacao === "pending_rectification") {
+        badgeRetificacao = `<span class="badge badge-pending" style="font-size:8px;padding:1px 8px;background:#fef3c7;color:#92400e;">⏳ Retificação Pendente</span>`;
+      } else if (statusRetificacao === "rectified") {
+        badgeRetificacao = `<span class="badge badge-synced" style="font-size:8px;padding:1px 8px;background:#d1fae5;color:#065f46;">✅ Retificada</span>`;
+      } else if (statusRetificacao === "rectification_rejected") {
+        badgeRetificacao = `<span class="badge badge-cancelled" style="font-size:8px;padding:1px 8px;background:#fee2e2;color:#991b1b;">❌ Retificação Rejeitada</span>`;
       }
 
       let identificador = "";
@@ -1850,9 +3093,19 @@ function renderAbordagensCards(abordagens, appInstance) {
         imagensJSON = "[]";
       }
 
+      // 🔥 NOVO: Verificar se pode solicitar retificação
+      const user = authManager.getUser();
+      const isSupervisor = authManager.isSupervisor();
+      const podeSolicitarRetificacao =
+        (statusAbordagem === "finalizada" || statusAbordagem === "encerrada") &&
+        statusRetificacao !== "pending_rectification" &&
+        (isSupervisor || ab.criado_por === user?.id);
+
+      // 🔥 NOVO: Verificar se pode finalizar (apenas se estiver ativa)
+      const podeFinalizar = statusAbordagem === "ativa";
+
       return `
-        <div class="abordagem-card" onclick="window._consultaVerAbordagemDetalhe('${ab.id}', '${ab.tipo_abordagem}')" 
-          style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;margin-bottom:10px;box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};cursor:pointer;transition:transform 0.15s ease;">
+        <div class="abordagem-card" style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;margin-bottom:10px;box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};cursor:pointer;transition:transform 0.15s ease;">
           
           <!-- Cabeçalho do Card -->
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;flex-wrap:wrap;gap:4px;">
@@ -1860,16 +3113,25 @@ function renderAbordagensCards(abordagens, appInstance) {
               <span class="badge ${badgeCor}" style="font-size:9px;padding:2px 10px;font-weight:700;">${badgeTipo}</span>
               <span style="font-weight:700;font-size:14px;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">${identificador}</span>
               ${infoExtra ? `<span style="font-size:11px;color:var(--cinza-medio);word-break:break-word;">${infoExtra}</span>` : ""}
+              ${badgeRetificacao}
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <span class="badge ${statusClass}" style="font-size:9px;padding:2px 10px;white-space:nowrap;">${statusLabel}</span>
               <span class="badge ${faseClass}" style="font-size:9px;padding:2px 10px;white-space:nowrap;">${faseLabel}</span>
               ${totalAnexos > 0 ? `<span style="font-size:11px;color:var(--cinza-medio);background:var(--cinza-claro);padding:1px 8px;border-radius:10px;white-space:nowrap;">+${totalAnexos}</span>` : ""}
             </div>
           </div>
 
+          <!-- 🔥 NOVO: Data/Hora -->
+          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:10px;color:var(--cinza-medio);margin-bottom:2px;background:var(--branco-fumaca);padding:4px 8px;border-radius:4px;">
+            <span><i class="fas fa-play" style="margin-right:2px;"></i>Início: ${dataInicio}</span>
+            <span><i class="fas fa-stop" style="margin-right:2px;"></i>Encerramento: ${dataEncerramento}</span>
+            ${dataFinalizacao ? `<span><i class="fas fa-check-circle" style="margin-right:2px;color:var(--verde-bandeira);"></i>Finalização: ${dataFinalizacao}</span>` : ""}
+            <span><i class="fas fa-calendar" style="margin-right:2px;"></i>Registro: ${data}</span>
+          </div>
+
           <!-- Detalhes -->
-          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--cinza-medio);margin-bottom:4px;">
-            <span><i class="fas fa-calendar" style="margin-right:4px;"></i>${data}</span>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--cinza-medio);margin-bottom:2px;">
             <span><i class="fas fa-map-marker-alt" style="margin-right:4px;"></i>${ab.local_abordagem || "Local não informado"}</span>
             <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
           </div>
@@ -1910,10 +3172,37 @@ function renderAbordagensCards(abordagens, appInstance) {
               : ""
           }
           
-          <!-- Botão Exportar PDF Individual -->
-          <div style="margin-top:6px;display:flex;gap:4px;justify-content:flex-end;">
+          <!-- 🔥 CORRIGIDO: Botões de ação com cores diferenciadas -->
+          <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+            <button onclick="event.stopPropagation(); window._consultaVerAbordagemDetalhe('${ab.id}', '${ab.tipo_abordagem}')" 
+              style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
+              <i class="fas fa-eye"></i> Ver
+            </button>
+            
+            ${
+              podeFinalizar
+                ? `
+              <button onclick="event.stopPropagation(); window._consultaFinalizarAbordagem('${ab.id}', '${ab.tipo_abordagem}')" 
+                style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--verde-muito-claro);color:var(--verde-escuro);cursor:pointer;">
+                <i class="fas fa-check-circle"></i> Finalizar
+              </button>
+            `
+                : ""
+            }
+            
+            ${
+              podeSolicitarRetificacao
+                ? `
+              <button onclick="event.stopPropagation(); window._consultaSolicitarRetificacao('${ab.id}', '${ab.tipo_abordagem}')" 
+                style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:#ede9fe;color:#6d28d9;cursor:pointer;">
+                <i class="fas fa-sync-alt"></i> Retificar
+              </button>
+            `
+                : ""
+            }
+            
             <button onclick="event.stopPropagation(); window._consultaExportarDetalhePDF('${ab.id}', '${ab.tipo_abordagem}')" 
-              style="padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
+              style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
               <i class="fas fa-file-pdf"></i> PDF
             </button>
           </div>
@@ -2269,6 +3558,35 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
       second: "2-digit",
     });
 
+    // 🔥 NOVO: Data/hora início e encerramento
+    const dataInicio = data.data_hora_inicio
+      ? formatarDataHoraLocal(data.data_hora_inicio)
+      : "Não informado";
+    const dataEncerramento = data.data_hora_encerramento
+      ? formatarDataHoraLocal(data.data_hora_encerramento)
+      : "Não encerrado";
+    const dataFinalizacao = data.data_hora_finalizacao
+      ? formatarDataHoraLocal(data.data_hora_finalizacao)
+      : null;
+
+    // 🔥 NOVO: Status da abordagem
+    const statusAbordagem = data.status_abordagem || "ativa";
+    const statusLabel =
+      {
+        ativa: "🟢 Ativa",
+        encerrada: "🟡 Encerrada",
+        finalizada: "✅ Finalizada",
+        cancelada: "❌ Cancelada",
+      }[statusAbordagem] || "🟢 Ativa";
+
+    const statusClass =
+      {
+        ativa: "badge-synced",
+        encerrada: "badge-pending",
+        finalizada: "badge-verde",
+        cancelada: "badge-cancelled",
+      }[statusAbordagem] || "badge-synced";
+
     let faseLabel = "PRIMEIRA ORIENTAÇÃO";
     let faseClass = "badge-primeira";
     if (
@@ -2286,6 +3604,17 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
     } else if (data.fase === "advertencia") {
       faseLabel = "ADVERTÊNCIA";
       faseClass = "badge-pending";
+    }
+
+    // 🔥 NOVO: Status de retificação
+    const statusRetificacao = data.status_retificacao || "none";
+    let badgeRetificacao = "";
+    if (statusRetificacao === "pending_rectification") {
+      badgeRetificacao = `<span class="badge badge-pending" style="font-size:10px;padding:2px 12px;background:#fef3c7;color:#92400e;">⏳ Retificação Pendente</span>`;
+    } else if (statusRetificacao === "rectified") {
+      badgeRetificacao = `<span class="badge badge-synced" style="font-size:10px;padding:2px 12px;background:#d1fae5;color:#065f46;">✅ Retificada</span>`;
+    } else if (statusRetificacao === "rectification_rejected") {
+      badgeRetificacao = `<span class="badge badge-cancelled" style="font-size:10px;padding:2px 12px;background:#fee2e2;color:#991b1b;">❌ Retificação Rejeitada</span>`;
     }
 
     let identificador = "";
@@ -2411,10 +3740,20 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap;">
                 <span class="badge ${badgeCor}" style="font-size:10px;padding:2px 12px;font-weight:700;">${badgeTipo}</span>
                 <span style="font-size:18px;font-weight:700;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};word-break:break-word;">${identificador}</span>
+                ${badgeRetificacao}
               </div>
               ${detalhes ? `<div style="font-size:13px;color:var(--cinza-medio);word-break:break-word;">${detalhes}</div>` : ""}
             </div>
             <span class="badge ${faseClass}" style="font-size:12px;padding:4px 14px;white-space:nowrap;">${faseLabel}</span>
+          </div>
+
+          <!-- 🔥 NOVO: Status e Data/Hora -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;background:var(--branco-fumaca);padding:8px 10px;border-radius:var(--border-radius);margin-bottom:8px;">
+            <div><span style="color:var(--cinza-medio);">Status:</span> <span class="badge ${statusClass}" style="font-size:10px;">${statusLabel}</span></div>
+            <div><span style="color:var(--cinza-medio);">Fase:</span> <strong>${faseLabel}</strong></div>
+            <div><span style="color:var(--cinza-medio);">Início:</span> <strong>${dataInicio}</strong></div>
+            <div><span style="color:var(--cinza-medio);">Encerramento:</span> <strong>${dataEncerramento}</strong></div>
+            ${dataFinalizacao ? `<div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Finalização:</span> <strong>${dataFinalizacao}</strong></div>` : ""}
           </div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;background:var(--branco-fumaca);padding:10px 12px;border-radius:var(--border-radius);margin-bottom:12px;">
@@ -2578,186 +3917,6 @@ function converterEmBO(id, tipo, appInstance) {
 }
 
 // ============================================
-// FORMULÁRIO DE ABORDAGEM
-// ============================================
-
-export function abrirFormularioAbordagem(appInstance, termoPreenchido = "") {
-  const area = document.getElementById("consultaResultadosArea");
-  if (!area) return;
-
-  const isVeiculo =
-    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
-  estado.arquivosTemp = [];
-  estado.formularioAberto = true;
-
-  const localizacaoAtual =
-    typeof window.app !== "undefined"
-      ? window.app.obterLocalizacaoAtual()
-      : null;
-
-  let html = `
-    <div style="background:var(--branco);padding:12px 14px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="font-size:15px;color:var(--azul-bandeira);margin:0;">
-          <i class="fas fa-plus-circle" style="margin-right:6px;"></i> Nova Abordagem/Orientação
-        </h3>
-        <button onclick="window._consultaFecharFormulario()" class="btn-secondary" style="padding:4px 10px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      ${
-        localizacaoAtual
-          ? `
-        <div style="font-size:10px;color:var(--cinza-medio);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-map-pin" style="color:var(--verde-bandeira);"></i>
-          📍 GPS: ${localizacaoAtual.latitude.toFixed(6)}, ${localizacaoAtual.longitude.toFixed(6)}
-        </div>
-      `
-          : ""
-      }
-      <form id="formAbordagem" onsubmit="event.preventDefault();">
-  `;
-
-  if (isVeiculo) {
-    html += `
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Placa *</label>
-        <input type="text" id="formPlaca" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;text-transform:uppercase;font-size:13px;min-height:36px;" required>
-      </div>
-      <div style="display:flex;gap:6px;margin-bottom:6px;">
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Marca/Modelo</label>
-          <input type="text" id="formMarcaModelo" placeholder="Ex: Honda Civic" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-        </div>
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Cor</label>
-          <input type="text" id="formCor" placeholder="Ex: Prata" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-        </div>
-      </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Condutor (Nome)</label>
-        <input type="text" id="formCondutor" placeholder="Nome completo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-      </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF do Condutor</label>
-        <input type="text" id="formCondutorCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-      </div>
-    `;
-  } else {
-    html += `
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Nome Completo *</label>
-        <input type="text" id="formNome" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" required>
-      </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Alcunha (Apelido)</label>
-        <input type="text" id="formAlcunha" placeholder="Ex: 'Neguinho', 'Magrão'" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-      </div>
-      <div style="display:flex;gap:6px;margin-bottom:6px;">
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF</label>
-          <input type="text" id="formCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-        </div>
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">RG</label>
-          <input type="text" id="formRg" placeholder="00.000.000-0" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-        </div>
-      </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Características Físicas</label>
-        <textarea id="formCaracteristicas" rows="2" placeholder="Altura, peso, tatuagens, cicatrizes..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
-      </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Vestimentas</label>
-        <textarea id="formVestimentas" rows="2" placeholder="Roupas, calçados, acessórios..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
-      </div>
-    `;
-  }
-
-  html += `
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Local da Abordagem</label>
-      <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-    </div>
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Motivo da Abordagem</label>
-      <textarea id="formMotivo" rows="3" placeholder="Descreva o que motivou a orientação..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
-    </div>
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Observações Adicionais</label>
-      <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
-    </div>
-
-    <div style="display:flex;gap:6px;margin-bottom:6px;">
-      <div style="flex:1;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Fase da Abordagem</label>
-        <select id="formFase" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-          <option value="advertencia">⚠️ Advertência</option>
-          <option value="multa">💰 Multa</option>
-        </select>
-      </div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="formTemPrazo" style="width:16px;height:16px;accent-color:var(--azul-bandeira);" onchange="document.getElementById('formPrazo').disabled = !this.checked">
-        <label style="font-size:11px;font-weight:600;">📅 Prazo</label>
-      </div>
-    </div>
-    <div class="form-group" style="margin-bottom:6px;">
-      <input type="date" id="formPrazo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" disabled>
-    </div>
-
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">
-        <i class="fas fa-camera"></i> Fotos (máx ${MAX_ANEXOS})
-      </label>
-      <div style="display:flex;flex-direction:column;gap:4px;">
-        <input type="file" id="abordagemFileInput" accept="image/*" multiple style="display:none;" onchange="window._consultaPreviewImagens(this)">
-        <div style="display:flex;gap:6px;">
-          <button type="button" onclick="document.getElementById('abordagemFileInput').click()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;min-height:36px;">
-            <i class="fas fa-camera"></i> Selecionar Fotos
-          </button>
-          <button type="button" onclick="window._consultaAbrirCameraRapida()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:36px;">
-            <i class="fas fa-camera-retro"></i> Tirar Foto
-          </button>
-        </div>
-        <div id="abordagemPreviewArea" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
-        <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
-          <i class="fas fa-info-circle"></i> Máximo ${MAX_ANEXOS} imagens. Cada imagem será comprimida para até 1MB.
-        </div>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:6px;margin-top:12px;">
-      <button type="button" onclick="window._consultaSalvarAbordagem()" class="btn-primary" style="flex:2;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
-        <i class="fas fa-save"></i> Salvar Orientação
-      </button>
-      <button type="button" onclick="window._consultaFecharFormulario()" class="btn-secondary" style="flex:1;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
-        Cancelar
-      </button>
-    </div>
-  `;
-
-  html += `</form></div>`;
-
-  area.innerHTML = html;
-
-  const cpfInput =
-    document.getElementById("formCpf") ||
-    document.getElementById("formCondutorCpf");
-  if (cpfInput) {
-    cpfInput.addEventListener("input", function (e) {
-      this.value = aplicarMascaraCPFInterna(this.value);
-    });
-  }
-
-  const placaInput = document.getElementById("formPlaca");
-  if (placaInput) {
-    placaInput.addEventListener("input", function (e) {
-      this.value = aplicarMascaraPlacaInterna(this.value);
-    });
-  }
-}
-
-// ============================================
 // PREVIEW DE IMAGENS
 // ============================================
 
@@ -2765,17 +3924,9 @@ export function previewMultiplasImagensAbordagem(input) {
   const area = document.getElementById("abordagemPreviewArea");
   if (!area) return;
 
+  // 🔥 ALTERADO: Removido limite de quantidade
   const files = input.files;
-  if (files.length > MAX_ANEXOS) {
-    if (window._consultaApp && window._consultaApp.showToast) {
-      window._consultaApp.showToast(
-        `Máximo ${MAX_ANEXOS} imagens permitidas`,
-        "warning",
-      );
-    }
-    input.value = "";
-    return;
-  }
+  // if (files.length > MAX_ANEXOS) { ... } // REMOVIDO
 
   area.innerHTML = "";
   const imagensData = [];
@@ -2837,134 +3988,13 @@ function abrirCameraRapida(appInstance) {
 }
 
 // ============================================
-// SALVAR ABORDAGEM
-// ============================================
-
-export async function salvarAbordagemComAnexos(appInstance) {
-  const isVeiculo =
-    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
-  const user =
-    typeof authManager !== "undefined" ? authManager.getUser() : null;
-
-  if (!user) {
-    appInstance.showToast("Usuário não autenticado", "error");
-    return;
-  }
-
-  const identificador = isVeiculo
-    ? document.getElementById("formPlaca")?.value?.toUpperCase()?.trim()
-    : document.getElementById("formNome")?.value?.trim();
-
-  if (!identificador) {
-    appInstance.showToast(
-      isVeiculo ? "Placa é obrigatória" : "Nome é obrigatório",
-      "warning",
-    );
-    return;
-  }
-
-  appInstance.showToast("Processando...", "info");
-
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) throw new Error("Erro ao conectar ao servidor");
-
-    const files = estado.arquivosTemp || [];
-    let anexosUrls = [];
-
-    if (files.length > 0) {
-      const anexosProcessados = await processarAnexosAbordagem(files);
-      anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
-    }
-
-    let localizacao =
-      typeof window.app !== "undefined"
-        ? window.app.obterLocalizacaoAtual()
-        : null;
-    if (!localizacao) {
-      localizacao = await obterLocalizacaoInterna();
-    }
-
-    const dataHoraFormatada = obterDataHoraLocalFormatada();
-
-    const dados = {
-      criado_por: user.id,
-      local_abordagem: document.getElementById("formLocal")?.value || "",
-      motivo: document.getElementById("formMotivo")?.value || "",
-      observacoes:
-        document.getElementById("formObservacoesAbordagem")?.value || "",
-      fase: document.getElementById("formFase")?.value || "advertencia",
-      anexos: anexosUrls,
-      criado_em: dataHoraFormatada,
-      atualizado_em: dataHoraFormatada,
-      latitude: localizacao?.latitude || null,
-      longitude: localizacao?.longitude || null,
-    };
-
-    const temPrazo = document.getElementById("formTemPrazo")?.checked || false;
-    if (temPrazo) {
-      dados.prazo = document.getElementById("formPrazo")?.value || null;
-      dados.tem_prazo = true;
-      dados.status_regularizacao = "pendente";
-    }
-
-    if (isVeiculo) {
-      dados.placa = identificador;
-      dados.marca_modelo =
-        document.getElementById("formMarcaModelo")?.value || "";
-      dados.cor = document.getElementById("formCor")?.value || "";
-      dados.condutor_nome =
-        document.getElementById("formCondutor")?.value || "";
-      dados.condutor_cpf =
-        document.getElementById("formCondutorCpf")?.value || "";
-    } else {
-      dados.nome = identificador;
-      dados.alcunha = document.getElementById("formAlcunha")?.value || "";
-      dados.cpf = document.getElementById("formCpf")?.value || "";
-      dados.rg = document.getElementById("formRg")?.value || "";
-      dados.caracteristicas_fisicas =
-        document.getElementById("formCaracteristicas")?.value || "";
-      dados.vestimentas =
-        document.getElementById("formVestimentas")?.value || "";
-    }
-
-    const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
-    const { data, error } = await client.from(tabela).insert([dados]).select();
-
-    if (error) throw error;
-
-    estado.arquivosTemp = [];
-    const previewArea = document.getElementById("abordagemPreviewArea");
-    if (previewArea) previewArea.innerHTML = "";
-    const fileInput = document.getElementById("abordagemFileInput");
-    if (fileInput) fileInput.value = "";
-
-    appInstance.showToast("Abordagem registrada com sucesso!", "success");
-
-    const container = document.getElementById("consultaContainer");
-    if (container) {
-      await carregarAbordagens(container, appInstance);
-      await carregarRankingReincidentes();
-    }
-
-    const buscaInput = document.getElementById("consultaBusca");
-    if (buscaInput) buscaInput.value = "";
-
-    fecharFormulario(container, appInstance);
-  } catch (error) {
-    console.error("Erro ao salvar abordagem:", error);
-    appInstance.showToast("Erro ao salvar: " + error.message, "error");
-  }
-}
-
-// ============================================
 // PROCESSAR E UPLOAD ANEXOS
 // ============================================
 
 async function processarAnexosAbordagem(files) {
   const anexos = [];
-  const filesToProcess = Array.from(files).slice(0, MAX_ANEXOS);
+  // 🔥 ALTERADO: Removido limite de arquivos
+  const filesToProcess = Array.from(files); // Removido .slice(0, MAX_ANEXOS)
 
   for (const file of filesToProcess) {
     try {
@@ -3043,16 +4073,6 @@ async function uploadAnexosAbordagem(anexos, isVeiculo) {
 }
 
 // ============================================
-// FUNÇÃO AUXILIAR - FORMATAR TAMANHO
-// ============================================
-
-function formatarTamanho(bytes) {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / 1048576).toFixed(1) + " MB";
-}
-
-// ============================================
 // EXPORTAÇÕES
 // ============================================
 
@@ -3068,6 +4088,10 @@ export default {
   verAbordagemDetalhe,
   fecharFormulario,
   abrirCarrosselFotos,
+  // 🔥 NOVO: Retificação
+  abrirSolicitarRetificacaoAbordagem,
+  // 🔥 NOVO: Finalizar abordagem
+  finalizarAbordagem,
   // Funções de exportação PDF
   exportarListaPDF,
   exportarDetalhePDF,

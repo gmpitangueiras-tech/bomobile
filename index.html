@@ -78,7 +78,7 @@
     <link
       rel="apple-touch-icon"
       sizes="180x180"
-      href="assets/icons/icon-192x192.png"
+      href="assets/icons/icon-192x192.ico"
     />
     <link
       rel="icon"
@@ -397,9 +397,16 @@
           </div>
         </div>
 
-        <!-- Retificações Pendentes -->
+        <!-- Retificações -->
         <div id="page-retificacoes" class="page" style="display: none">
           <div class="container" id="retificacoesContent">
+            <!-- Carregado via JavaScript -->
+          </div>
+        </div>
+
+        <!-- 🔥 NOVO: Notificações -->
+        <div id="page-notificacoes" class="page" style="display: none">
+          <div class="container" id="notificacoesContent">
             <!-- Carregado via JavaScript -->
           </div>
         </div>
@@ -434,7 +441,7 @@
       </main>
 
       <!-- ============================================
-      BOTTOM NAVIGATION
+      BOTTOM NAVIGATION - CORRIGIDO
       ============================================ -->
       <nav id="bottom-nav" class="bottom-nav" style="display: none">
         <!-- Início -->
@@ -470,17 +477,25 @@
           <span>Novo BO</span>
         </button>
 
-        <!-- Minhas Ocorrências -->
+        <!-- 🔥 NOTIFICAÇÕES (agora no NAV - substituiu Ocorrências) -->
         <button
           class="nav-item"
-          data-page="ocorrencias"
-          aria-label="Ocorrências"
+          data-page="notificacoes"
+          aria-label="Notificações"
         >
-          <i class="fas fa-list-ul"></i>
-          <span>Ocorrências</span>
+          <div class="icon-wrapper">
+            <i class="fas fa-bell"></i>
+            <span
+              id="badge-notificacoes"
+              class="badge-count"
+              style="display: none"
+              >0</span
+            >
+          </div>
+          <span>Notificações</span>
         </button>
 
-        <!-- Mais (abre bottom sheet) -->
+        <!-- Mais (abre bottom sheet com todas as opções, incluindo Ocorrências) -->
         <button class="nav-item" id="navMais" aria-label="Mais opções">
           <i class="fas fa-ellipsis-h"></i>
           <span>Mais</span>
@@ -510,8 +525,9 @@
       <div id="toastContainer"></div>
 
       <!-- ============================================
-      FAB CONTEXTUAL (Floating Action Button)
+      FAB CONTEXTUAL (Floating Action Button) - REMOVIDO
       ============================================ -->
+      <!--
       <button
         id="fabContextual"
         class="fab"
@@ -520,6 +536,7 @@
       >
         <i class="fas fa-plus"></i>
       </button>
+      -->
     </div>
 
     <!-- ============================================
@@ -533,6 +550,9 @@
     <script src="js/auth.js"></script>
     <script src="js/ocorrencia.js"></script>
     <script src="js/session.js"></script>
+
+    <!-- 🔥 NOVO: Sistema de Notificações -->
+    <script src="js/modules/notificacoes.js"></script>
 
     <!-- Módulo Busca Profunda -->
     <script type="module" src="js/modules/busca-profunda.js"></script>
@@ -588,6 +608,20 @@
         },
         { once: true },
       );
+
+      // 🔥 NOVO: Inicializar badge de notificações via UI
+      document.addEventListener("DOMContentLoaded", function () {
+        // Aguardar o carregamento do módulo UI
+        setTimeout(function () {
+          if (
+            typeof window.ui !== "undefined" &&
+            window.ui.atualizarBadgeNotificacoes
+          ) {
+            window.ui.atualizarBadgeNotificacoes();
+            console.log("🔔 Badge de notificações inicializado");
+          }
+        }, 2000);
+      });
 
       console.log(`📱 Modo: ${isMobile ? "Mobile" : "Desktop"}`);
       console.log(`🌐 Navegador: ${navigator.userAgent.split(" ").pop()}`);

@@ -16,6 +16,11 @@
  * - GPS contínuo para localização automática
  * - Debounce em buscas e eventos
  * - Gestos de deslize entre abas (mobile)
+ * - 🔥 NOVO: Página de Notificações
+ * - 🔥 NOVO: Roteamento para novas páginas
+ * - 🔥 NOVO: Badge de notificações no bottom nav
+ * - 🔥 REMOVIDO: FAB Contextual (botão flutuante removido)
+ * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
  *
  * Depende de: authManager, supabaseClient, ocorrenciaManager,
  *             sessionManager e todos os módulos em /modules/
@@ -110,6 +115,12 @@ class App {
         showHeader: true,
         showNav: true,
       },
+      // 🔥 NOVO: Retificações de Abordagens
+      "retificacoes-abordagens": {
+        element: "page-retificacoes",
+        showHeader: true,
+        showNav: true,
+      },
       relatorios: {
         element: "page-relatorios",
         showHeader: true,
@@ -120,6 +131,12 @@ class App {
       perfil: { element: "page-perfil", showHeader: true, showNav: true },
       consulta: { element: "page-consulta", showHeader: true, showNav: true },
       mural: { element: "page-mural", showHeader: true, showNav: true },
+      // 🔥 NOVO: Notificações
+      notificacoes: {
+        element: "page-notificacoes",
+        showHeader: true,
+        showNav: true,
+      },
     };
 
     // Tipos de ocorrência (usado em várias partes)
@@ -365,7 +382,15 @@ class App {
     }
 
     // Verificar permissões para páginas restritas
-    if (["relatorios", "usuarios", "retificacoes", "logs"].includes(page)) {
+    if (
+      [
+        "relatorios",
+        "usuarios",
+        "retificacoes",
+        "retificacoes-abordagens",
+        "logs",
+      ].includes(page)
+    ) {
       if (!authManager.isSupervisor()) {
         this.showToast("Acesso restrito a supervisores", "warning");
         page = "dashboard";
@@ -409,6 +434,9 @@ class App {
 
     // Fechar bottom sheet
     ui.closeBottomSheet();
+
+    // 🔥 REMOVIDO: FAB Contextual (botão flutuante removido)
+    // ui.atualizarFAB(page);
   }
 
   updateBottomNav(page) {
@@ -453,6 +481,11 @@ class App {
           await this.renderRetificacoes(container);
           break;
 
+        // 🔥 NOVO: Retificações de Abordagens
+        case "retificacoes-abordagens":
+          await this.renderRetificacoesAbordagens(container);
+          break;
+
         case "relatorios":
           await relatorios.renderRelatorios(container, this);
           break;
@@ -477,6 +510,11 @@ class App {
           await mural.renderMural(container, this);
           break;
 
+        // 🔥 NOVO: Notificações
+        case "notificacoes":
+          await this.renderNotificacoes(container);
+          break;
+
         default:
           container.innerHTML = `<h2>Página ${page} em desenvolvimento</h2>`;
       }
@@ -488,6 +526,59 @@ class App {
             <i class="fas fa-exclamation-triangle"></i>
           </div>
           <h3>Erro ao carregar</h3>
+          <p style="color:var(--cinza-medio);">${error.message}</p>
+          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+            Voltar
+          </button>
+        </div>
+      `;
+    }
+  }
+
+  // ============================================
+  // 🔥 NOVO: RENDER NOTIFICAÇÕES
+  // ============================================
+
+  async renderNotificacoes(container) {
+    try {
+      const { renderNotificacoes } =
+        await import("./modules/notificacoes-lista.js");
+      await renderNotificacoes(container, this);
+    } catch (error) {
+      console.error("❌ Erro ao carregar notificações:", error);
+      container.innerHTML = `
+        <div class="container" style="text-align:center;padding:40px 20px;">
+          <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+          <h3>Erro ao carregar notificações</h3>
+          <p style="color:var(--cinza-medio);">${error.message}</p>
+          <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
+            Voltar
+          </button>
+        </div>
+      `;
+    }
+  }
+
+  // ============================================
+  // 🔥 NOVO: RENDER RETIFICAÇÕES DE ABORDAGENS
+  // ============================================
+
+  async renderRetificacoesAbordagens(container) {
+    try {
+      // Importar o módulo de retificações (já atualizado)
+      const { renderRetificacoes } = await import("./modules/retificacoes.js");
+      // A mesma função renderiza todos os tipos, com filtro por tipo
+      await renderRetificacoes(container, this);
+    } catch (error) {
+      console.error("❌ Erro ao carregar retificações de abordagens:", error);
+      container.innerHTML = `
+        <div class="container" style="text-align:center;padding:40px 20px;">
+          <div style="font-size:48px;color:var(--erro);margin-bottom:12px;">
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+          <h3>Erro ao carregar retificações</h3>
           <p style="color:var(--cinza-medio);">${error.message}</p>
           <button onclick="app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;">
             Voltar
@@ -571,6 +662,10 @@ class App {
     }
   }
 
+  /**
+   * 🔥 CORRIGIDO: Salva rascunho SEM ajuste de fuso horário
+   * Agora usa APENAS o horário do dispositivo
+   */
   async salvarRascunho() {
     try {
       const dados = this.novaOcorrencia?.dados;
@@ -624,19 +719,29 @@ class App {
       delete dadosParaSalvar.envolvidos;
       delete dadosParaSalvar.anexos;
 
-      // Ajustar data/hora com fuso correto
+      // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
       if (dadosParaSalvar.data_hora_inicio) {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
           if (!isNaN(dateObj.getTime())) {
-            dadosParaSalvar.data_hora_inicio = dateObj.toISOString();
+            // ✅ Mantém a data exata do dispositivo, sem conversão para UTC
+            // Constrói a string ISO manualmente com o horário local
+            const year = dateObj.getFullYear();
+            const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+            const day = String(dateObj.getDate()).padStart(2, "0");
+            const hours = String(dateObj.getHours()).padStart(2, "0");
+            const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+            const seconds = String(dateObj.getSeconds()).padStart(2, "0");
+            dadosParaSalvar.data_hora_inicio = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
           } else {
-            const agora = await utils.obterDataHoraPrecisa();
-            dadosParaSalvar.data_hora_inicio = agora.toISOString();
+            // Se a data for inválida, usa a função do utils (que também é segura)
+            const agora = await utils.obterDataHoraInput();
+            dadosParaSalvar.data_hora_inicio = agora;
           }
         } catch (e) {
-          const agora = await utils.obterDataHoraPrecisa();
-          dadosParaSalvar.data_hora_inicio = agora.toISOString();
+          // Se houver erro, usa a função do utils
+          const agora = await utils.obterDataHoraInput();
+          dadosParaSalvar.data_hora_inicio = agora;
         }
       }
 
@@ -644,7 +749,14 @@ class App {
         try {
           const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
           if (!isNaN(dateObj.getTime())) {
-            dadosParaSalvar.data_hora_encerramento = dateObj.toISOString();
+            // ✅ Mesma correção para encerramento
+            const year = dateObj.getFullYear();
+            const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+            const day = String(dateObj.getDate()).padStart(2, "0");
+            const hours = String(dateObj.getHours()).padStart(2, "0");
+            const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+            const seconds = String(dateObj.getSeconds()).padStart(2, "0");
+            dadosParaSalvar.data_hora_encerramento = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
           } else {
             dadosParaSalvar.data_hora_encerramento = null;
           }
@@ -1284,6 +1396,11 @@ class App {
     document.addEventListener("localizacao_atualizada", (e) => {
       // Atualizar interfaces que dependem de localização
       this.atualizarLocalizacaoUI(e.detail);
+    });
+
+    // 🔥 NOVO: Evento para atualizar badge de notificações via UI
+    document.addEventListener("badge_notificacoes_atualizado", (e) => {
+      console.log(`🔔 Badge de notificações atualizado: ${e.detail.count}`);
     });
   }
 

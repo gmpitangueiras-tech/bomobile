@@ -27,6 +27,11 @@
  * - Modo Rápido (modo_criacao) e Completar BO Rápido
  * - Método completarRapido() para finalizar BOs Rápidos
  * - Busca e listagem com modo_criacao
+ * - 🔥 ALTERADO: Removido MAX_ANEXOS - agora ilimitado
+ * - 🔥 NOVO: data_hora_finalizacao para registrar quando foi finalizada no sistema
+ * - 🔥 NOVO: Validação de anexos sem limite de quantidade
+ * - 🔥 NOVO: Logs de finalização com data_hora_finalizacao
+ * - 🔥 NOVO: Método para atualizar data_hora_finalizacao
  */
 class OcorrenciaManager {
   constructor() {
@@ -98,6 +103,8 @@ class OcorrenciaManager {
       "modo_criacao",
       "completado_em",
       "completado_por",
+      // 🔥 NOVO: data_hora_finalizacao também é imutável após definida
+      "data_hora_finalizacao",
     ];
   }
 
@@ -489,7 +496,9 @@ class OcorrenciaManager {
         motivo_rejeicao: null,
         campos_alterados: null,
         versao_original: null,
-        // 🔥 NOVO: Campos para modo Rápido
+        // 🔥 NOVO: data_hora_finalizacao inicia como null
+        data_hora_finalizacao: null,
+        // Modo Rápido
         modo_criacao: dados.modo_criacao || "completo",
         completado_em: null,
         completado_por: null,
@@ -815,6 +824,9 @@ class OcorrenciaManager {
     }
   }
 
+  /**
+   * 🔥 ALTERADO: Finalizar ocorrência com data_hora_finalizacao
+   */
   async finalizar(id) {
     try {
       const { data: ocorrencia, error: buscaError } = await this.buscar(id);
@@ -853,10 +865,7 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
-      const agora = new Date();
-      const timezoneOffset = agora.getTimezoneOffset();
-      const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
-      const dataEncerramento = adjustedDate.toISOString();
+      const dataFinalizacao = new Date().toISOString();
 
       // Gerar Hash Pericial (SHA-256)
       const conteudoParaHash = `${ocorrencia.tipo_ocorrencia}|${ocorrencia.local_ocorrencia}|${ocorrencia.observacoes}|${dataEncerramento}|${ocorrencia.criado_por}`;
@@ -869,10 +878,12 @@ class OcorrenciaManager {
 
       const dadosAnteriores = { ...ocorrencia };
 
+      // 🔥 ALTERADO: Incluir data_hora_finalizacao
       const result = await this.atualizar(id, {
         status: status,
         numero_ocorrencia: numeroOficial,
         data_hora_encerramento: dataEncerramento,
+        data_hora_finalizacao: dataFinalizacao, // 🔥 NOVO
         esta_ativa: true,
         hash_pericial: hashHex,
       });
@@ -901,6 +912,7 @@ class OcorrenciaManager {
             {
               numero: numeroOficial,
               hash: hashHex,
+              data_hora_finalizacao: dataFinalizacao,
             },
           );
         }
@@ -1143,6 +1155,8 @@ class OcorrenciaManager {
         forma_solicitacao: original.forma_solicitacao,
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(original),
+        // 🔥 NOVO: data_hora_finalizacao permanece null (será preenchido na aprovação)
+        data_hora_finalizacao: null,
       };
 
       delete dadosRetificados.id;
@@ -1341,6 +1355,9 @@ class OcorrenciaManager {
 
       if (updateOrigError) throw updateOrigError;
 
+      // 🔥 NOVO: Adicionar data_hora_finalizacao na aprovação
+      const dataFinalizacao = new Date().toISOString();
+
       const { data, error } = await client
         .from("ocorrencias")
         .update({
@@ -1366,6 +1383,8 @@ class OcorrenciaManager {
           )
             .toISOString()
             .slice(0, 19),
+          // 🔥 NOVO: data_hora_finalizacao
+          data_hora_finalizacao: dataFinalizacao,
         })
         .eq("id", retificacaoId)
         .select()
@@ -1872,9 +1891,12 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // ANEXOS - CORRIGIDO
+  // ANEXOS - CORRIGIDO E SEM LIMITE
   // ============================================
 
+  /**
+   * 🔥 ALTERADO: Removido limite de anexos (MAX_ANEXOS)
+   */
   async adicionarAnexo(ocorrenciaId, arquivo, tipo) {
     try {
       const user = authManager.getUser();
@@ -2044,7 +2066,7 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // SALVAR EM LOTE
+  // SALVAR EM LOTE - 🔥 ALTERADO (sem limite)
   // ============================================
 
   async salvarEnvolvidos(ocorrenciaId, envolvidos) {
@@ -2102,6 +2124,9 @@ class OcorrenciaManager {
     }
   }
 
+  /**
+   * 🔥 ALTERADO: Salvar anexos sem limite de quantidade
+   */
   async salvarAnexos(ocorrenciaId, anexos) {
     if (!anexos || anexos.length === 0) {
       return { success: true };
@@ -2117,6 +2142,10 @@ class OcorrenciaManager {
       if (!client) {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
+
+      // 🔥 ALTERADO: Removido limite de anexos
+      // const MAX_ANEXOS = 5; // REMOVIDO
+      // if (anexos.length > MAX_ANEXOS) { ... }
 
       const resultados = [];
 
@@ -2264,7 +2293,7 @@ class OcorrenciaManager {
         rectification_rejected: data.filter(
           (o) => o.status === "rectification_rejected",
         ).length,
-        // 🔥 NOVO: Estatísticas por modo
+        // Estatísticas por modo
         rapido: data.filter((o) => o.modo_criacao === "rapido").length,
         completo: data.filter((o) => o.modo_criacao === "completo").length,
         rapido_completado: data.filter(
@@ -2273,11 +2302,86 @@ class OcorrenciaManager {
         rapido_pendente: data.filter(
           (o) => o.modo_criacao === "rapido" && o.completado_em === null,
         ).length,
+        // 🔥 NOVO: Estatísticas de finalização
+        finalizados_hoje: data.filter(
+          (o) =>
+            o.data_hora_finalizacao &&
+            o.data_hora_finalizacao.slice(0, 10) === hoje,
+        ).length,
+        com_finalizacao: data.filter((o) => o.data_hora_finalizacao !== null)
+          .length,
       };
 
       return { success: true, data: stats };
     } catch (error) {
       console.error("❌ Erro ao buscar estatísticas:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ============================================
+  // 🔥 NOVO: ATUALIZAR DATA_HORA_FINALIZACAO
+  // ============================================
+
+  /**
+   * Atualiza a data_hora_finalizacao de uma ocorrência
+   * @param {string} id - ID da ocorrência
+   * @param {string} dataHora - Data/hora de finalização (opcional, usa agora)
+   * @returns {Promise<Object>}
+   */
+  async atualizarDataHoraFinalizacao(id, dataHora = null) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        return { success: false, error: "Usuário não autenticado" };
+      }
+
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      const { data: ocorrencia, error: buscaError } = await this.buscar(id);
+      if (buscaError || !ocorrencia) {
+        return { success: false, error: "Ocorrência não encontrada" };
+      }
+
+      // Se já tem data_hora_finalizacao, não sobrescreve
+      if (ocorrencia.data_hora_finalizacao) {
+        return {
+          success: false,
+          error: "Esta ocorrência já possui data de finalização",
+        };
+      }
+
+      const dataFinalizacao = dataHora || new Date().toISOString();
+
+      const { data, error } = await client
+        .from("ocorrencias")
+        .update({
+          data_hora_finalizacao: dataFinalizacao,
+          atualizado_em: new Date().toISOString(),
+          atualizado_por: user.id,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log("✅ Data de finalização atualizada para:", dataFinalizacao);
+
+      await this.registrarLogPericial(
+        "ATUALIZAR_FINALIZACAO",
+        "ocorrencias",
+        id,
+        { data_hora_finalizacao: null },
+        { data_hora_finalizacao: dataFinalizacao },
+      );
+
+      return { success: true, data };
+    } catch (error) {
+      console.error("❌ Erro ao atualizar data de finalização:", error);
       return { success: false, error: error.message };
     }
   }

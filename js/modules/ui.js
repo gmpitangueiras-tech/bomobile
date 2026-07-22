@@ -5,7 +5,6 @@
  * Este módulo contém todos os componentes reutilizáveis de UI:
  * - Toasts (notificações)
  * - Bottom Sheet (menu "Mais") - CRIADO DINAMICAMENTE
- * - FAB Contextual (Flutuante que muda conforme a página)
  * - Gestos de Deslize (Swipe entre abas)
  * - Badges e contadores
  * - Modais (reutilizáveis)
@@ -13,9 +12,17 @@
  * - Animações
  *
  * MELHORIAS APLICADAS:
- * - FAB Contextual (botão flutuante que muda de acordo com a página)
  * - Gestos de Deslize (swipe para navegar entre abas)
  * - Bottom Sheet dinâmico com estilos inline
+ * - 🔥 NOVO: Link para Notificações no bottom sheet
+ * - 🔥 NOVO: Link para Minhas Ocorrências no bottom sheet
+ * - 🔥 NOVO: Link para Retificações de Abordagens no bottom sheet
+ * - 🔥 NOVO: Badge de notificações no bottom nav
+ * - 🔥 NOVO: Atualização automática do badge de notificações
+ * - 🔥 NOVO: Função atualizarBadgeNotificacoes com fallback
+ * - 🔥 NOVO: Função iniciarVerificacaoNotificacoes
+ * - 🔥 NOVO: Função pararVerificacaoNotificacoes
+ * - 🔥 REMOVIDO: FAB Contextual (botão flutuante removido completamente)
  *
  * Depende de: authManager (global), app (para navegação)
  */
@@ -30,14 +37,14 @@ let bottomSheetItemsContainer = null;
 let isBottomSheetOpen = false;
 let isAnimating = false;
 
-let fabElement = null;
-let fabVisible = false;
-let fabCurrentPage = "";
-
 let swipeStartX = 0;
 let swipeStartY = 0;
 let isSwiping = false;
 let swipeThreshold = 50;
+
+// 🔥 NOVO: Estado de notificações
+let notificacoesNaoLidas = 0;
+let notificacoesInterval = null;
 
 // ============================================
 // TOASTS - NOTIFICAÇÕES
@@ -284,6 +291,134 @@ export function closeBottomSheet() {
   console.log("✅ Bottom sheet fechado");
 }
 
+// ============================================
+// 🔥 NOVO: ATUALIZAR BADGE DE NOTIFICAÇÕES
+// ============================================
+
+/**
+ * Atualiza o badge de notificações no bottom nav e bottom sheet
+ * @returns {Promise<number>} - Número de notificações não lidas
+ */
+export async function atualizarBadgeNotificacoes() {
+  try {
+    const user =
+      typeof authManager !== "undefined" ? authManager.getUser() : null;
+    if (!user) {
+      notificacoesNaoLidas = 0;
+      _atualizarBadgeNotificacoesUI(0);
+      return 0;
+    }
+
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      notificacoesNaoLidas = 0;
+      _atualizarBadgeNotificacoesUI(0);
+      return 0;
+    }
+
+    const { data, error } = await client
+      .from("notificacoes")
+      .select("id", { count: "exact" })
+      .eq("usuario_id", user.id)
+      .eq("lida", false);
+
+    if (error) throw error;
+
+    notificacoesNaoLidas = data?.length || 0;
+    _atualizarBadgeNotificacoesUI(notificacoesNaoLidas);
+
+    return notificacoesNaoLidas;
+  } catch (error) {
+    console.warn("Erro ao atualizar badge de notificações:", error);
+    notificacoesNaoLidas = 0;
+    _atualizarBadgeNotificacoesUI(0);
+    return 0;
+  }
+}
+
+/**
+ * 🔥 NOVO: Atualiza UI do badge de notificações
+ * @param {number} count - Número de notificações não lidas
+ */
+function _atualizarBadgeNotificacoesUI(count) {
+  // Badge no bottom nav
+  const badgeNav = document.getElementById("badge-notificacoes");
+  if (badgeNav) {
+    if (count > 0) {
+      badgeNav.textContent = count > 9 ? "9+" : count;
+      badgeNav.style.display = "flex";
+    } else {
+      badgeNav.style.display = "none";
+    }
+  }
+
+  // Badge no bottom sheet
+  const badgeSheet = document.getElementById("sheetBadgeNotificacoes");
+  if (badgeSheet) {
+    if (count > 0) {
+      badgeSheet.textContent = count > 9 ? "9+" : count;
+      badgeSheet.style.display = "inline";
+    } else {
+      badgeSheet.style.display = "none";
+    }
+  }
+
+  // Disparar evento para outros módulos
+  const event = new CustomEvent("badge_notificacoes_atualizado", {
+    detail: { count },
+  });
+  document.dispatchEvent(event);
+
+  // Atualizar também via notificacoes global se disponível
+  if (typeof window.notificacoes !== "undefined" && window.notificacoes) {
+    window.notificacoes.notificacoesNaoLidas = count;
+  }
+}
+
+// ============================================
+// 🔥 NOVO: INICIAR VERIFICAÇÃO PERIÓDICA DE NOTIFICAÇÕES
+// ============================================
+
+/**
+ * Inicia a verificação periódica de notificações
+ * @param {number} intervalo - Intervalo em milissegundos (padrão: 30000)
+ */
+export function iniciarVerificacaoNotificacoes(intervalo = 30000) {
+  if (notificacoesInterval) {
+    clearInterval(notificacoesInterval);
+  }
+
+  // Verificar a cada X segundos
+  notificacoesInterval = setInterval(() => {
+    atualizarBadgeNotificacoes();
+  }, intervalo);
+
+  // Verificar imediatamente após iniciar
+  setTimeout(() => {
+    atualizarBadgeNotificacoes();
+  }, 1000);
+
+  console.log(
+    `🔔 Verificação periódica de notificações iniciada (${intervalo / 1000}s)`,
+  );
+}
+
+/**
+ * Para a verificação periódica de notificações
+ */
+export function pararVerificacaoNotificacoes() {
+  if (notificacoesInterval) {
+    clearInterval(notificacoesInterval);
+    notificacoesInterval = null;
+    console.log("🔔 Verificação periódica de notificações parada");
+  }
+}
+
+// ============================================
+// BOTTOM SHEET - RENDERIZAÇÃO (CORRIGIDO COM OCORRÊNCIAS)
+// ============================================
+
 /**
  * Renderiza os itens do bottom sheet dinamicamente
  */
@@ -315,9 +450,20 @@ export function renderBottomSheetItems() {
   const isSupervisor =
     typeof authManager !== "undefined" && authManager.isSupervisor();
 
+  // 🔥 NOVO: Atualizar badge de notificações
+  atualizarBadgeNotificacoes();
+
   let html = `
     <div style="width:40px;height:4px;background:#e0e4ea;border-radius:4px;margin:10px auto 8px;flex-shrink:0;"></div>
     <div style="font-size:14px;font-weight:700;color:#94a3b8;text-align:center;padding:4px 16px 12px;border-bottom:1px solid #e0e4ea;margin-bottom:8px;">Menu</div>
+  `;
+
+  // 🔥 MINHAS OCORRÊNCIAS (agora no "Mais")
+  html += `
+    <button data-page="ocorrencias" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
+      <i class="fas fa-list-ul" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
+      <span style="flex:1;">Minhas Ocorrências</span>
+    </button>
   `;
 
   html += `
@@ -331,9 +477,21 @@ export function renderBottomSheetItems() {
     html += `
       <button data-page="retificacoes" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
         <i class="fas fa-sync-alt" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Retificações Pendentes</span>
-        <span id="sheetBadgeRetificacoes" style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:9999px;">0</span>
+        <span style="flex:1;">Retificações de BO</span>
+        <span id="sheetBadgeRetificacoes" style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:9999px;display:none;">0</span>
       </button>
+    `;
+
+    // 🔥 Retificações de Abordagens
+    html += `
+      <button data-page="retificacoes-abordagens" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
+        <i class="fas fa-car" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
+        <span style="flex:1;">Retificações de Abordagens</span>
+        <span id="sheetBadgeRetificacoesAbordagens" style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:9999px;display:none;">0</span>
+      </button>
+    `;
+
+    html += `
       <button data-page="relatorios" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
         <i class="fas fa-chart-bar" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
         <span style="flex:1;">Relatórios</span>
@@ -400,7 +558,15 @@ export function renderBottomSheetItems() {
   }
 
   atualizarBadgeRetificacoes();
+  // 🔥 NOVO: Atualizar badge de retificações de abordagens
+  atualizarBadgeRetificacoesAbordagens();
+  // 🔥 NOVO: Atualizar badge de notificações
+  atualizarBadgeNotificacoes();
 }
+
+// ============================================
+// BADGES - RETIFICAÇÕES
+// ============================================
 
 /**
  * Atualiza o badge de retificações pendentes no bottom sheet
@@ -426,185 +592,46 @@ export async function atualizarBadgeRetificacoes() {
   }
 }
 
-// ============================================
-// FAB CONTEXTUAL (Floating Action Button)
-// ============================================
-
 /**
- * Cria o FAB (Floating Action Button) contextual
+ * 🔥 NOVO: Atualiza o badge de retificações de abordagens pendentes
  */
-export function criarFAB() {
-  if (fabElement) {
-    fabElement.remove();
-    fabElement = null;
-  }
+export async function atualizarBadgeRetificacoesAbordagens() {
+  console.log("🔄 atualizarBadgeRetificacoesAbordagens chamado");
+  if (typeof authManager === "undefined" || !authManager.isSupervisor()) return;
 
-  fabElement = document.createElement("button");
-  fabElement.id = "fabContextual";
-  fabElement.className = "fab";
-  fabElement.style.cssText = `
-    position: fixed;
-    bottom: 80px;
-    right: 20px;
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: var(--gradiente-principal);
-    color: white;
-    border: none;
-    font-size: 24px;
-    box-shadow: 0 4px 20px rgba(0,63,135,0.3);
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    min-height: 56px;
-    min-width: 56px;
-    touch-action: manipulation;
-  `;
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) return;
 
-  fabElement.innerHTML = `<i class="fas fa-plus"></i>`;
+    // Buscar retificações pendentes de veículos
+    const { data: veiculos, error: errVeiculos } = await client
+      .from("abordagens_veiculos")
+      .select("id")
+      .eq("status_retificacao", "pending_rectification");
 
-  fabElement.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const action = fabElement.dataset.action;
-    if (action && window.app && window.app[action]) {
-      window.app[action]();
-    } else if (action === "nova-ocorrencia" && window.app) {
-      window.app.navigateTo("nova-ocorrencia");
-    } else if (action === "voltar-topo") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+    if (errVeiculos) throw errVeiculos;
+
+    // Buscar retificações pendentes de pessoas
+    const { data: pessoas, error: errPessoas } = await client
+      .from("abordagens_pessoas")
+      .select("id")
+      .eq("status_retificacao", "pending_rectification");
+
+    if (errPessoas) throw errPessoas;
+
+    const count = (veiculos?.length || 0) + (pessoas?.length || 0);
+    const badge = document.getElementById("sheetBadgeRetificacoesAbordagens");
+    if (badge) {
+      badge.textContent = count > 0 ? count : "0";
+      badge.style.display = count > 0 ? "inline" : "none";
+      console.log("✅ Badge de retificações de abordagens atualizado:", count);
     }
-  });
-
-  document.body.appendChild(fabElement);
-  console.log("✅ FAB contextual criado");
-}
-
-/**
- * Atualiza o FAB baseado na página atual
- * @param {string} page - Nome da página atual
- */
-export function atualizarFAB(page) {
-  if (!fabElement) {
-    criarFAB();
-  }
-
-  fabCurrentPage = page;
-
-  // Configurações por página
-  const configs = {
-    dashboard: {
-      icon: "fa-plus",
-      action: "nova-ocorrencia",
-      show: true,
-      tooltip: "Nova Ocorrência",
-    },
-    ocorrencias: {
-      icon: "fa-plus",
-      action: "nova-ocorrencia",
-      show: true,
-      tooltip: "Nova Ocorrência",
-    },
-    consulta: {
-      icon: "fa-plus",
-      action: "nova-ocorrencia",
-      show: true,
-      tooltip: "Nova Ocorrência",
-    },
-    mural: {
-      icon: "fa-plus",
-      action: "nova-ocorrencia",
-      show: true,
-      tooltip: "Nova Ocorrência",
-    },
-    "nova-ocorrencia": {
-      icon: "fa-save",
-      action: "salvarRascunho",
-      show: true,
-      tooltip: "Salvar Rascunho",
-    },
-    "detalhe-ocorrencia": {
-      icon: "fa-arrow-up",
-      action: "voltar-topo",
-      show: true,
-      tooltip: "Voltar ao topo",
-    },
-    retificacoes: {
-      icon: "fa-sync-alt",
-      action: "recarregar",
-      show: true,
-      tooltip: "Recarregar",
-    },
-    relatorios: {
-      icon: "fa-download",
-      action: "exportarRelatorio",
-      show: true,
-      tooltip: "Exportar",
-    },
-    usuarios: {
-      icon: "fa-plus",
-      action: "criarUsuario",
-      show: true,
-      tooltip: "Novo Usuário",
-    },
-    perfil: {
-      icon: "fa-edit",
-      action: "editarPerfil",
-      show: true,
-      tooltip: "Editar Perfil",
-    },
-    logs: {
-      icon: "fa-sync-alt",
-      action: "recarregar",
-      show: true,
-      tooltip: "Recarregar",
-    },
-  };
-
-  const config = configs[page] || configs.dashboard;
-
-  if (config && config.show) {
-    fabElement.style.display = "flex";
-    fabElement.innerHTML = `<i class="fas ${config.icon}"></i>`;
-    fabElement.dataset.action = config.action;
-    fabElement.title = config.tooltip || "";
-    fabElement.setAttribute("aria-label", config.tooltip || "");
-
-    // Animação de entrada
-    fabElement.style.transform = "scale(0)";
-    fabElement.style.opacity = "0";
-    setTimeout(() => {
-      fabElement.style.transform = "scale(1)";
-      fabElement.style.opacity = "1";
-    }, 100);
-
-    fabVisible = true;
-  } else {
-    fabElement.style.display = "none";
-    fabVisible = false;
-  }
-}
-
-/**
- * Esconde o FAB
- */
-export function esconderFAB() {
-  if (fabElement) {
-    fabElement.style.display = "none";
-    fabVisible = false;
-  }
-}
-
-/**
- * Mostra o FAB
- */
-export function mostrarFAB() {
-  if (fabElement) {
-    fabElement.style.display = "flex";
-    fabVisible = true;
+  } catch (error) {
+    console.error(
+      "Erro ao atualizar badge de retificações de abordagens:",
+      error,
+    );
   }
 }
 
@@ -617,10 +644,6 @@ export function mostrarFAB() {
  */
 export function configurarGestosDeslize() {
   console.log("👆 Configurando gestos de deslize...");
-
-  const touchStartX = 0;
-  const touchStartY = 0;
-  let isSwiping = false;
 
   document.addEventListener(
     "touchstart",
@@ -731,7 +754,7 @@ function handleSwipeRight() {
 }
 
 // ============================================
-// BADGES E CONTADORES
+// BADGES E CONTADORES - MURAL
 // ============================================
 
 /**
@@ -1047,48 +1070,37 @@ export function injetarEstilosUI() {
       padding: 0 4px;
     }
 
-    /* FAB Contextual */
-    .fab {
-      position: fixed;
-      bottom: 80px;
-      right: 20px;
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: var(--gradiente-principal);
+    /* 🔥 NOVO: Badge de notificações no bottom nav */
+    #badge-notificacoes {
+      position: absolute;
+      top: -6px;
+      right: -10px;
+      background: var(--erro);
       color: white;
-      border: none;
-      font-size: 24px;
-      box-shadow: 0 4px 20px rgba(0,63,135,0.3);
-      cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      display: none;
+      font-size: 9px;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 50;
-      min-height: 56px;
-      min-width: 56px;
-      touch-action: manipulation;
+      font-weight: 800;
+      border: 2px solid var(--branco);
+      padding: 0 4px;
     }
 
-    .fab.show {
-      display: flex;
-    }
-
-    .fab:active {
-      transform: scale(0.92);
-    }
-
-    @media (max-width: 480px) {
-      .fab {
-        bottom: 75px;
-        right: 16px;
-        width: 52px;
-        height: 52px;
-        font-size: 20px;
-        min-height: 52px;
-        min-width: 52px;
-      }
+    /* 🔥 NOVO: Badge de notificações no bottom sheet */
+    #sheetBadgeNotificacoes {
+      background: #dc2626;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 10px;
+      border-radius: 9999px;
+      display: none;
+      min-width: 20px;
+      text-align: center;
+      line-height: 20px;
     }
   `;
 
@@ -1105,8 +1117,6 @@ export function initUI() {
   injetarEstilosUI();
 
   criarBottomSheet();
-
-  criarFAB();
 
   configurarGestosDeslize();
 
@@ -1126,10 +1136,20 @@ export function initUI() {
     console.warn("⚠️ Elemento #navMais não encontrado no DOM");
   }
 
+  // 🔥 NOVO: Iniciar verificação periódica de notificações
+  iniciarVerificacaoNotificacoes();
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       console.log("⌨️ Tecla ESC pressionada");
       closeBottomSheet();
+    }
+  });
+
+  // 🔥 NOVO: Atualizar badge de notificações quando a página ganhar foco
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      atualizarBadgeNotificacoes();
     }
   });
 
@@ -1146,9 +1166,15 @@ window.closeBottomSheet = closeBottomSheet;
 window.renderBottomSheetItems = renderBottomSheetItems;
 window.showToast = showToast;
 window.toast = toast;
-window.atualizarFAB = atualizarFAB;
-window.esconderFAB = esconderFAB;
-window.mostrarFAB = mostrarFAB;
+// 🔥 REMOVIDO: window.atualizarFAB
+// 🔥 REMOVIDO: window.esconderFAB
+// 🔥 REMOVIDO: window.mostrarFAB
+// 🔥 NOVO
+window.atualizarBadgeNotificacoes = atualizarBadgeNotificacoes;
+window.atualizarBadgeRetificacoesAbordagens =
+  atualizarBadgeRetificacoesAbordagens;
+window.iniciarVerificacaoNotificacoes = iniciarVerificacaoNotificacoes;
+window.pararVerificacaoNotificacoes = pararVerificacaoNotificacoes;
 
 console.log("✅ UI exposto globalmente");
 
@@ -1164,6 +1190,11 @@ export default {
   closeBottomSheet,
   renderBottomSheetItems,
   atualizarBadgeRetificacoes,
+  // 🔥 NOVO
+  atualizarBadgeNotificacoes,
+  atualizarBadgeRetificacoesAbordagens,
+  iniciarVerificacaoNotificacoes,
+  pararVerificacaoNotificacoes,
   atualizarBadgeMural,
   marcarMuralComoLido,
   criarSpinner,
@@ -1171,9 +1202,5 @@ export default {
   criarModal,
   injetarEstilosUI,
   initUI,
-  criarFAB,
-  atualizarFAB,
-  esconderFAB,
-  mostrarFAB,
   configurarGestosDeslize,
 };

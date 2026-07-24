@@ -13,6 +13,7 @@
  * - Paginação: 5 registros por página
  * - Contador: "Mostrando X registros de Y"
  * - EXPORTAÇÃO EM LOTE: seleção múltipla e exportação de PDF
+ * - 🔥 ALTERADO: Filtro para não mostrar assinaturas na galeria de anexos
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), pdfExport (global), utils, ui
@@ -269,6 +270,9 @@ async function carregarOcorrencias(pagina = 1) {
           const anexosResult = await ocorrenciaManager.listarAnexos(occ.id);
           const anexos = anexosResult.success ? anexosResult.data : [];
 
+          // 🔥 FILTRAR: Remover assinaturas dos anexos (elas são armazenadas separadamente)
+          const anexosReais = anexos.filter((a) => a.tipo !== "assinatura");
+
           // Buscar envolvidos (apenas para contagem)
           const envResult = await ocorrenciaManager.listarEnvolvidos(occ.id);
           const envolvidos = envResult.success ? envResult.data : [];
@@ -279,7 +283,10 @@ async function carregarOcorrencias(pagina = 1) {
               nome_completo: "Desconhecido",
               cpf: null,
             },
-            anexos: anexos,
+            // 🔥 Usar apenas anexos reais (sem assinaturas)
+            anexos: anexosReais,
+            // 🔥 Manter assinaturas separadamente (para uso futuro)
+            assinaturas: occ.assinaturas || [],
             envolvidos: envolvidos,
           };
         }),
@@ -598,14 +605,18 @@ function renderOcorrenciaCard(occ, appInstance) {
   const isCompletado = !!occ.completado_em;
   const podeCompletar = isRapido && !isCompletado && occ.status !== "cancelled";
 
-  // Buscar primeira imagem dos anexos
+  // 🔥 Buscar primeira imagem dos anexos (IGNORANDO assinaturas)
   let primeiraImagem = null;
   let totalImagens = 0;
   let imagens = [];
 
+  // 🔥 Usar anexos já filtrados (sem assinaturas)
   if (occ.anexos && Array.isArray(occ.anexos) && occ.anexos.length > 0) {
+    // 🔥 FILTRAR: Apenas imagens que não são assinaturas
     imagens = occ.anexos.filter(
-      (a) => a.tipo_arquivo === "image" || a.tipo === "image",
+      (a) =>
+        (a.tipo_arquivo === "image" || a.tipo === "image") &&
+        a.tipo !== "assinatura",
     );
     totalImagens = imagens.length;
     if (totalImagens > 0) {

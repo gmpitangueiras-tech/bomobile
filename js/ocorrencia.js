@@ -17,6 +17,7 @@
  * - Suporte a campos: tipo_ocorrencia, sub_tipo_ocorrencia, gravidade, numero_bo, orgao_bo, data_bo
  * - Logs: todas as ações importantes são registradas na tabela logs_acesso
  * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada com cache)
+ * - 🔥 NOVO: Assinaturas são armazenadas separadamente e NÃO aparecem na galeria de anexos
  *
  * MELHORIAS APLICADAS:
  * - Correção de anexos (verificação de URLs e persistência)
@@ -32,6 +33,9 @@
  * - 🔥 NOVO: Validação de anexos sem limite de quantidade
  * - 🔥 NOVO: Logs de finalização com data_hora_finalizacao
  * - 🔥 NOVO: Método para atualizar data_hora_finalizacao
+ * - 🔥 NOVO: Assinaturas separadas de anexos (campo assinaturas JSONB)
+ * - 🔥 NOVO: Métodos para salvar, listar e remover assinaturas
+ * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  */
 class OcorrenciaManager {
   constructor() {
@@ -105,6 +109,8 @@ class OcorrenciaManager {
       "completado_por",
       // 🔥 NOVO: data_hora_finalizacao também é imutável após definida
       "data_hora_finalizacao",
+      // 🔥 NOVO: Assinaturas são imutáveis após definidas (não podem ser retificadas)
+      "assinaturas",
     ];
   }
 
@@ -502,6 +508,8 @@ class OcorrenciaManager {
         modo_criacao: dados.modo_criacao || "completo",
         completado_em: null,
         completado_por: null,
+        // 🔥 NOVO: Assinaturas - array vazio por padrão
+        assinaturas: dados.assinaturas || [],
       };
 
       delete ocorrencia.envolvidos;
@@ -865,6 +873,7 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
+      const dataEncerramento = new Date().toISOString();
       const dataFinalizacao = new Date().toISOString();
 
       // Gerar Hash Pericial (SHA-256)
@@ -1157,6 +1166,8 @@ class OcorrenciaManager {
         versao_original: JSON.stringify(original),
         // 🔥 NOVO: data_hora_finalizacao permanece null (será preenchido na aprovação)
         data_hora_finalizacao: null,
+        // 🔥 NOVO: Assinaturas não são copiadas na retificação
+        assinaturas: [],
       };
 
       delete dadosRetificados.id;
@@ -1212,28 +1223,34 @@ class OcorrenciaManager {
         }
       }
 
-      // Copiar anexos
+      // Copiar anexos (apenas anexos reais, não assinaturas)
       const anexosResult = await this.listarAnexos(id);
       if (anexosResult.success && anexosResult.data.length > 0) {
-        const novosAnexos = anexosResult.data.map((anexo) => ({
-          ...anexo,
-          id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
-          ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
-        }));
+        // 🔥 FILTRAR: Apenas anexos que não são assinaturas
+        const anexosReais = anexosResult.data.filter(
+          (a) => a.tipo !== "assinatura",
+        );
+        if (anexosReais.length > 0) {
+          const novosAnexos = anexosReais.map((anexo) => ({
+            ...anexo,
+            id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
+            ocorrencia_id: novaOcorrencia.id,
+            criado_em: new Date(
+              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
+            )
+              .toISOString()
+              .slice(0, 19),
+          }));
 
-        novosAnexos.forEach((anexo) => delete anexo.id);
+          novosAnexos.forEach((anexo) => delete anexo.id);
 
-        const { error: anexoError } = await client
-          .from("anexos")
-          .insert(novosAnexos);
+          const { error: anexoError } = await client
+            .from("anexos")
+            .insert(novosAnexos);
 
-        if (anexoError) {
-          console.warn("Erro ao copiar anexos:", anexoError);
+          if (anexoError) {
+            console.warn("Erro ao copiar anexos:", anexoError);
+          }
         }
       }
 
@@ -2066,6 +2083,183 @@ class OcorrenciaManager {
   }
 
   // ============================================
+  // 🔥 NOVO: ASSINATURAS
+  // ============================================
+
+  /**
+   * Adiciona uma assinatura à ocorrência
+   * @param {string} ocorrenciaId - ID da ocorrência
+   * @param {Object} dadosAssinatura - Dados da assinatura
+   * @param {string} dadosAssinatura.tipo - 'autor', 'vitima', 'testemunha', 'solicitante'
+   * @param {string} dadosAssinatura.nome - Nome do signatário
+   * @param {string} dadosAssinatura.cpf - CPF do signatário (opcional)
+   * @param {string} dadosAssinatura.assinatura_data_url - Data URL da assinatura (base64)
+   * @returns {Promise<Object>}
+   */
+  async adicionarAssinatura(ocorrenciaId, dadosAssinatura) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        return { success: false, error: "Usuário não autenticado" };
+      }
+
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      // Buscar a ocorrência
+      const { data: ocorrencia, error: buscaError } = await client
+        .from("ocorrencias")
+        .select("assinaturas")
+        .eq("id", ocorrenciaId)
+        .single();
+
+      if (buscaError) throw buscaError;
+
+      // Obter array atual de assinaturas
+      let assinaturas = ocorrencia.assinaturas || [];
+
+      // Criar nova assinatura
+      const novaAssinatura = {
+        id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
+        tipo: dadosAssinatura.tipo,
+        nome: dadosAssinatura.nome,
+        cpf: dadosAssinatura.cpf || null,
+        assinatura_data_url: dadosAssinatura.assinatura_data_url,
+        assinado_em: new Date().toISOString(),
+        assinado_por: user.id,
+        nome_guarda: user.nome_completo,
+      };
+
+      // Adicionar ao array
+      assinaturas.push(novaAssinatura);
+
+      // Atualizar a ocorrência
+      const { data, error } = await client
+        .from("ocorrencias")
+        .update({
+          assinaturas: assinaturas,
+          atualizado_em: new Date().toISOString(),
+          atualizado_por: user.id,
+        })
+        .eq("id", ocorrenciaId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log("✅ Assinatura adicionada à ocorrência:", ocorrenciaId);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "ADICIONAR_ASSINATURA",
+        "ocorrencias",
+        ocorrenciaId,
+        null,
+        { assinatura: novaAssinatura },
+      );
+
+      return { success: true, data: data, assinatura: novaAssinatura };
+    } catch (error) {
+      console.error("❌ Erro ao adicionar assinatura:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Lista todas as assinaturas de uma ocorrência
+   * @param {string} ocorrenciaId - ID da ocorrência
+   * @returns {Promise<Object>}
+   */
+  async listarAssinaturas(ocorrenciaId) {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      const { data, error } = await client
+        .from("ocorrencias")
+        .select("assinaturas")
+        .eq("id", ocorrenciaId)
+        .single();
+
+      if (error) throw error;
+
+      return { success: true, data: data?.assinaturas || [] };
+    } catch (error) {
+      console.error("❌ Erro ao listar assinaturas:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Remove uma assinatura de uma ocorrência
+   * @param {string} ocorrenciaId - ID da ocorrência
+   * @param {string} assinaturaId - ID da assinatura a remover
+   * @returns {Promise<Object>}
+   */
+  async removerAssinatura(ocorrenciaId, assinaturaId) {
+    try {
+      const user = authManager.getUser();
+      if (!user) {
+        return { success: false, error: "Usuário não autenticado" };
+      }
+
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      // Buscar a ocorrência
+      const { data: ocorrencia, error: buscaError } = await client
+        .from("ocorrencias")
+        .select("assinaturas")
+        .eq("id", ocorrenciaId)
+        .single();
+
+      if (buscaError) throw buscaError;
+
+      let assinaturas = ocorrencia.assinaturas || [];
+
+      // Filtrar a assinatura a remover
+      const assinaturaRemovida = assinaturas.find((a) => a.id === assinaturaId);
+      assinaturas = assinaturas.filter((a) => a.id !== assinaturaId);
+
+      // Atualizar a ocorrência
+      const { data, error } = await client
+        .from("ocorrencias")
+        .update({
+          assinaturas: assinaturas,
+          atualizado_em: new Date().toISOString(),
+          atualizado_por: user.id,
+        })
+        .eq("id", ocorrenciaId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log("✅ Assinatura removida da ocorrência:", ocorrenciaId);
+
+      // Registrar log pericial
+      await this.registrarLogPericial(
+        "REMOVER_ASSINATURA",
+        "ocorrencias",
+        ocorrenciaId,
+        { assinatura: assinaturaRemovida },
+        null,
+      );
+
+      return { success: true, data: data };
+    } catch (error) {
+      console.error("❌ Erro ao remover assinatura:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ============================================
   // SALVAR EM LOTE - 🔥 ALTERADO (sem limite)
   // ============================================
 
@@ -2310,6 +2504,14 @@ class OcorrenciaManager {
         ).length,
         com_finalizacao: data.filter((o) => o.data_hora_finalizacao !== null)
           .length,
+        // 🔥 NOVO: Estatísticas de assinaturas
+        com_assinaturas: data.filter(
+          (o) => o.assinaturas && o.assinaturas.length > 0,
+        ).length,
+        total_assinaturas: data.reduce(
+          (acc, o) => acc + (o.assinaturas?.length || 0),
+          0,
+        ),
       };
 
       return { success: true, data: stats };

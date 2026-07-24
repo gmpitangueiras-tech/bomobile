@@ -10,6 +10,9 @@
  * - Timeline de histórico de versões
  * - Exportação de PDF com opções
  * - Barra de ações no final da página
+ * - 🔥 NOVO: Aba de Assinaturas separada
+ * - 🔥 NOVO: Visualização de assinaturas em cards
+ * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), pdfExport (global), utils, ui
@@ -59,16 +62,25 @@ const TIPO_CORES = {
   outro: "badge-tipo-outro",
 };
 
+// 🔥 NOVO: Labels para tipos de assinatura
+const TIPOS_ASSINATURA_LABELS = {
+  autor: "Autor",
+  vitima: "Vítima",
+  testemunha: "Testemunha",
+  solicitante: "Solicitante",
+};
+
 // ============================================
 // ESTADO DO MÓDULO
 // ============================================
 
 let estado = {
-  abaAtiva: "detalhes", // 'detalhes', 'anexos', 'historico', 'pdf'
+  abaAtiva: "detalhes", // 'detalhes', 'anexos', 'assinaturas', 'historico', 'pdf'
   ocorrencia: null,
   original: null,
   envolvidos: [],
   anexos: [],
+  assinaturas: [], // 🔥 NOVO: Array de assinaturas
   camposAlterados: [],
   historico: [],
   carregando: false,
@@ -80,9 +92,10 @@ let estado = {
     incluirEnvolvidos: true,
     incluirObservacoes: true,
     incluirAnexos: true,
-    incluirAssinatura: true,
+    incluirAssinaturas: true, // 🔥 NOVO: Opção para incluir assinaturas no PDF
     incluirHash: true,
     incluirVersoes: true,
+    incluirAssinatura: true,
   },
 };
 
@@ -129,8 +142,15 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     const anexosResult = await ocorrenciaManager.listarAnexos(id);
     estado.anexos = anexosResult.success ? anexosResult.data : [];
 
-    // Processar imagens para galeria
-    estado.imagensGaleria = estado.anexos.filter(
+    // 🔥 NOVO: Buscar assinaturas (separadas dos anexos)
+    const assinaturasResult = await ocorrenciaManager.listarAssinaturas(id);
+    estado.assinaturas = assinaturasResult.success
+      ? assinaturasResult.data
+      : [];
+
+    // 🔥 FILTRAR: Processar imagens apenas dos anexos reais (sem assinaturas)
+    const anexosReais = estado.anexos.filter((a) => a.tipo !== "assinatura");
+    estado.imagensGaleria = anexosReais.filter(
       (a) => a.tipo_arquivo === "image" || a.tipo === "image",
     );
 
@@ -208,6 +228,9 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     window._detalheBaixarAnexo = (url, nome) => baixarAnexo(url, nome);
     window._detalheTogglePDFOption = (option) =>
       togglePDFOption(option, container, appInstance);
+    // 🔥 NOVO: Função para ver assinatura ampliada
+    window._detalheVerAssinatura = (index) =>
+      verAssinaturaAmpliada(index, appInstance);
   } catch (error) {
     console.error("❌ Erro ao carregar detalhe:", error);
     estado.carregando = false;
@@ -259,7 +282,10 @@ function renderizarDetalhe(container, appInstance) {
   const podeRetificar = authManager.podeSolicitarRetificacao(occ);
 
   const temImagens = estado.imagensGaleria.length > 0;
-  const totalAnexos = estado.anexos.length;
+  const totalAnexos = estado.anexos.filter(
+    (a) => a.tipo !== "assinatura",
+  ).length;
+  const totalAssinaturas = estado.assinaturas.length;
 
   let html = `
   <div class="container" style="padding-bottom:100px;" id="detalheContainer">
@@ -333,7 +359,7 @@ function renderizarDetalhe(container, appInstance) {
 
     <!-- Abas -->
     <div style="display:flex;gap:2px;margin-bottom:14px;background:var(--branco);border-radius:var(--border-radius);padding:4px;box-shadow:var(--sombra-suave);overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;">
-      ${renderAbas(totalAnexos)}
+      ${renderAbas(totalAnexos, totalAssinaturas)}
     </div>
 
     <!-- Conteúdo da aba ativa -->
@@ -355,12 +381,18 @@ function renderizarDetalhe(container, appInstance) {
 // RENDERIZAÇÃO: ABAS
 // ============================================
 
-function renderAbas(totalAnexos) {
+function renderAbas(totalAnexos, totalAssinaturas) {
   const aba = estado.abaAtiva;
 
   const abas = [
     { id: "detalhes", label: "Detalhes", icon: "fa-file-alt" },
     { id: "anexos", label: `Anexos (${totalAnexos})`, icon: "fa-paperclip" },
+    // 🔥 NOVO: Aba de Assinaturas
+    {
+      id: "assinaturas",
+      label: `Assinaturas (${totalAssinaturas})`,
+      icon: "fa-pen-fancy",
+    },
     { id: "historico", label: "Histórico", icon: "fa-history" },
     { id: "pdf", label: "Gerar PDF", icon: "fa-file-pdf" },
   ];
@@ -407,6 +439,8 @@ function renderConteudoAba(appInstance) {
       return renderAbaDetalhes(appInstance);
     case "anexos":
       return renderAbaAnexos(appInstance);
+    case "assinaturas": // 🔥 NOVO: Aba de Assinaturas
+      return renderAbaAssinaturas(appInstance);
     case "historico":
       return renderAbaHistorico(appInstance);
     case "pdf":
@@ -751,13 +785,161 @@ function renderAbaDetalhes(appInstance) {
 }
 
 // ============================================
-// ABA: ANEXOS
+// 🔥 NOVO: ABA: ASSINATURAS
+// ============================================
+
+function renderAbaAssinaturas(appInstance) {
+  const assinaturas = estado.assinaturas || [];
+
+  if (assinaturas.length === 0) {
+    return `
+      <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+        <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:8px;">
+          <i class="fas fa-pen-fancy"></i>
+        </div>
+        <p style="font-weight:500;">Nenhuma assinatura coletada</p>
+        <p style="font-size:12px;">Esta ocorrência não possui assinaturas registradas.</p>
+      </div>
+    `;
+  }
+
+  let html = `
+    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
+      <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+        <i class="fas fa-pen-fancy" style="font-size:14px;"></i>
+        Assinaturas (${assinaturas.length})
+      </h4>
+      <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
+        Assinaturas coletadas dos envolvidos durante o registro da ocorrência.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+  `;
+
+  assinaturas.forEach((ass, index) => {
+    const tipoLabel = TIPOS_ASSINATURA_LABELS[ass.tipo] || ass.tipo;
+    const dataAssinatura = ass.assinado_em
+      ? formatarDataHoraLocal(ass.assinado_em)
+      : "Data não informada";
+    const nomeGuarda = ass.nome_guarda || "Desconhecido";
+
+    html += `
+      <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:12px;border:1px solid var(--cinza-claro);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span class="badge badge-azul" style="font-size:10px;padding:2px 12px;">${tipoLabel}</span>
+          <span style="font-size:10px;color:var(--cinza-medio);">${dataAssinatura}</span>
+        </div>
+        <div style="font-weight:600;font-size:14px;color:var(--cinza-escuro);">${ass.nome}</div>
+        ${ass.cpf ? `<div style="font-size:12px;color:var(--cinza-medio);">${ass.cpf}</div>` : ""}
+        <div style="font-size:10px;color:var(--cinza-medio);margin-top:4px;">
+          <i class="fas fa-user-shield"></i> Coletada por: ${nomeGuarda}
+        </div>
+        <div style="margin-top:8px;border-top:1px solid var(--cinza-claro);padding-top:8px;text-align:center;">
+          <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}" 
+            style="max-width:100%;max-height:80px;border:1px solid var(--cinza-claro);border-radius:4px;cursor:pointer;"
+            onclick="window._detalheVerAssinatura(${index})">
+          <div style="font-size:9px;color:var(--cinza-medio);margin-top:2px;">
+            <i class="fas fa-hand-pointer"></i> Clique para ampliar
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  html += `
+      </div>
+    </div>
+  `;
+
+  return html;
+}
+
+// ============================================
+// 🔥 NOVO: VER ASSINATURA AMPLIADA
+// ============================================
+
+function verAssinaturaAmpliada(index, appInstance) {
+  const assinaturas = estado.assinaturas || [];
+  if (index < 0 || index >= assinaturas.length) {
+    appInstance.showToast("Assinatura não encontrada", "error");
+    return;
+  }
+
+  const ass = assinaturas[index];
+  const tipoLabel = TIPOS_ASSINATURA_LABELS[ass.tipo] || ass.tipo;
+  const dataAssinatura = ass.assinado_em
+    ? formatarDataHoraLocal(ass.assinado_em)
+    : "Data não informada";
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: fadeIn 0.25s ease;
+  `;
+
+  overlay.innerHTML = `
+    <div style="background:var(--branco);border-radius:var(--border-radius-lg);padding:20px;max-width:500px;width:100%;max-height:95vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <span class="badge badge-azul" style="font-size:12px;padding:4px 16px;">${tipoLabel}</span>
+          <h3 style="margin:6px 0 0 0;font-size:16px;color:var(--cinza-escuro);">${ass.nome}</h3>
+        </div>
+        <button onclick="this.closest('.modal-overlay').remove()" 
+          style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      ${ass.cpf ? `<div style="font-size:13px;color:var(--cinza-medio);margin-bottom:8px;">CPF: ${ass.cpf}</div>` : ""}
+      <div style="font-size:11px;color:var(--cinza-medio);margin-bottom:12px;">
+        <i class="fas fa-calendar"></i> ${dataAssinatura} 
+        <span style="margin-left:12px;"><i class="fas fa-user-shield"></i> Coletada por: ${ass.nome_guarda || "Desconhecido"}</span>
+      </div>
+      <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:20px;border:2px solid var(--cinza-claro);text-align:center;">
+        <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}" 
+          style="max-width:100%;max-height:300px;border:1px solid var(--cinza-claro);border-radius:4px;">
+      </div>
+      <div style="margin-top:12px;text-align:center;font-size:11px;color:var(--cinza-medio);">
+        <i class="fas fa-info-circle"></i> Assinatura digital coletada em dispositivo móvel
+      </div>
+      <button onclick="this.closest('.modal-overlay').remove()" 
+        class="btn-secondary" style="width:100%;margin-top:12px;border-radius:12px;min-height:44px;">
+        Fechar
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+    }
+  });
+}
+
+// ============================================
+// ABA: ANEXOS (FILTRADO - SEM ASSINATURAS)
 // ============================================
 
 function renderAbaAnexos(appInstance) {
-  const anexos = estado.anexos;
-  const imagens = estado.imagensGaleria;
-  const documentos = anexos.filter(
+  // 🔥 FILTRAR: Remover assinaturas dos anexos
+  const anexosReais = estado.anexos.filter((a) => a.tipo !== "assinatura");
+  const imagens = anexosReais.filter(
+    (a) => a.tipo_arquivo === "image" || a.tipo === "image",
+  );
+  const documentos = anexosReais.filter(
     (a) => a.tipo_arquivo !== "image" && a.tipo !== "image",
   );
 
@@ -838,7 +1020,7 @@ function renderAbaAnexos(appInstance) {
     `;
   }
 
-  if (anexos.length === 0) {
+  if (anexosReais.length === 0) {
     html += `
       <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
         <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:8px;">
@@ -980,7 +1162,7 @@ function renderAbaHistorico(appInstance) {
 }
 
 // ============================================
-// ABA: GERAR PDF
+// ABA: GERAR PDF (COM OPÇÃO DE ASSINATURAS)
 // ============================================
 
 function renderAbaPDF(appInstance) {
@@ -990,6 +1172,7 @@ function renderAbaPDF(appInstance) {
   const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
   const options = estado.pdfOptions;
   const temHistorico = estado.historico && estado.historico.length > 1;
+  const temAssinaturas = estado.assinaturas && estado.assinaturas.length > 0;
 
   return `
     <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
@@ -1025,8 +1208,20 @@ function renderAbaPDF(appInstance) {
           <input type="checkbox" ${options.incluirAnexos ? "checked" : ""} 
             onchange="window._detalheTogglePDFOption('incluirAnexos')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
-          <span>📎 Anexos (${estado.anexos.length})</span>
+          <span>📎 Anexos (${estado.anexos.filter((a) => a.tipo !== "assinatura").length})</span>
         </label>
+        ${
+          temAssinaturas
+            ? `
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
+            <input type="checkbox" ${options.incluirAssinaturas ? "checked" : ""} 
+              onchange="window._detalheTogglePDFOption('incluirAssinaturas')"
+              style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
+            <span>✍️ Assinaturas (${estado.assinaturas.length})</span>
+          </label>
+        `
+            : ""
+        }
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
           <input type="checkbox" ${options.incluirHash ? "checked" : ""} 
             onchange="window._detalheTogglePDFOption('incluirHash')"
@@ -1361,6 +1556,7 @@ export async function gerarPDFCompleto(appInstance) {
         envolvidos: estado.pdfOptions.incluirEnvolvidos,
         observacoes: estado.pdfOptions.incluirObservacoes,
         anexos: estado.pdfOptions.incluirAnexos,
+        assinaturas: estado.pdfOptions.incluirAssinaturas, // 🔥 NOVO
         assinatura: estado.pdfOptions.incluirAssinatura,
       },
       integrity: {

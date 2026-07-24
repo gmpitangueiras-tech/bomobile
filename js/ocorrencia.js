@@ -36,6 +36,7 @@
  * - 🔥 NOVO: Assinaturas separadas de anexos (campo assinaturas JSONB)
  * - 🔥 NOVO: Métodos para salvar, listar e remover assinaturas
  * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
+ * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
  */
 class OcorrenciaManager {
   constructor() {
@@ -512,6 +513,8 @@ class OcorrenciaManager {
         assinaturas: dados.assinaturas || [],
       };
 
+      // 🔥 CORRIGIDO: Remover campos que não existem no banco
+      delete ocorrencia.assinaturas_objeto;
       delete ocorrencia.envolvidos;
       delete ocorrencia.anexos;
 
@@ -2224,7 +2227,9 @@ class OcorrenciaManager {
       let assinaturas = ocorrencia.assinaturas || [];
 
       // Filtrar a assinatura a remover
-      const assinaturaRemovida = assinaturas.find((a) => a.id === assinaturaId);
+      const assinaturaRemovida = assinaturas.find(
+        (a) => a.id === assinaturaId,
+      );
       assinaturas = assinaturas.filter((a) => a.id !== assinaturaId);
 
       // Atualizar a ocorrência
@@ -2338,8 +2343,6 @@ class OcorrenciaManager {
       }
 
       // 🔥 ALTERADO: Removido limite de anexos
-      // const MAX_ANEXOS = 5; // REMOVIDO
-      // if (anexos.length > MAX_ANEXOS) { ... }
 
       const resultados = [];
 

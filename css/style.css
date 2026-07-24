@@ -894,6 +894,420 @@ body {
 }
 
 /* ============================================
+   🔥 NOVO: ESTILOS PARA COMPONENTE DE ASSINATURA
+   ============================================ */
+
+/* Container da assinatura */
+.assinatura-container {
+  background: var(--branco);
+  border-radius: var(--border-radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--sombra-suave);
+  border: 1px solid var(--cinza-claro);
+}
+
+.assinatura-container .assinatura-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.assinatura-container .assinatura-header h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--azul-bandeira);
+  margin: 0;
+}
+
+.assinatura-container .assinatura-header .badge-count {
+  position: static;
+  background: var(--azul-bandeira);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 12px;
+  border-radius: var(--border-radius-full);
+  border: none;
+  min-width: auto;
+  height: auto;
+}
+
+/* Canvas de assinatura */
+.canvas-assinatura-wrapper {
+  border: 2px solid var(--cinza-claro);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  background: var(--branco);
+  touch-action: none;
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.canvas-assinatura-wrapper canvas {
+  width: 100%;
+  height: 150px;
+  touch-action: none;
+  cursor: crosshair;
+  display: block;
+  background: var(--branco);
+}
+
+.canvas-assinatura-wrapper .canvas-placeholder {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--cinza-medio);
+  pointer-events: none;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.canvas-assinatura-wrapper .canvas-border {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  height: 1px;
+  background: var(--cinza-claro);
+  opacity: 0.3;
+}
+
+/* Botões da assinatura */
+.assinatura-acoes {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.assinatura-acoes .btn-assinatura {
+  flex: 1;
+  min-width: 80px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--border-radius);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: var(--touch-min-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.assinatura-acoes .btn-assinatura:active {
+  transform: scale(0.95);
+}
+
+.assinatura-acoes .btn-limpar {
+  background: var(--cinza-claro);
+  color: var(--cinza-escuro);
+}
+
+.assinatura-acoes .btn-limpar:hover {
+  background: var(--cinza-medio);
+  color: var(--branco);
+}
+
+.assinatura-acoes .btn-salvar {
+  background: var(--gradiente-principal);
+  color: var(--branco);
+}
+
+.assinatura-acoes .btn-salvar:hover {
+  box-shadow: 0 4px 20px rgba(0, 63, 135, 0.3);
+  transform: translateY(-1px);
+}
+
+.assinatura-acoes .btn-salvar:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Lista de assinaturas salvas */
+.lista-assinaturas {
+  margin-top: 12px;
+}
+
+.lista-assinaturas .assinatura-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--branco-fumaca);
+  border-radius: var(--border-radius);
+  border: 1px solid var(--cinza-claro);
+  margin-bottom: 6px;
+  transition: all 0.2s ease;
+}
+
+.lista-assinaturas .assinatura-item:hover {
+  border-color: var(--azul-bandeira);
+  background: var(--azul-muito-claro);
+}
+
+.lista-assinaturas .assinatura-item .badge {
+  font-size: 9px;
+  padding: 2px 10px;
+  flex-shrink: 0;
+}
+
+.lista-assinaturas .assinatura-item .info {
+  flex: 1;
+  min-width: 0;
+}
+
+.lista-assinaturas .assinatura-item .info .nome {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--cinza-escuro);
+}
+
+.lista-assinaturas .assinatura-item .info .cpf {
+  font-size: 11px;
+  color: var(--cinza-medio);
+  margin-left: 6px;
+}
+
+.lista-assinaturas .assinatura-item .info .data {
+  font-size: 10px;
+  color: var(--cinza-medio);
+  display: block;
+}
+
+.lista-assinaturas .assinatura-item .thumbnail {
+  width: 50px;
+  height: 30px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--cinza-claro);
+  flex-shrink: 0;
+  background: var(--branco);
+}
+
+.lista-assinaturas .assinatura-item .thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.lista-assinaturas .assinatura-item .remove-btn {
+  background: none;
+  border: none;
+  color: var(--erro);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  min-height: var(--touch-min-size);
+  min-width: var(--touch-min-size);
+  flex-shrink: 0;
+}
+
+.lista-assinaturas .assinatura-item .remove-btn:hover {
+  background: var(--erro-claro);
+  transform: scale(1.1);
+}
+
+.lista-assinaturas .assinatura-item .remove-btn:active {
+  transform: scale(0.9);
+}
+
+/* Estado vazio das assinaturas */
+.lista-assinaturas-vazia {
+  text-align: center;
+  padding: 20px;
+  color: var(--cinza-medio);
+  font-size: 13px;
+  background: var(--branco);
+  border-radius: var(--border-radius);
+  border: 1px dashed var(--cinza-claro);
+}
+
+.lista-assinaturas-vazia i {
+  font-size: 28px;
+  display: block;
+  margin-bottom: 6px;
+  opacity: 0.3;
+  color: var(--cinza-claro);
+}
+
+/* Modal de assinatura ampliada */
+.modal-assinatura-ampliada {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.25s ease;
+}
+
+.modal-assinatura-ampliada .modal-content {
+  background: var(--branco);
+  border-radius: var(--border-radius-lg);
+  padding: 24px;
+  max-width: 500px;
+  width: 100%;
+  max-height: 95vh;
+  overflow-y: auto;
+  animation: slideUp 0.25s ease;
+}
+
+.modal-assinatura-ampliada .modal-content .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modal-assinatura-ampliada .modal-content .header .badge {
+  font-size: 12px;
+  padding: 4px 16px;
+}
+
+.modal-assinatura-ampliada .modal-content .header .nome {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cinza-escuro);
+  margin: 6px 0 0 0;
+}
+
+.modal-assinatura-ampliada .modal-content .info {
+  font-size: 13px;
+  color: var(--cinza-medio);
+  margin-bottom: 12px;
+}
+
+.modal-assinatura-ampliada .modal-content .info .guarda {
+  margin-left: 12px;
+}
+
+.modal-assinatura-ampliada .modal-content .imagem-wrapper {
+  background: var(--branco-fumaca);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  border: 2px solid var(--cinza-claro);
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.modal-assinatura-ampliada .modal-content .imagem-wrapper img {
+  max-width: 100%;
+  max-height: 300px;
+  border: 1px solid var(--cinza-claro);
+  border-radius: 4px;
+}
+
+.modal-assinatura-ampliada .modal-content .footer-text {
+  text-align: center;
+  font-size: 11px;
+  color: var(--cinza-medio);
+  margin-bottom: 12px;
+}
+
+.modal-assinatura-ampliada .modal-content .btn-fechar {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--border-radius);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  min-height: var(--touch-min-size);
+  background: var(--cinza-claro);
+  color: var(--cinza-escuro);
+  transition: all 0.3s ease;
+}
+
+.modal-assinatura-ampliada .modal-content .btn-fechar:hover {
+  background: var(--cinza-medio);
+  color: var(--branco);
+}
+
+/* Responsividade do componente de assinatura */
+@media (max-width: 480px) {
+  .assinatura-acoes {
+    flex-direction: column;
+  }
+  
+  .assinatura-acoes .btn-assinatura {
+    flex: 1;
+    width: 100%;
+  }
+  
+  .canvas-assinatura-wrapper canvas {
+    height: 120px;
+  }
+  
+  .lista-assinaturas .assinatura-item {
+    flex-wrap: wrap;
+    padding: 8px 10px;
+  }
+  
+  .lista-assinaturas .assinatura-item .thumbnail {
+    width: 40px;
+    height: 25px;
+  }
+  
+  .lista-assinaturas .assinatura-item .info .nome {
+    font-size: 12px;
+  }
+  
+  .lista-assinaturas .assinatura-item .info .cpf {
+    font-size: 10px;
+  }
+  
+  .modal-assinatura-ampliada .modal-content {
+    padding: 16px;
+    margin: 8px;
+  }
+  
+  .modal-assinatura-ampliada .modal-content .imagem-wrapper {
+    padding: 12px;
+  }
+  
+  .modal-assinatura-ampliada .modal-content .imagem-wrapper img {
+    max-height: 200px;
+  }
+}
+
+@media (max-width: 360px) {
+  .canvas-assinatura-wrapper canvas {
+    height: 100px;
+  }
+  
+  .lista-assinaturas .assinatura-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  
+  .lista-assinaturas .assinatura-item .remove-btn {
+    align-self: flex-end;
+  }
+  
+  .modal-assinatura-ampliada .modal-content .imagem-wrapper img {
+    max-height: 150px;
+  }
+}
+
+/* ============================================
    FAB CONTEXTUAL (Floating Action Button)
    ============================================ */
 
@@ -4487,6 +4901,113 @@ body {
 
   .notificacoes-vazias p {
     color: #94a3b8;
+  }
+
+  /* 🔥 NOVO: Componente de assinatura no modo noturno */
+  .assinatura-container {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .canvas-assinatura-wrapper {
+    border-color: #334155;
+    background: #0f172a;
+  }
+
+  .canvas-assinatura-wrapper canvas {
+    background: #0f172a;
+  }
+
+  .canvas-assinatura-wrapper .canvas-placeholder {
+    color: #94a3b8;
+  }
+
+  .canvas-assinatura-wrapper .canvas-border {
+    background: #334155;
+  }
+
+  .assinatura-acoes .btn-limpar {
+    background: #334155;
+    color: #e2e8f0;
+  }
+
+  .assinatura-acoes .btn-limpar:hover {
+    background: #475569;
+  }
+
+  .lista-assinaturas .assinatura-item {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .lista-assinaturas .assinatura-item:hover {
+    border-color: #60a5fa;
+    background: #0c4a6e;
+  }
+
+  .lista-assinaturas .assinatura-item .info .nome {
+    color: #e2e8f0;
+  }
+
+  .lista-assinaturas .assinatura-item .info .cpf {
+    color: #94a3b8;
+  }
+
+  .lista-assinaturas .assinatura-item .info .data {
+    color: #94a3b8;
+  }
+
+  .lista-assinaturas .assinatura-item .thumbnail {
+    border-color: #334155;
+    background: #0f172a;
+  }
+
+  .lista-assinaturas-vazia {
+    background: #1e293b;
+    border-color: #334155;
+    color: #94a3b8;
+  }
+
+  .lista-assinaturas-vazia i {
+    color: #334155;
+  }
+
+  .modal-assinatura-ampliada {
+    background: rgba(0, 0, 0, 0.9);
+  }
+
+  .modal-assinatura-ampliada .modal-content {
+    background: #1e293b;
+  }
+
+  .modal-assinatura-ampliada .modal-content .header .nome {
+    color: #e2e8f0;
+  }
+
+  .modal-assinatura-ampliada .modal-content .info {
+    color: #94a3b8;
+  }
+
+  .modal-assinatura-ampliada .modal-content .imagem-wrapper {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .modal-assinatura-ampliada .modal-content .imagem-wrapper img {
+    border-color: #334155;
+  }
+
+  .modal-assinatura-ampliada .modal-content .footer-text {
+    color: #94a3b8;
+  }
+
+  .modal-assinatura-ampliada .modal-content .btn-fechar {
+    background: #334155;
+    color: #e2e8f0;
+  }
+
+  .modal-assinatura-ampliada .modal-content .btn-fechar:hover {
+    background: #475569;
   }
 }
 

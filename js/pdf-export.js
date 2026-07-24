@@ -8,6 +8,9 @@
  * - Exportação de abordagens para PDF
  * - Inclusão de imagens anexas
  * - Personalização de layout
+ * - 🔥 NOVO: Seção específica para assinaturas
+ * - 🔥 NOVO: Identificação do papel de cada signatário
+ * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  *
  * Depende de: jsPDF, jsPDF-AutoTable, authManager, ocorrenciaManager
  */
@@ -61,6 +64,7 @@ class PDFExport {
         envolvidos: true,
         observacoes: true,
         anexos: true,
+        assinaturas: true, // 🔥 NOVO: Seção de assinaturas
         assinatura: true,
         historico: true,
       },
@@ -74,6 +78,14 @@ class PDFExport {
       rectified: "#003f87",
       pending_rectification: "#f59e0b",
       rectification_rejected: "#dc2626",
+    };
+
+    // 🔥 NOVO: Labels para tipos de assinatura
+    this.tiposAssinaturaLabels = {
+      autor: "Autor",
+      vitima: "Vítima",
+      testemunha: "Testemunha",
+      solicitante: "Solicitante",
     };
 
     this.imageCache = {};
@@ -199,13 +211,21 @@ class PDFExport {
       const anexosResult = await ocorrenciaManager.listarAnexos(ocorrenciaId);
       const anexos = anexosResult.success ? anexosResult.data : [];
 
+      // 🔥 NOVO: Buscar assinaturas separadamente
+      const assinaturasResult = await ocorrenciaManager.listarAssinaturas(ocorrenciaId);
+      const assinaturas = assinaturasResult.success ? assinaturasResult.data : [];
+
+      // 🔥 FILTRAR: Separar anexos reais de assinaturas
+      const anexosReais = anexos.filter(a => a.tipo !== 'assinatura');
+
       const historicoResult =
         await ocorrenciaManager.buscarHistorico(ocorrenciaId);
       const historico = historicoResult.success ? historicoResult.data : [];
 
       const opts = { ...this.defaultOptions, ...options };
 
-      const imagensUrls = anexos
+      // Carregar imagens apenas dos anexos reais (não assinaturas)
+      const imagensUrls = anexosReais
         .filter((a) => a.tipo_arquivo === "image" || a.tipo === "image")
         .map((a) => a.url);
       const imagensCarregadas = await Promise.all(
@@ -215,7 +235,7 @@ class PDFExport {
         })),
       );
 
-      const anexosComImagens = anexos.map((anexo) => {
+      const anexosComImagens = anexosReais.map((anexo) => {
         if (anexo.tipo_arquivo === "image" || anexo.tipo === "image") {
           const encontrado = imagensCarregadas.find(
             (img) => img.url === anexo.url,
@@ -229,6 +249,7 @@ class PDFExport {
         ocorrencia,
         envolvidos,
         anexosComImagens,
+        assinaturas, // 🔥 NOVO: Passar assinaturas
         historico,
         opts,
       );
@@ -244,10 +265,10 @@ class PDFExport {
   }
 
   // ============================================
-  // GERAR PDF OCORRÊNCIA
+  // GERAR PDF OCORRÊNCIA (COM ASSINATURAS)
   // ============================================
 
-  async gerarPDFOcorrencia(ocorrencia, envolvidos, anexos, historico, options) {
+  async gerarPDFOcorrencia(ocorrencia, envolvidos, anexos, assinaturas, historico, options) {
     const jsPDF = this.getJSPDF();
     const doc = new jsPDF(options);
     const pageWidth = doc.internal.pageSize.width;
@@ -515,9 +536,82 @@ class PDFExport {
       y += textoQuebrado.length * 5 + 4;
     }
 
-    // Anexos (imagens)
+    // 🔥 NOVO: SEÇÃO DE ASSINATURAS
+    if (options.sections.assinaturas !== false && assinaturas && assinaturas.length > 0) {
+      y += 6;
+      doc.setDrawColor(200, 200, 200);
+      const alturaAssinaturas = 10 + assinaturas.length * 28;
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, alturaAssinaturas, 3, 3, "S");
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, alturaAssinaturas, 3, 3, "F");
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text(`ASSINATURAS (${assinaturas.length})`, margin + 4, y + 4);
+      y += 8;
+
+      assinaturas.forEach((ass, idx) => {
+        const tipoLabel = this.getTipoAssinaturaLabel(ass.tipo);
+        const dataAssinatura = ass.assinado_em
+          ? new Date(ass.assinado_em).toLocaleString("pt-BR")
+          : "Data não informada";
+        const nomeGuarda = ass.nome_guarda || "Desconhecido";
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${idx + 1}. ${tipoLabel}:`, margin + 6, y);
+        doc.setFont("helvetica", "normal");
+        doc.text(`${ass.nome}`, margin + 45, y);
+        if (ass.cpf) {
+          doc.text(`CPF: ${ass.cpf}`, margin + 95, y);
+        }
+        y += 6;
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Coletada por: ${nomeGuarda} em ${dataAssinatura}`, margin + 6, y);
+        y += 8;
+
+        // Adicionar imagem da assinatura (se houver e for possível)
+        if (ass.assinatura_data_url) {
+          try {
+            // Tentar carregar a imagem da assinatura
+            const imgData = ass.assinatura_data_url;
+            if (imgData && imgData.startsWith('data:image')) {
+              doc.addImage(imgData, 'PNG', margin + 6, y, 50, 12);
+              y += 14;
+            } else {
+              // Fallback: linha de assinatura
+              doc.setDrawColor(100, 100, 100);
+              doc.line(margin + 6, y + 4, margin + 56, y + 4);
+              doc.setFontSize(7);
+              doc.setTextColor(150, 150, 150);
+              doc.text("Assinatura digital", margin + 6, y + 8);
+              y += 10;
+            }
+          } catch (e) {
+            // Fallback: linha de assinatura
+            doc.setDrawColor(100, 100, 100);
+            doc.line(margin + 6, y + 4, margin + 56, y + 4);
+            doc.setFontSize(7);
+            doc.setTextColor(150, 150, 150);
+            doc.text("Assinatura digital", margin + 6, y + 8);
+            y += 10;
+          }
+        } else {
+          // Linha de assinatura vazia
+          doc.setDrawColor(100, 100, 100);
+          doc.line(margin + 6, y + 4, margin + 56, y + 4);
+          y += 10;
+        }
+        y += 2;
+      });
+      y += 4;
+    }
+
+    // Anexos (imagens) - APENAS ANEXOS REAIS
     const imagensParaExibir = anexos.filter(
-      (a) => a.base64 && (a.tipo_arquivo === "image" || a.tipo === "image"),
+      (a) => a.base64 && (a.tipo_arquivo === "image" || a.tipo === "image") && a.tipo !== "assinatura",
     );
     if (options.sections.anexos !== false && imagensParaExibir.length > 0) {
       y += 6;
@@ -1487,6 +1581,11 @@ class PDFExport {
   // ============================================
   // FUNÇÕES AUXILIARES
   // ============================================
+
+  // 🔥 NOVO: Retorna label do tipo de assinatura
+  getTipoAssinaturaLabel(tipo) {
+    return this.tiposAssinaturaLabels[tipo] || tipo || "Não informado";
+  }
 
   getStatusLabel(status) {
     const map = {

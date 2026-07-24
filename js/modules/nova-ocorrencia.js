@@ -10,6 +10,9 @@
  * - Rascunho automático
  * - Geolocalização
  * - Hash pericial na finalização
+ * - 🔥 NOVO: Assinaturas na etapa 5 (separadas dos anexos)
+ * - 🔥 NOVO: Canvas para captura de assinatura
+ * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  *
  * MELHORIAS APLICADAS:
  * - 🔥 ALTERADO: Anexos sem limite (removido MAX_ANEXOS)
@@ -17,6 +20,8 @@
  * - 🔥 NOVO: Validação de anexos sem limite de quantidade
  * - 🔥 NOVO: Campo data_hora_finalizacao no resumo
  * - 🔥 NOVO: Informação de finalização no modo rápido
+ * - 🔥 NOVO: Assinaturas com canvas touch
+ * - 🔥 NOVO: Separação entre anexos e assinaturas
  * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
  * - 🔥 CORRIGIDO: Preenchimento automático do campo data/hora no modo rápido agora usa horário LOCAL do dispositivo
  *
@@ -62,6 +67,13 @@ const TIPOS_ENVOLVIDO = [
   { value: "testemunha", label: "Testemunha" },
   { value: "solicitante", label: "Solicitante" },
   { value: "outro", label: "Outro" },
+];
+
+const TIPOS_ASSINATURA = [
+  { value: "autor", label: "Autor" },
+  { value: "vitima", label: "Vítima" },
+  { value: "testemunha", label: "Testemunha" },
+  { value: "solicitante", label: "Solicitante" },
 ];
 
 const MODE_RAPIDO = "rapido";
@@ -120,9 +132,9 @@ let estado = {
     envolvidos: [],
     observacoes: "",
     anexos: [],
-    assinaturas: {},
+    assinaturas: [], // 🔥 NOVO: Array de assinaturas
+    assinaturas_objeto: {}, // 🔥 NOVO: Para controlar assinaturas por tipo
     modo_criacao: MODE_COMPLETO,
-    // 🔥 NOVO: data_hora_finalizacao
     data_hora_finalizacao: null,
   },
   dadosOriginais: null,
@@ -131,6 +143,12 @@ let estado = {
   isRecording: false,
   sttInicializado: false,
   modeloSelecionado: "",
+  // 🔥 NOVO: Estado para o canvas de assinatura
+  canvasAssinatura: null,
+  assinaturaAtual: null,
+  isDrawing: false,
+  lastX: 0,
+  lastY: 0,
 };
 
 // ============================================
@@ -153,6 +171,13 @@ export async function renderNovaOcorrencia(container, appInstance) {
   if (appInstance.dadosRascunho && !isCompletando) {
     estado.id = appInstance.rascunhoId;
     estado.dados = appInstance.dadosRascunho;
+    // 🔥 Garantir que assinaturas exista
+    if (!estado.dados.assinaturas) {
+      estado.dados.assinaturas = [];
+    }
+    if (!estado.dados.assinaturas_objeto) {
+      estado.dados.assinaturas_objeto = {};
+    }
     estado.modo = MODE_COMPLETO;
     estado.isCompletando = false;
     estado.etapa = 1;
@@ -199,14 +224,16 @@ function resetarEstado() {
     envolvidos: [],
     observacoes: "",
     anexos: [],
-    assinaturas: {},
+    assinaturas: [],
+    assinaturas_objeto: {},
     modo_criacao: MODE_COMPLETO,
-    // 🔥 NOVO
     data_hora_finalizacao: null,
   };
   estado.dadosOriginais = null;
   estado.sttInicializado = false;
   estado.modeloSelecionado = "";
+  estado.canvasAssinatura = null;
+  estado.assinaturaAtual = null;
 }
 
 // ============================================
@@ -265,11 +292,16 @@ async function carregarParaCompletar(id, appInstance) {
       envolvidos: envResult.success ? envResult.data : [],
       observacoes: occ.observacoes || "",
       anexos: anexosResult.success ? anexosResult.data : [],
-      assinaturas: {},
+      assinaturas: occ.assinaturas || [],
+      assinaturas_objeto: {},
       modo_criacao: occ.modo_criacao || MODE_RAPIDO,
-      // 🔥 NOVO
       data_hora_finalizacao: occ.data_hora_finalizacao || null,
     };
+
+    // 🔥 Converter assinaturas para objeto por tipo
+    estado.dados.assinaturas.forEach((ass) => {
+      estado.dados.assinaturas_objeto[ass.tipo] = ass;
+    });
 
     estado.dadosOriginais = JSON.parse(JSON.stringify(estado.dados));
     appInstance.alteracoesNaoSalvas = true;
@@ -536,7 +568,6 @@ async function finalizarRapido(container, appInstance) {
     forma_solicitacao: "Diretamente com a ocorrência",
     modo_criacao: MODE_RAPIDO,
     status: navigator.onLine ? "synced" : "pending_sync",
-    // 🔥 CORRIGIDO: data_hora_finalizacao sem ajuste de fuso
     data_hora_finalizacao: dataFinalizacao,
   };
 
@@ -585,7 +616,6 @@ async function processarAnexosRapido(files, container, appInstance) {
 
   for (const file of files) {
     // 🔥 ALTERADO: Removida verificação de limite
-    // if (anexos.length >= maxFiles) { ... }
 
     if (!file.type.startsWith("image/")) {
       appInstance.showToast("Apenas imagens são permitidas", "warning");
@@ -699,6 +729,13 @@ function renderizarFormularioCompleto(container, appInstance) {
     }, 300);
   }
 
+  // 🔥 NOVO: Inicializar canvas de assinatura se estiver na etapa 5
+  if (etapa === 5) {
+    setTimeout(() => {
+      inicializarCanvasAssinatura(appInstance);
+    }, 500);
+  }
+
   window._novaOcorrenciaProxima = () => proximaEtapa(container, appInstance);
   window._novaOcorrenciaAnterior = () => etapaAnterior(container, appInstance);
   window._novaOcorrenciaFinalizar = () =>
@@ -714,6 +751,12 @@ function renderizarFormularioCompleto(container, appInstance) {
     processarAnexos(files, appInstance);
   window._novaOcorrenciaRemoverAnexo = (index) =>
     removerAnexo(index, appInstance);
+  // 🔥 NOVO: Funções para assinatura
+  window._novaOcorrenciaAdicionarAssinatura = () =>
+    adicionarAssinatura(appInstance);
+  window._novaOcorrenciaRemoverAssinatura = (tipo) =>
+    removerAssinatura(tipo, appInstance);
+  window._novaOcorrenciaLimparAssinatura = () => limparAssinatura(appInstance);
 }
 
 // ============================================
@@ -744,7 +787,7 @@ function getEtapaTitulo(etapa) {
     2: "Dados da Ocorrência",
     3: "Qualificação dos Envolvidos",
     4: "Observações e Relato dos Fatos",
-    5: "Anexos e Evidências",
+    5: "Anexos e Assinaturas",
     6: "Revisão e Finalização",
   };
   return titulos[etapa] || "";
@@ -756,7 +799,7 @@ function getEtapaSubtitulo(etapa) {
     2: "Preencha os dados principais da ocorrência",
     3: "Cadastre os envolvidos (autores, vítimas, testemunhas)",
     4: "Descreva detalhadamente o ocorrido",
-    5: "Adicione fotos, áudios, assinatura ou documentos (ilimitado)",
+    5: "Adicione fotos, documentos e assinaturas (ilimitado)",
     6: "Revise todos os dados antes de finalizar",
   };
   return subtitulos[etapa] || "";
@@ -1106,23 +1149,40 @@ function renderEtapa4(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 ALTERADO: ETAPA 5 - ANEXOS (SEM LIMITE)
+// 🔥 ALTERADO: ETAPA 5 - ANEXOS E ASSINATURAS (SEM LIMITE)
 // ============================================
 
 function renderEtapa5(dados, appInstance) {
   const anexos = dados.anexos || [];
+  const assinaturas = dados.assinaturas || [];
 
-  return `
+  // 🔥 Garantir que assinaturas_objeto exista
+  if (!dados.assinaturas_objeto) {
+    dados.assinaturas_objeto = {};
+  }
+
+  // Mapear quais tipos já têm assinatura
+  const tiposAssinados = {};
+  assinaturas.forEach((ass) => {
+    tiposAssinados[ass.tipo] = true;
+  });
+
+  let html = `
     <div style="margin-bottom:16px;">
       <p style="color:var(--cinza-medio);font-size:14px;">
         <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-        Adicione fotos, áudios, assinatura ou documentos como evidência.
+        Adicione fotos, documentos e assinaturas como evidência.
         <strong>Sem limite de quantidade.</strong>
       </p>
     </div>
 
-    <div style="margin-bottom:16px;">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;"><i class="fas fa-camera"></i> Fotos e Documentos (${anexos.length})</h4>
+    <!-- ========================================== -->
+    <!-- SEÇÃO: ANEXOS REAIS (Fotos e Documentos)    -->
+    <!-- ========================================== -->
+    <div style="margin-bottom:20px;">
+      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
+        <i class="fas fa-camera"></i> Fotos e Documentos (${anexos.length})
+      </h4>
       <div class="file-upload" onclick="document.getElementById('fileInput').click()">
         <div class="icon"><i class="fas fa-cloud-upload-alt"></i></div>
         <div class="text"><strong>Clique para adicionar anexos</strong><br><span style="font-size:13px;color:var(--cinza-medio);">Fotos, vídeos ou documentos - sem limite</span></div>
@@ -1147,21 +1207,382 @@ function renderEtapa5(dados, appInstance) {
                 .join("")}</div>`
         }
       </div>
+      <button type="button" class="btn-add" onclick="document.getElementById('fileInput').click()" style="margin-top:8px;">
+        <i class="fas fa-plus-circle"></i> Adicionar Anexos
+      </button>
     </div>
 
-    <button type="button" class="btn-add" onclick="document.getElementById('fileInput').click()">
-      <i class="fas fa-plus-circle"></i> Adicionar Anexos
-    </button>
+    <!-- ========================================== -->
+    <!-- SEÇÃO: ASSINATURAS                          -->
+    <!-- ========================================== -->
+    <div style="margin-top:20px;border-top:2px solid var(--cinza-claro);padding-top:16px;">
+      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
+        <i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})
+      </h4>
+      <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
+        Colete a assinatura dos envolvidos diretamente na tela do celular.
+        As assinaturas são armazenadas separadamente e NÃO aparecem na galeria de anexos.
+      </p>
+
+      <!-- Formulário para adicionar assinatura -->
+      <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:14px;margin-bottom:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Papel *</label>
+            <select id="assinatura_tipo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
+              <option value="">Selecione...</option>
+              ${TIPOS_ASSINATURA.map(
+                (op) => `
+                <option value="${op.value}" ${tiposAssinados[op.value] ? "disabled" : ""}>
+                  ${op.label} ${tiposAssinados[op.value] ? "✅" : ""}
+                </option>
+              `,
+              ).join("")}
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Nome *</label>
+            <input type="text" id="assinatura_nome" placeholder="Nome completo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">CPF</label>
+            <input type="text" id="assinatura_cpf" placeholder="123.456.789-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
+          </div>
+        </div>
+
+        <!-- Canvas para assinatura -->
+        <div style="margin-top:8px;">
+          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">Assinatura *</label>
+          <div style="border:2px solid var(--cinza-claro);border-radius:8px;overflow:hidden;background:white;touch-action:none;">
+            <canvas id="canvasAssinatura" width="400" height="150" style="width:100%;height:150px;touch-action:none;cursor:crosshair;"></canvas>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button type="button" onclick="window._novaOcorrenciaLimparAssinatura()" class="btn-secondary" style="flex:1;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
+              <i class="fas fa-undo"></i> Limpar
+            </button>
+            <button type="button" onclick="window._novaOcorrenciaAdicionarAssinatura()" class="btn-primary" style="flex:2;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
+              <i class="fas fa-save"></i> Adicionar Assinatura
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lista de assinaturas salvas -->
+      <div id="listaAssinaturas">
+        ${
+          assinaturas.length === 0
+            ? `<div style="text-align:center;padding:16px;color:var(--cinza-medio);font-size:13px;background:var(--branco);border-radius:var(--border-radius);border:1px dashed var(--cinza-claro);">
+                <i class="fas fa-pen" style="font-size:24px;display:block;margin-bottom:4px;opacity:0.3;"></i>
+                Nenhuma assinatura adicionada
+               </div>`
+            : assinaturas
+                .map(
+                  (ass, index) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--branco);border-radius:var(--border-radius);border:1px solid var(--cinza-claro);margin-bottom:4px;">
+              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
+              <span style="font-weight:600;font-size:12px;flex:1;">${ass.nome}</span>
+              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
+              <span style="font-size:9px;color:var(--cinza-medio);">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+              <button type="button" onclick="window._novaOcorrenciaRemoverAssinatura('${ass.tipo}')" class="remove-btn" style="background:none;border:none;color:var(--erro);cursor:pointer;padding:2px 6px;font-size:14px;">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          `,
+                )
+                .join("")
+        }
+      </div>
+    </div>
   `;
+
+  return html;
 }
 
 // ============================================
-// 🔥 ALTERADO: ETAPA 6 - REVISÃO (COM DATA_HORA_FINALIZACAO)
+// 🔥 NOVO: FUNÇÕES PARA ASSINATURA
+// ============================================
+
+/**
+ * Inicializa o canvas para captura de assinatura
+ */
+function inicializarCanvasAssinatura(appInstance) {
+  const canvas = document.getElementById("canvasAssinatura");
+  if (!canvas) return;
+
+  estado.canvasAssinatura = canvas;
+  const ctx = canvas.getContext("2d");
+
+  // Configurar canvas
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#1e293b";
+
+  // Limpar canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Adicionar linha de base
+  ctx.beginPath();
+  ctx.moveTo(20, canvas.height - 20);
+  ctx.lineTo(canvas.width - 20, canvas.height - 20);
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 2;
+
+  // Eventos para mouse
+  canvas.addEventListener("mousedown", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    estado.isDrawing = true;
+    estado.lastX = (e.clientX - rect.left) * scaleX;
+    estado.lastY = (e.clientY - rect.top) * scaleY;
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (!estado.isDrawing) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    ctx.beginPath();
+    ctx.moveTo(estado.lastX, estado.lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+
+    estado.lastX = x;
+    estado.lastY = y;
+  });
+
+  canvas.addEventListener("mouseup", () => {
+    estado.isDrawing = false;
+  });
+
+  canvas.addEventListener("mouseleave", () => {
+    estado.isDrawing = false;
+  });
+
+  // Eventos para touch
+  canvas.addEventListener(
+    "touchstart",
+    (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      estado.isDrawing = true;
+      estado.lastX = (touch.clientX - rect.left) * scaleX;
+      estado.lastY = (touch.clientY - rect.top) * scaleY;
+    },
+    { passive: false },
+  );
+
+  canvas.addEventListener(
+    "touchmove",
+    (e) => {
+      e.preventDefault();
+      if (!estado.isDrawing) return;
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (touch.clientX - rect.left) * scaleX;
+      const y = (touch.clientY - rect.top) * scaleY;
+
+      ctx.beginPath();
+      ctx.moveTo(estado.lastX, estado.lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+
+      estado.lastX = x;
+      estado.lastY = y;
+    },
+    { passive: false },
+  );
+
+  canvas.addEventListener(
+    "touchend",
+    (e) => {
+      e.preventDefault();
+      estado.isDrawing = false;
+    },
+    { passive: false },
+  );
+
+  console.log("✅ Canvas de assinatura inicializado");
+}
+
+/**
+ * Limpa o canvas de assinatura
+ */
+function limparAssinatura(appInstance) {
+  const canvas = document.getElementById("canvasAssinatura");
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Redesenhar linha de base
+  ctx.beginPath();
+  ctx.moveTo(20, canvas.height - 20);
+  ctx.lineTo(canvas.width - 20, canvas.height - 20);
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 2;
+
+  if (appInstance && appInstance.showToast) {
+    appInstance.showToast("Assinatura limpa", "info");
+  }
+}
+
+/**
+ * Adiciona uma assinatura à ocorrência
+ */
+async function adicionarAssinatura(appInstance) {
+  const canvas = document.getElementById("canvasAssinatura");
+  if (!canvas) {
+    appInstance.showToast("Canvas de assinatura não encontrado", "error");
+    return;
+  }
+
+  const tipo = document.getElementById("assinatura_tipo")?.value;
+  const nome = document.getElementById("assinatura_nome")?.value?.trim();
+  const cpf = document.getElementById("assinatura_cpf")?.value?.trim();
+
+  if (!tipo) {
+    appInstance.showToast("Selecione o papel do signatário", "warning");
+    return;
+  }
+
+  if (!nome) {
+    appInstance.showToast("Informe o nome do signatário", "warning");
+    return;
+  }
+
+  // Verificar se a assinatura está vazia
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  let hasDrawing = false;
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i] < 255 || pixels[i + 1] < 255 || pixels[i + 2] < 255) {
+      hasDrawing = true;
+      break;
+    }
+  }
+
+  if (!hasDrawing) {
+    appInstance.showToast("Desenhe a assinatura no campo acima", "warning");
+    return;
+  }
+
+  // Verificar se já existe assinatura para este tipo
+  if (estado.dados.assinaturas_objeto[tipo]) {
+    const confirmado = await appInstance.confirmar(
+      `Já existe uma assinatura para "${getTipoAssinaturaLabel(tipo)}". Deseja substituir?`,
+    );
+    if (!confirmado) return;
+    // Remover assinatura existente
+    estado.dados.assinaturas = estado.dados.assinaturas.filter(
+      (a) => a.tipo !== tipo,
+    );
+    delete estado.dados.assinaturas_objeto[tipo];
+  }
+
+  // Capturar a assinatura do canvas
+  const assinaturaDataUrl = canvas.toDataURL("image/png");
+
+  // Criar objeto da assinatura
+  const assinatura = {
+    id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
+    tipo: tipo,
+    nome: nome,
+    cpf: cpf || null,
+    assinatura_data_url: assinaturaDataUrl,
+    assinado_em: new Date().toISOString(),
+    assinado_por: authManager.getUserId(),
+    nome_guarda: authManager.getUser()?.nome_completo || "Desconhecido",
+  };
+
+  // Adicionar ao estado
+  estado.dados.assinaturas.push(assinatura);
+  estado.dados.assinaturas_objeto[tipo] = assinatura;
+  appInstance.alteracoesNaoSalvas = true;
+
+  // Limpar canvas
+  limparAssinatura(appInstance);
+
+  // Limpar campos
+  document.getElementById("assinatura_tipo").value = "";
+  document.getElementById("assinatura_nome").value = "";
+  document.getElementById("assinatura_cpf").value = "";
+
+  // Re-renderizar a etapa
+  const container = document.getElementById("page-nova-ocorrencia");
+  if (container) {
+    renderizarFormularioCompleto(container, appInstance);
+  }
+
+  appInstance.showToast("Assinatura adicionada com sucesso!", "success");
+}
+
+/**
+ * Remove uma assinatura da ocorrência
+ */
+function removerAssinatura(tipo, appInstance) {
+  if (!tipo) return;
+
+  estado.dados.assinaturas = estado.dados.assinaturas.filter(
+    (a) => a.tipo !== tipo,
+  );
+  delete estado.dados.assinaturas_objeto[tipo];
+  appInstance.alteracoesNaoSalvas = true;
+
+  const container = document.getElementById("page-nova-ocorrencia");
+  if (container) {
+    renderizarFormularioCompleto(container, appInstance);
+  }
+
+  appInstance.showToast(
+    `Assinatura de ${getTipoAssinaturaLabel(tipo)} removida`,
+    "info",
+  );
+}
+
+/**
+ * Retorna o label do tipo de assinatura
+ */
+function getTipoAssinaturaLabel(tipo) {
+  const tipos = {
+    autor: "Autor",
+    vitima: "Vítima",
+    testemunha: "Testemunha",
+    solicitante: "Solicitante",
+  };
+  return tipos[tipo] || tipo;
+}
+
+// ============================================
+// ETAPA 6 - REVISÃO (COM DATA_HORA_FINALIZACAO E ASSINATURAS)
 // ============================================
 
 function renderEtapa6(dados, appInstance) {
   const envolvidos = dados.envolvidos || [];
   const anexos = dados.anexos || [];
+  const assinaturas = dados.assinaturas || [];
   const camposSolicitantePreenchidos = [
     { label: "Forma", valor: dados.forma_solicitacao },
     { label: "Solicitante", valor: dados.nome_solicitante },
@@ -1254,12 +1675,34 @@ function renderEtapa6(dados, appInstance) {
         : ""
     }
 
+    <!-- 🔥 ALTERADO: Anexos reais (sem assinaturas) -->
     <div class="card-revisao">
-      <h4><i class="fas fa-paperclip"></i> Evidências</h4>
+      <h4><i class="fas fa-paperclip"></i> Anexos</h4>
       <div style="font-size:13px;">
         <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s) (ilimitado)</div>
+        ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
       </div>
-      ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
+    </div>
+
+    <!-- 🔥 NOVO: Assinaturas -->
+    <div class="card-revisao">
+      <h4><i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})</h4>
+      ${
+        assinaturas.length === 0
+          ? `<p style="color:var(--cinza-medio);font-size:13px;">Nenhuma assinatura coletada</p>`
+          : assinaturas
+              .map(
+                (ass) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
+              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
+              <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
+              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
+              <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          `,
+              )
+              .join("")
+      }
     </div>
 
     <div class="alert-finalizar">
@@ -1287,6 +1730,14 @@ function configurarEventosFormulario(appInstance) {
   if (telefoneInput) {
     telefoneInput.addEventListener("input", function () {
       this.value = aplicarMascaraTelefone(this.value);
+    });
+  }
+
+  // 🔥 NOVO: Máscara para CPF da assinatura
+  const assinaturaCpf = document.getElementById("assinatura_cpf");
+  if (assinaturaCpf) {
+    assinaturaCpf.addEventListener("input", function () {
+      this.value = aplicarMascaraCPF(this.value);
     });
   }
 
@@ -1546,7 +1997,6 @@ function removerEnvolvido(index, appInstance) {
 
 async function processarAnexos(files, appInstance) {
   const anexos = estado.dados.anexos || [];
-  // 🔥 ALTERADO: Removido limite de anexos
 
   for (const file of files) {
     try {
@@ -1675,17 +2125,18 @@ async function finalizarOcorrencia(container, appInstance) {
 
   const envolvidos = dados.envolvidos || [];
   const anexos = dados.anexos || [];
+  const assinaturas = dados.assinaturas || [];
 
   const dadosParaSalvar = { ...dados };
   delete dadosParaSalvar.envolvidos;
   delete dadosParaSalvar.anexos;
+  // 🔥 Manter assinaturas no objeto
 
   // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
   if (dadosParaSalvar.data_hora_inicio) {
     try {
       const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
       if (!isNaN(dateObj.getTime())) {
-        // ✅ Mantém a data exata do dispositivo, sem conversão para UTC
         const year = dateObj.getFullYear();
         const month = String(dateObj.getMonth() + 1).padStart(2, "0");
         const day = String(dateObj.getDate()).padStart(2, "0");
@@ -1694,7 +2145,6 @@ async function finalizarOcorrencia(container, appInstance) {
         const seconds = String(dateObj.getSeconds()).padStart(2, "0");
         dadosParaSalvar.data_hora_inicio = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
       } else {
-        // Se a data for inválida, usa a função do utils (que também é segura)
         const agora = await utils.obterDataHoraInput();
         dadosParaSalvar.data_hora_inicio = agora;
       }
@@ -1708,7 +2158,6 @@ async function finalizarOcorrencia(container, appInstance) {
     try {
       const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
       if (!isNaN(dateObj.getTime())) {
-        // ✅ Mesma correção para encerramento
         const year = dateObj.getFullYear();
         const month = String(dateObj.getMonth() + 1).padStart(2, "0");
         const day = String(dateObj.getDate()).padStart(2, "0");
@@ -1725,7 +2174,6 @@ async function finalizarOcorrencia(container, appInstance) {
   }
 
   // 🔥 NOVO: Data/hora de finalização
-  // ✅ Usar data do dispositivo SEM ajuste
   const agora = new Date();
   const year = agora.getFullYear();
   const month = String(agora.getMonth() + 1).padStart(2, "0");
@@ -1735,6 +2183,9 @@ async function finalizarOcorrencia(container, appInstance) {
   const seconds = String(agora.getSeconds()).padStart(2, "0");
   const dataFinalizacao = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
   dadosParaSalvar.data_hora_finalizacao = dataFinalizacao;
+
+  // 🔥 Garantir que assinaturas seja um array
+  dadosParaSalvar.assinaturas = assinaturas || [];
 
   let localizacao = await appInstance.obterLocalizacao({ timeout: 5000 });
   if (
@@ -1751,7 +2202,6 @@ async function finalizarOcorrencia(container, appInstance) {
     status: navigator.onLine ? "synced" : "pending_sync",
     latitude: localizacao.latitude,
     longitude: localizacao.longitude,
-    // 🔥 NOVO: data_hora_finalizacao já incluído acima
   });
 
   if (!result.success) {
@@ -1782,6 +2232,8 @@ async function finalizarOcorrencia(container, appInstance) {
     if (!anexoResult.success)
       erros.push("Erro ao salvar anexos: " + anexoResult.error);
   }
+
+  // 🔥 Assinaturas já foram salvas com a ocorrência (campo assinaturas)
 
   if (erros.length > 0) {
     appInstance.showToast(
@@ -1904,6 +2356,14 @@ function determinarTipoAnexo(file) {
   return "document";
 }
 
+function gerarUUID() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function renderAcessoNegado(appInstance) {
   return `
     <div class="container" style="text-align:center;padding:40px 20px;">
@@ -1918,9 +2378,6 @@ function renderAcessoNegado(appInstance) {
 // RENDERIZAR FORMULÁRIO COMPLETAR (continuação)
 // ============================================
 
-// As funções abaixo já foram definidas anteriormente no código
-// Elas são usadas pelo formulário de completar
-
 async function salvarCompletarRapido(appInstance) {
   const id = estado.id;
   if (!id) {
@@ -1928,7 +2385,6 @@ async function salvarCompletarRapido(appInstance) {
     return;
   }
 
-  // Coletar dados do formulário
   const dadosAtualizados = {
     forma_solicitacao:
       document.getElementById("completar_forma_solicitacao")?.value || "",
@@ -1944,9 +2400,9 @@ async function salvarCompletarRapido(appInstance) {
       document.getElementById("completar_encerramento")?.value || null,
     envolvidos: estado.dados.envolvidos || [],
     anexos: estado.dados.anexos || [],
+    assinaturas: estado.dados.assinaturas || [],
   };
 
-  // Verificar se houve alterações
   if (estado.dadosOriginais) {
     const alteracoes = compararObjetos(estado.dadosOriginais, dadosAtualizados);
     if (Object.keys(alteracoes).length === 0) {
@@ -2010,7 +2466,6 @@ async function finalizarCompletarRapido(appInstance) {
   try {
     appInstance.showToast("Finalizando...", "info");
 
-    // 🔥 CORRIGIDO: Data/hora de finalização SEM ajuste de fuso
     const agora = new Date();
     const year = agora.getFullYear();
     const month = String(agora.getMonth() + 1).padStart(2, "0");
@@ -2035,10 +2490,10 @@ async function finalizarCompletarRapido(appInstance) {
         document.getElementById("completar_encerramento")?.value || null,
       envolvidos: estado.dados.envolvidos || [],
       anexos: estado.dados.anexos || [],
+      assinaturas: estado.dados.assinaturas || [],
       modo_criacao: MODE_COMPLETO,
       completado_em: dataFinalizacao,
       completado_por: authManager.getUserId(),
-      // 🔥 CORRIGIDO: data_hora_finalizacao sem ajuste de fuso
       data_hora_finalizacao: dataFinalizacao,
       status: "synced",
     };
@@ -2078,6 +2533,117 @@ function compararObjetos(obj1, obj2) {
     }
   }
   return diff;
+}
+
+// ============================================
+// RENDERIZAR FORMULÁRIO COMPLETAR
+// ============================================
+
+function renderizarFormularioCompletar(container, appInstance) {
+  const dados = estado.dados;
+
+  let html = `
+    <div class="container" style="padding-bottom:100px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
+            <i class="fas fa-edit" style="margin-right:8px;"></i>
+            Completar BO Rápido
+          </h2>
+          <p style="color:var(--cinza-medio);font-size:12px;margin:0;">
+            Adicione informações adicionais ao BO Rápido
+          </p>
+        </div>
+        <button onclick="window.app.navigateTo('ocorrencias')" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+          <i class="fas fa-arrow-left"></i> Voltar
+        </button>
+      </div>
+
+      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-media);">
+        <form id="formCompletarRapido" onsubmit="event.preventDefault();">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              Forma de Solicitação <span class="required">*</span>
+            </label>
+            <select id="completar_forma_solicitacao" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;">
+              ${FORMAS_SOLICITACAO.map((op) => `<option value="${op.value}" ${dados.forma_solicitacao === op.value ? "selected" : ""}>${op.label}</option>`).join("")}
+            </select>
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-id-card"></i> CPF do Solicitante
+            </label>
+            <input type="text" id="completar_cpf" placeholder="123.456.789-00" maxlength="14" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.cpf_solicitante || ""}">
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-phone"></i> Telefone do Solicitante
+            </label>
+            <input type="text" id="completar_telefone" placeholder="(44) 99999-9999" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.telefone_solicitante || ""}">
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-home"></i> Endereço do Solicitante
+            </label>
+            <input type="text" id="completar_endereco" placeholder="Rua, número, bairro" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.endereco_solicitante || ""}">
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-location-dot"></i> Bairro do Solicitante
+            </label>
+            <input type="text" id="completar_bairro" placeholder="Bairro" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.bairro_solicitante || ""}">
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-road"></i> Rodovia (se aplicável)
+            </label>
+            <input type="text" id="completar_rodovia" placeholder="BR-123, km 45" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.rodovia || ""}">
+          </div>
+
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
+              <i class="fas fa-calendar-check"></i> Data/Hora Encerramento
+            </label>
+            <input type="datetime-local" id="completar_encerramento" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;" value="${dados.data_hora_encerramento || ""}">
+          </div>
+
+          <div style="margin-top:16px;display:flex;gap:8px;">
+            <button type="button" onclick="window._salvarCompletarRapido()" class="btn-primary" style="flex:1;border-radius:12px;min-height:44px;">
+              <i class="fas fa-save"></i> Salvar
+            </button>
+            <button type="button" onclick="window._finalizarCompletarRapido()" class="btn-success" style="flex:1;border-radius:12px;min-height:44px;">
+              <i class="fas fa-check-circle"></i> Finalizar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+
+  window._salvarCompletarRapido = () => salvarCompletarRapido(appInstance);
+  window._finalizarCompletarRapido = () =>
+    finalizarCompletarRapido(appInstance);
+
+  const cpfInput = document.getElementById("completar_cpf");
+  if (cpfInput) {
+    cpfInput.addEventListener("input", function () {
+      this.value = aplicarMascaraCPF(this.value);
+    });
+  }
+
+  const telefoneInput = document.getElementById("completar_telefone");
+  if (telefoneInput) {
+    telefoneInput.addEventListener("input", function () {
+      this.value = aplicarMascaraTelefone(this.value);
+    });
+  }
 }
 
 // ============================================

@@ -13,6 +13,7 @@
  * - 🔥 NOVO: Assinaturas na etapa 5 (separadas dos anexos)
  * - 🔥 NOVO: Canvas para captura de assinatura
  * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
+ * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
  *
  * MELHORIAS APLICADAS:
  * - 🔥 ALTERADO: Anexos sem limite (removido MAX_ANEXOS)
@@ -24,6 +25,7 @@
  * - 🔥 NOVO: Separação entre anexos e assinaturas
  * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
  * - 🔥 CORRIGIDO: Preenchimento automático do campo data/hora no modo rápido agora usa horário LOCAL do dispositivo
+ * - 🔥 CORRIGIDO: Removido assinaturas_objeto do envio para o banco
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
@@ -133,7 +135,6 @@ let estado = {
     observacoes: "",
     anexos: [],
     assinaturas: [], // 🔥 NOVO: Array de assinaturas
-    assinaturas_objeto: {}, // 🔥 NOVO: Para controlar assinaturas por tipo
     modo_criacao: MODE_COMPLETO,
     data_hora_finalizacao: null,
   },
@@ -174,9 +175,6 @@ export async function renderNovaOcorrencia(container, appInstance) {
     // 🔥 Garantir que assinaturas exista
     if (!estado.dados.assinaturas) {
       estado.dados.assinaturas = [];
-    }
-    if (!estado.dados.assinaturas_objeto) {
-      estado.dados.assinaturas_objeto = {};
     }
     estado.modo = MODE_COMPLETO;
     estado.isCompletando = false;
@@ -225,7 +223,6 @@ function resetarEstado() {
     observacoes: "",
     anexos: [],
     assinaturas: [],
-    assinaturas_objeto: {},
     modo_criacao: MODE_COMPLETO,
     data_hora_finalizacao: null,
   };
@@ -293,15 +290,9 @@ async function carregarParaCompletar(id, appInstance) {
       observacoes: occ.observacoes || "",
       anexos: anexosResult.success ? anexosResult.data : [],
       assinaturas: occ.assinaturas || [],
-      assinaturas_objeto: {},
       modo_criacao: occ.modo_criacao || MODE_RAPIDO,
       data_hora_finalizacao: occ.data_hora_finalizacao || null,
     };
-
-    // 🔥 Converter assinaturas para objeto por tipo
-    estado.dados.assinaturas.forEach((ass) => {
-      estado.dados.assinaturas_objeto[ass.tipo] = ass;
-    });
 
     estado.dadosOriginais = JSON.parse(JSON.stringify(estado.dados));
     appInstance.alteracoesNaoSalvas = true;
@@ -582,6 +573,9 @@ async function finalizarRapido(container, appInstance) {
     dados.anexos = anexos;
   }
 
+  // 🔥 CORRIGIDO: Remover campos que não devem ir para o banco
+  delete dados.assinaturas_objeto;
+
   const result = await ocorrenciaManager.criar(dados);
 
   if (!result.success) {
@@ -756,7 +750,8 @@ function renderizarFormularioCompleto(container, appInstance) {
     adicionarAssinatura(appInstance);
   window._novaOcorrenciaRemoverAssinatura = (tipo) =>
     removerAssinatura(tipo, appInstance);
-  window._novaOcorrenciaLimparAssinatura = () => limparAssinatura(appInstance);
+  window._novaOcorrenciaLimparAssinatura = () =>
+    limparAssinatura(appInstance);
 }
 
 // ============================================
@@ -1149,17 +1144,12 @@ function renderEtapa4(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 ALTERADO: ETAPA 5 - ANEXOS E ASSINATURAS (SEM LIMITE)
+// 🔥 ALTERADO E CORRIGIDO: ETAPA 5 - ANEXOS E ASSINATURAS (SEM LIMITE)
 // ============================================
 
 function renderEtapa5(dados, appInstance) {
   const anexos = dados.anexos || [];
   const assinaturas = dados.assinaturas || [];
-
-  // 🔥 Garantir que assinaturas_objeto exista
-  if (!dados.assinaturas_objeto) {
-    dados.assinaturas_objeto = {};
-  }
 
   // Mapear quais tipos já têm assinatura
   const tiposAssinados = {};
@@ -1371,52 +1361,40 @@ function inicializarCanvasAssinatura(appInstance) {
   });
 
   // Eventos para touch
-  canvas.addEventListener(
-    "touchstart",
-    (e) => {
-      e.preventDefault();
-      const touch = e.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      estado.isDrawing = true;
-      estado.lastX = (touch.clientX - rect.left) * scaleX;
-      estado.lastY = (touch.clientY - rect.top) * scaleY;
-    },
-    { passive: false },
-  );
+  canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    estado.isDrawing = true;
+    estado.lastX = (touch.clientX - rect.left) * scaleX;
+    estado.lastY = (touch.clientY - rect.top) * scaleY;
+  }, { passive: false });
 
-  canvas.addEventListener(
-    "touchmove",
-    (e) => {
-      e.preventDefault();
-      if (!estado.isDrawing) return;
-      const touch = e.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const x = (touch.clientX - rect.left) * scaleX;
-      const y = (touch.clientY - rect.top) * scaleY;
+  canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    if (!estado.isDrawing) return;
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (touch.clientX - rect.left) * scaleX;
+    const y = (touch.clientY - rect.top) * scaleY;
 
-      ctx.beginPath();
-      ctx.moveTo(estado.lastX, estado.lastY);
-      ctx.lineTo(x, y);
-      ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(estado.lastX, estado.lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
 
-      estado.lastX = x;
-      estado.lastY = y;
-    },
-    { passive: false },
-  );
+    estado.lastX = x;
+    estado.lastY = y;
+  }, { passive: false });
 
-  canvas.addEventListener(
-    "touchend",
-    (e) => {
-      e.preventDefault();
-      estado.isDrawing = false;
-    },
-    { passive: false },
-  );
+  canvas.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    estado.isDrawing = false;
+  }, { passive: false });
 
   console.log("✅ Canvas de assinatura inicializado");
 }
@@ -1489,8 +1467,12 @@ async function adicionarAssinatura(appInstance) {
     return;
   }
 
-  // Verificar se já existe assinatura para este tipo
-  if (estado.dados.assinaturas_objeto[tipo]) {
+  // 🔥 CORRIGIDO: Verificar se já existe assinatura para este tipo
+  const assinaturaExistente = estado.dados.assinaturas.find(
+    (a) => a.tipo === tipo
+  );
+
+  if (assinaturaExistente) {
     const confirmado = await appInstance.confirmar(
       `Já existe uma assinatura para "${getTipoAssinaturaLabel(tipo)}". Deseja substituir?`,
     );
@@ -1499,7 +1481,6 @@ async function adicionarAssinatura(appInstance) {
     estado.dados.assinaturas = estado.dados.assinaturas.filter(
       (a) => a.tipo !== tipo,
     );
-    delete estado.dados.assinaturas_objeto[tipo];
   }
 
   // Capturar a assinatura do canvas
@@ -1519,7 +1500,6 @@ async function adicionarAssinatura(appInstance) {
 
   // Adicionar ao estado
   estado.dados.assinaturas.push(assinatura);
-  estado.dados.assinaturas_objeto[tipo] = assinatura;
   appInstance.alteracoesNaoSalvas = true;
 
   // Limpar canvas
@@ -1548,7 +1528,6 @@ function removerAssinatura(tipo, appInstance) {
   estado.dados.assinaturas = estado.dados.assinaturas.filter(
     (a) => a.tipo !== tipo,
   );
-  delete estado.dados.assinaturas_objeto[tipo];
   appInstance.alteracoesNaoSalvas = true;
 
   const container = document.getElementById("page-nova-ocorrencia");
@@ -2130,6 +2109,8 @@ async function finalizarOcorrencia(container, appInstance) {
   const dadosParaSalvar = { ...dados };
   delete dadosParaSalvar.envolvidos;
   delete dadosParaSalvar.anexos;
+  // 🔥 CORRIGIDO: Remover assinaturas_objeto (não existe no banco)
+  delete dadosParaSalvar.assinaturas_objeto;
   // 🔥 Manter assinaturas no objeto
 
   // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
@@ -2403,6 +2384,9 @@ async function salvarCompletarRapido(appInstance) {
     assinaturas: estado.dados.assinaturas || [],
   };
 
+  // 🔥 CORRIGIDO: Remover campos que não existem no banco
+  delete dadosAtualizados.assinaturas_objeto;
+
   if (estado.dadosOriginais) {
     const alteracoes = compararObjetos(estado.dadosOriginais, dadosAtualizados);
     if (Object.keys(alteracoes).length === 0) {
@@ -2497,6 +2481,9 @@ async function finalizarCompletarRapido(appInstance) {
       data_hora_finalizacao: dataFinalizacao,
       status: "synced",
     };
+
+    // 🔥 CORRIGIDO: Remover campos que não existem no banco
+    delete dadosAtualizados.assinaturas_objeto;
 
     const result = await ocorrenciaManager.atualizar(id, dadosAtualizados);
     if (!result.success) {

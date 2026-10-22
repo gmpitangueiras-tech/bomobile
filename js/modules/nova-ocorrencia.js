@@ -5,12 +5,14 @@
  * Layout com:
  * - Tela de escolha: Modo Rápido vs Modo Completo
  * - Modo Rápido: 5 campos essenciais + fotos
- * - Modo Completo: Formulário completo com todas as funcionalidades
+ * - Modo Completo: Formulário completo com 7 etapas
  * - Completar BO Rápido: Adicionar dados faltantes
  * - Rascunho automático
  * - Geolocalização
  * - Hash pericial na finalização
- * - 🔥 NOVO: Assinaturas na etapa 5 (separadas dos anexos)
+ * - 🔥 NOVO: 7 etapas (separação de anexos e assinaturas)
+ * - 🔥 NOVO: Assinaturas integradas com envolvidos (dropdown + auto-preenchimento)
+ * - 🔥 NOVO: Data/Hora Encerramento movido para etapa de revisão
  * - 🔥 NOVO: Canvas para captura de assinatura
  * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
@@ -23,6 +25,10 @@
  * - 🔥 NOVO: Informação de finalização no modo rápido
  * - 🔥 NOVO: Assinaturas com canvas touch
  * - 🔥 NOVO: Separação entre anexos e assinaturas
+ * - 🔥 NOVO: Dropdown de envolvidos na etapa de assinaturas
+ * - 🔥 NOVO: Auto-preenchimento de nome/CPF ao selecionar envolvido
+ * - 🔥 NOVO: Vínculo da assinatura com envolvido_id
+ * - 🔥 NOVO: Data/Hora Encerramento na etapa de revisão
  * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
  * - 🔥 CORRIGIDO: Preenchimento automático do campo data/hora no modo rápido agora usa horário LOCAL do dispositivo
  * - 🔥 CORRIGIDO: Removido assinaturas_objeto do envio para o banco
@@ -82,7 +88,8 @@ const MODE_RAPIDO = "rapido";
 const MODE_COMPLETO = "completo";
 const MODE_COMPLETAR = "completar";
 
-const TOTAL_ETAPAS = 6;
+// 🔥 ALTERADO: 7 etapas
+const TOTAL_ETAPAS = 7;
 
 // ============================================
 // FUNÇÃO AUXILIAR - OBTER DATA/HORA LOCAL PARA INPUT
@@ -113,6 +120,7 @@ let estado = {
   isCompletando: false,
   etapa: 1,
   dados: {
+    // Etapa 1 - Origem da Solicitação
     forma_solicitacao: "",
     nome_solicitante: "",
     cpf_solicitante: "",
@@ -123,19 +131,31 @@ let estado = {
     complemento: "",
     bairro_solicitante: "",
     identificacao_adicional: "",
+    // Etapa 2 - Dados da Ocorrência
     codigo_operacional: "",
     local_ocorrencia: "",
     rodovia: "",
     bairro_ocorrencia: "",
     referencia: "",
     data_hora_inicio: "",
-    data_hora_encerramento: "",
+    // 🔥 REMOVIDO: data_hora_encerramento da etapa 2 (movido para etapa 7)
     tipo_ocorrencia: "",
+    // Etapa 3 - Equipe operacional e envolvidos civis
+    guardasParticipantes: [],
     envolvidos: [],
+    // Etapa 4 - Observações
     observacoes: "",
+    // Etapa 5 - Anexos
     anexos: [],
-    assinaturas: [], // 🔥 NOVO: Array de assinaturas
+    // Etapa 6 - Assinaturas
+    assinaturas: [],
+    // 🔥 NOVO: Mapeamento de envolvidos para referência
+    envolvidosMap: {},
+    // Modo de criação
     modo_criacao: MODE_COMPLETO,
+    // 🔥 NOVO: Data/hora encerramento (agora na etapa 7)
+    data_hora_encerramento: "",
+    // 🔥 NOVO: data_hora_finalizacao (preenchido automaticamente)
     data_hora_finalizacao: null,
   },
   dadosOriginais: null,
@@ -144,12 +164,16 @@ let estado = {
   isRecording: false,
   sttInicializado: false,
   modeloSelecionado: "",
+  // P3: catálogo de guardas ativos para seleção rápida
+  guardasDisponiveis: [],
   // 🔥 NOVO: Estado para o canvas de assinatura
   canvasAssinatura: null,
   assinaturaAtual: null,
   isDrawing: false,
   lastX: 0,
   lastY: 0,
+  // 🔥 NOVO: Estado para controle de assinaturas
+  envolvidoSelecionado: null,
 };
 
 // ============================================
@@ -176,6 +200,12 @@ export async function renderNovaOcorrencia(container, appInstance) {
     if (!estado.dados.assinaturas) {
       estado.dados.assinaturas = [];
     }
+    if (!estado.dados.envolvidosMap) {
+      estado.dados.envolvidosMap = {};
+    }
+    if (!estado.dados.guardasParticipantes) {
+      estado.dados.guardasParticipantes = [];
+    }
     estado.modo = MODE_COMPLETO;
     estado.isCompletando = false;
     estado.etapa = 1;
@@ -186,6 +216,9 @@ export async function renderNovaOcorrencia(container, appInstance) {
   } else {
     resetarEstado();
   }
+
+  // P3: carregar guardas ativos antes de renderizar o seletor de equipe
+  await carregarGuardasDisponiveis(appInstance);
 
   // Renderizar escolha de modo
   renderizarEscolhaModo(container, appInstance);
@@ -219,10 +252,12 @@ function resetarEstado() {
     data_hora_inicio: "",
     data_hora_encerramento: "",
     tipo_ocorrencia: "",
+    guardasParticipantes: [],
     envolvidos: [],
     observacoes: "",
     anexos: [],
     assinaturas: [],
+    envolvidosMap: {},
     modo_criacao: MODE_COMPLETO,
     data_hora_finalizacao: null,
   };
@@ -231,6 +266,8 @@ function resetarEstado() {
   estado.modeloSelecionado = "";
   estado.canvasAssinatura = null;
   estado.assinaturaAtual = null;
+  estado.envolvidoSelecionado = null;
+  estado.guardasDisponiveis = [];
 }
 
 // ============================================
@@ -265,6 +302,7 @@ async function carregarParaCompletar(id, appInstance) {
     estado.modo = MODE_COMPLETAR;
 
     const envResult = await ocorrenciaManager.listarEnvolvidos(id);
+    const guardasResult = await ocorrenciaManager.listarGuardas(id);
     const anexosResult = await ocorrenciaManager.listarAnexos(id);
 
     estado.dados = {
@@ -286,13 +324,20 @@ async function carregarParaCompletar(id, appInstance) {
       data_hora_inicio: occ.data_hora_inicio || "",
       data_hora_encerramento: occ.data_hora_encerramento || "",
       tipo_ocorrencia: occ.tipo_ocorrencia || "",
+      guardasParticipantes: guardasResult.success ? guardasResult.data : [],
       envolvidos: envResult.success ? envResult.data : [],
       observacoes: occ.observacoes || "",
       anexos: anexosResult.success ? anexosResult.data : [],
       assinaturas: occ.assinaturas || [],
+      envolvidosMap: {},
       modo_criacao: occ.modo_criacao || MODE_RAPIDO,
       data_hora_finalizacao: occ.data_hora_finalizacao || null,
     };
+
+    // 🔥 Construir mapa de envolvidos
+    estado.dados.envolvidos.forEach((env) => {
+      estado.dados.envolvidosMap[env.id] = env;
+    });
 
     estado.dadosOriginais = JSON.parse(JSON.stringify(estado.dados));
     appInstance.alteracoesNaoSalvas = true;
@@ -302,6 +347,151 @@ async function carregarParaCompletar(id, appInstance) {
     console.error("Erro ao carregar para completar:", error);
     appInstance.showToast("Erro ao carregar dados", "error");
   }
+}
+
+// ============================================
+// P3 — EQUIPE OPERACIONAL DA OCORRÊNCIA
+// ============================================
+
+function escaparHtmlEquipe(valor) {
+  return String(valor || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function carregarGuardasDisponiveis(appInstance) {
+  try {
+    const result = await ocorrenciaManager.listarGuardasDisponiveis();
+    estado.guardasDisponiveis = result.success ? result.data : [];
+    if (!result.success) {
+      console.warn("P3: não foi possível carregar guardas ativos:", result.error);
+    }
+  } catch (error) {
+    estado.guardasDisponiveis = [];
+    console.warn("P3: erro ao carregar guardas ativos:", error);
+  }
+}
+
+function garantirResponsavelEquipe(dados) {
+  const user = authManager.getUser?.();
+  if (!user?.id) return dados.guardasParticipantes || [];
+
+  const equipe = (dados.guardasParticipantes || []).filter(
+    (g) => g && g.esta_ativo !== false,
+  );
+  const atual = equipe.find((g) => g.papel === "responsavel");
+  if (!atual) {
+    equipe.unshift({
+      guarda_id: user.id,
+      papel: "responsavel",
+      ordem: 1,
+      nome_snapshot: user.nome_completo || "Guarda responsável",
+      matricula_snapshot: user.matricula || "",
+      perfil_snapshot: user.perfil || "guarda",
+      esta_ativo: true,
+      selecionado_por: user.id,
+    });
+    dados.guardasParticipantes = equipe;
+  }
+  return equipe;
+}
+
+function equipeTemMinima(equipe) {
+  const ativas = (equipe || []).filter((g) => g && g.esta_ativo !== false);
+  return (
+    ativas.some((g) => g.papel === "responsavel") &&
+    ativas.some((g) => g.papel === "acompanhante")
+  );
+}
+
+function renderEquipeGuardas(dados, modo = "completo") {
+  const equipe = garantirResponsavelEquipe(dados);
+  const responsavel = equipe.find((g) => g.papel === "responsavel");
+  const acompanhante = equipe.find((g) => g.papel === "acompanhante");
+  const userId = responsavel?.guarda_id || authManager.getUserId?.();
+  const disponiveis = (estado.guardasDisponiveis || []).filter(
+    (g) => g.id !== userId && g.status === "ativo",
+  );
+  const opcoes = disponiveis.length
+    ? `<option value="">Selecione o guarda acompanhante</option>${disponiveis
+        .map(
+          (g) =>
+            `<option value="${escaparHtmlEquipe(g.id)}" ${acompanhante?.guarda_id === g.id ? "selected" : ""}>${escaparHtmlEquipe(g.nome_completo)}${g.matricula ? ` — Mat. ${escaparHtmlEquipe(g.matricula)}` : ""}</option>`,
+        )
+        .join("")}`
+    : `<option value="">Nenhum guarda ativo disponível</option>`;
+
+  return `
+    <section aria-label="Equipe da ocorrência" style="margin:0 0 16px 0;padding:14px;border:2px solid ${equipeTemMinima(equipe) ? "var(--verde-bandeira)" : "var(--azul-claro)"};border-radius:16px;background:linear-gradient(135deg,var(--branco) 0%,var(--azul-muito-claro) 100%);box-shadow:var(--sombra-suave);">
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
+        <div style="width:42px;height:42px;flex:0 0 42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--azul-bandeira);color:var(--branco);font-size:18px;"><i class="fas fa-user-shield"></i></div>
+        <div style="min-width:0;">
+          <h3 style="margin:0;color:var(--azul-bandeira);font-size:16px;">Equipe da ocorrência</h3>
+          <p style="margin:3px 0 0;color:var(--cinza-escuro);font-size:12px;line-height:1.35;">Selecione o guarda que está com você. Este campo é separado dos envolvidos civis.</p>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--branco);border-radius:12px;margin-bottom:10px;">
+        <i class="fas fa-check-circle" style="color:var(--verde-bandeira);font-size:18px;"></i>
+        <div style="min-width:0;"><div style="font-size:10px;color:var(--cinza-medio);font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Responsável pelo registro</div><div style="font-size:14px;font-weight:700;color:var(--cinza-escuro);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escaparHtmlEquipe(responsavel?.nome_snapshot || "Guarda logado")}${responsavel?.matricula_snapshot ? ` <span style="font-size:11px;font-weight:500;color:var(--cinza-medio);">· Mat. ${escaparHtmlEquipe(responsavel.matricula_snapshot)}</span>` : ""}</div></div>
+      </div>
+      <label for="selectGuardaAcompanhante" style="display:block;font-size:11px;font-weight:700;color:var(--cinza-escuro);margin-bottom:5px;"><i class="fas fa-user-plus" style="margin-right:5px;color:var(--azul-bandeira);"></i>Guarda acompanhante <span style="color:var(--erro);">*</span></label>
+      <select id="selectGuardaAcompanhante" aria-label="Selecionar guarda acompanhante" onchange="window._novaOcorrenciaSelecionarAcompanhante(this.value)" style="width:100%;min-height:52px;padding:12px;border:2px solid ${acompanhante ? "var(--verde-bandeira)" : "var(--azul-claro)"};border-radius:12px;font-size:15px;background:var(--branco);color:var(--cinza-escuro);">
+        ${opcoes}
+      </select>
+      ${acompanhante ? `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;background:var(--verde-muito-claro);border-radius:10px;color:var(--verde-escuro);font-size:12px;"><i class="fas fa-shield-alt"></i><span style="flex:1;"><strong>${escaparHtmlEquipe(acompanhante.nome_snapshot)}</strong>${acompanhante.matricula_snapshot ? ` · Mat. ${escaparHtmlEquipe(acompanhante.matricula_snapshot)}` : ""}</span><button type="button" aria-label="Remover guarda acompanhante" onclick="window._novaOcorrenciaRemoverAcompanhante()" style="min-width:40px;min-height:40px;border:0;border-radius:10px;background:transparent;color:var(--erro);font-size:16px;"><i class="fas fa-times"></i></button></div>` : `<div style="margin-top:7px;color:var(--aviso);font-size:11px;"><i class="fas fa-exclamation-circle"></i> A ocorrência só poderá ser finalizada com um acompanhante selecionado.</div>`}
+    </section>
+  `;
+}
+
+function renderizarEquipeAtual(container, appInstance) {
+  if (estado.isCompletando) {
+    renderizarFormularioCompletar(container, appInstance);
+  } else if (estado.modo === MODE_RAPIDO) {
+    renderizarFormularioRapido(container, appInstance);
+  } else {
+    renderizarFormularioCompleto(container, appInstance);
+  }
+}
+
+function selecionarGuardaAcompanhante(guardaId, container, appInstance) {
+  const dados = estado.dados;
+  const equipe = garantirResponsavelEquipe(dados);
+  const responsavel = equipe.find((g) => g.papel === "responsavel");
+
+  if (!guardaId) {
+    dados.guardasParticipantes = equipe.filter((g) => g.papel !== "acompanhante");
+  } else {
+    const guarda = (estado.guardasDisponiveis || []).find((g) => g.id === guardaId);
+    if (!guarda || guarda.id === responsavel?.guarda_id) {
+      appInstance.showToast("Selecione um guarda acompanhante válido", "warning");
+      return;
+    }
+    dados.guardasParticipantes = equipe
+      .filter((g) => g.papel !== "acompanhante")
+      .concat({
+        guarda_id: guarda.id,
+        papel: "acompanhante",
+        ordem: 2,
+        nome_snapshot: guarda.nome_completo,
+        matricula_snapshot: guarda.matricula || "",
+        perfil_snapshot: guarda.perfil || "guarda",
+        esta_ativo: true,
+        selecionado_por: authManager.getUserId?.(),
+      });
+  }
+  appInstance.alteracoesNaoSalvas = true;
+  renderizarEquipeAtual(container, appInstance);
+}
+
+function removerGuardaAcompanhante(container, appInstance) {
+  estado.dados.guardasParticipantes = garantirResponsavelEquipe(estado.dados).filter(
+    (g) => g.papel !== "acompanhante",
+  );
+  appInstance.alteracoesNaoSalvas = true;
+  renderizarEquipeAtual(container, appInstance);
 }
 
 // ============================================
@@ -337,7 +527,7 @@ function renderizarEscolhaModo(container, appInstance) {
       </p>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div onclick="window._novaOcorrenciaSelecionarModo('rapido')" 
+        <div onclick="window._novaOcorrenciaSelecionarModo('rapido')"
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">⚡</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Rápido</h3>
@@ -345,11 +535,11 @@ function renderizarEscolhaModo(container, appInstance) {
           <div style="margin-top:8px;font-size:10px;color:var(--azul-bandeira);font-weight:600;">⏱️ ~2 minutos</div>
         </div>
 
-        <div onclick="window._novaOcorrenciaSelecionarModo('completo')" 
+        <div onclick="window._novaOcorrenciaSelecionarModo('completo')"
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">📋</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Completo</h3>
-          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">Todos os campos<br>+ Envolvidos + Assinaturas<br>+ Fotos (ilimitadas)</p>
+          <p style="font-size:12px;color:var(--cinza-medio);margin:0;">7 etapas organizadas<br>+ Envolvidos + Assinaturas integradas<br>+ Fotos (ilimitadas)</p>
           <div style="margin-top:8px;font-size:10px;color:var(--azul-bandeira);font-weight:600;">⏱️ ~5-8 minutos</div>
         </div>
       </div>
@@ -461,6 +651,8 @@ function renderizarFormularioRapido(container, appInstance) {
             </div>
           </div>
 
+          ${renderEquipeGuardas(estado.dados, "compact")}
+
           <!-- 🔥 ALTERADO: Fotos - ilimitado -->
           <div class="form-group" style="margin-bottom:12px;">
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
@@ -496,6 +688,11 @@ function renderizarFormularioRapido(container, appInstance) {
 
   // 🔥 CORRIGIDO: Registrar função global para obter data/hora local
   window._obterDataHoraLocalInput = obterDataHoraLocalInput;
+
+  window._novaOcorrenciaSelecionarAcompanhante = (id) =>
+    selecionarGuardaAcompanhante(id, container, appInstance);
+  window._novaOcorrenciaRemoverAcompanhante = () =>
+    removerGuardaAcompanhante(container, appInstance);
 
   window._novaOcorrenciaProcessarAnexosRapido = (files) => {
     processarAnexosRapido(files, container, appInstance);
@@ -534,13 +731,19 @@ async function finalizarRapido(container, appInstance) {
     return;
   }
 
+  salvarDadosEtapa();
+  if (!equipeTemMinima(estado.dados.guardasParticipantes)) {
+    appInstance.showToast("Selecione o guarda acompanhante antes de finalizar", "warning");
+    renderizarFormularioRapido(container, appInstance);
+    return;
+  }
+
   const confirmado = await appInstance.confirmar(
     "Deseja finalizar este BO Rápido?\n\nVocê poderá completá-lo depois com mais informações.",
   );
   if (!confirmado) return;
 
   // 🔥 CORRIGIDO: Data/hora de finalização SEM ajuste de fuso
-  // ✅ Usar data do dispositivo SEM ajuste, construindo a string manualmente
   const agora = new Date();
   const year = agora.getFullYear();
   const month = String(agora.getMonth() + 1).padStart(2, "0");
@@ -560,6 +763,7 @@ async function finalizarRapido(container, appInstance) {
     modo_criacao: MODE_RAPIDO,
     status: navigator.onLine ? "synced" : "pending_sync",
     data_hora_finalizacao: dataFinalizacao,
+    guardasParticipantes: estado.dados.guardasParticipantes || [],
   };
 
   const localizacao = await appInstance.obterLocalizacao();
@@ -580,6 +784,15 @@ async function finalizarRapido(container, appInstance) {
 
   if (!result.success) {
     appInstance.showToast("Erro ao salvar: " + result.error, "error");
+    return;
+  }
+
+  const guardasResult = await ocorrenciaManager.salvarGuardas(
+    result.data.id,
+    estado.dados.guardasParticipantes || [],
+  );
+  if (!guardasResult.success) {
+    appInstance.showToast("BO criado, mas a equipe não foi salva: " + guardasResult.error, "warning");
     return;
   }
 
@@ -606,11 +819,8 @@ async function finalizarRapido(container, appInstance) {
 
 async function processarAnexosRapido(files, container, appInstance) {
   const anexos = estado.dados.anexos || [];
-  // 🔥 ALTERADO: Removido limite MAX_ANEXOS
 
   for (const file of files) {
-    // 🔥 ALTERADO: Removida verificação de limite
-
     if (!file.type.startsWith("image/")) {
       appInstance.showToast("Apenas imagens são permitidas", "warning");
       continue;
@@ -644,7 +854,7 @@ async function processarAnexosRapido(files, container, appInstance) {
 }
 
 // ============================================
-// RENDERIZAR FORMULÁRIO COMPLETO (ORIGINAL MELHORADO)
+// RENDERIZAR FORMULÁRIO COMPLETO (7 ETAPAS)
 // ============================================
 
 function renderizarFormularioCompleto(container, appInstance) {
@@ -662,7 +872,7 @@ function renderizarFormularioCompleto(container, appInstance) {
             <i class="fas fa-file-alt" style="margin-right:8px;"></i>
             Nova Ocorrência - Modo Completo
           </h2>
-          <p style="color:var(--cinza-medio);font-size:12px;margin:0;">Preencha todos os dados da ocorrência</p>
+          <p style="color:var(--cinza-medio);font-size:12px;margin:0;">Preencha todos os dados da ocorrência (7 etapas)</p>
         </div>
         <button onclick="window._novaOcorrenciaVoltarModos()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
           <i class="fas fa-arrow-left"></i> Voltar
@@ -723,11 +933,18 @@ function renderizarFormularioCompleto(container, appInstance) {
     }, 300);
   }
 
-  // 🔥 NOVO: Inicializar canvas de assinatura se estiver na etapa 5
-  if (etapa === 5) {
+  // 🔥 NOVO: Inicializar canvas de assinatura se estiver na etapa 6
+  if (etapa === 6) {
     setTimeout(() => {
       inicializarCanvasAssinatura(appInstance);
     }, 500);
+  }
+
+  // 🔥 NOVO: Atualizar dropdown de envolvidos na etapa 6
+  if (etapa === 6) {
+    setTimeout(() => {
+      atualizarDropdownEnvolvidos();
+    }, 300);
   }
 
   window._novaOcorrenciaProxima = () => proximaEtapa(container, appInstance);
@@ -737,6 +954,10 @@ function renderizarFormularioCompleto(container, appInstance) {
   window._novaOcorrenciaSalvarRascunho = () => appInstance.salvarRascunho();
   window._novaOcorrenciaAplicarModelo = (tipo) =>
     aplicarModeloOcorrencia(tipo, container, appInstance);
+  window._novaOcorrenciaSelecionarAcompanhante = (id) =>
+    selecionarGuardaAcompanhante(id, container, appInstance);
+  window._novaOcorrenciaRemoverAcompanhante = () =>
+    removerGuardaAcompanhante(container, appInstance);
   window._novaOcorrenciaAdicionarEnvolvido = () =>
     adicionarEnvolvido(appInstance);
   window._novaOcorrenciaRemoverEnvolvido = (index) =>
@@ -750,8 +971,10 @@ function renderizarFormularioCompleto(container, appInstance) {
     adicionarAssinatura(appInstance);
   window._novaOcorrenciaRemoverAssinatura = (tipo) =>
     removerAssinatura(tipo, appInstance);
-  window._novaOcorrenciaLimparAssinatura = () =>
-    limparAssinatura(appInstance);
+  window._novaOcorrenciaLimparAssinatura = () => limparAssinatura(appInstance);
+  // 🔥 NOVO: Função para selecionar envolvido na assinatura
+  window._novaOcorrenciaSelecionarEnvolvido = () =>
+    selecionarEnvolvidoParaAssinatura(appInstance);
 }
 
 // ============================================
@@ -782,8 +1005,9 @@ function getEtapaTitulo(etapa) {
     2: "Dados da Ocorrência",
     3: "Qualificação dos Envolvidos",
     4: "Observações e Relato dos Fatos",
-    5: "Anexos e Assinaturas",
-    6: "Revisão e Finalização",
+    5: "Anexos (Fotos e Documentos)",
+    6: "Assinaturas",
+    7: "Revisão e Finalização",
   };
   return titulos[etapa] || "";
 }
@@ -792,10 +1016,11 @@ function getEtapaSubtitulo(etapa) {
   const subtitulos = {
     1: "Informe como a solicitação chegou até você",
     2: "Preencha os dados principais da ocorrência",
-    3: "Cadastre os envolvidos (autores, vítimas, testemunhas)",
+    3: "Cadastre os envolvidos (autores, vítimas, testemunhas, solicitante)",
     4: "Descreva detalhadamente o ocorrido",
-    5: "Adicione fotos, documentos e assinaturas (ilimitado)",
-    6: "Revise todos os dados antes de finalizar",
+    5: "Adicione fotos, vídeos ou documentos (ilimitado)",
+    6: "Selecione um envolvido e colete a assinatura digital",
+    7: "Revise todos os dados e informe o encerramento",
   };
   return subtitulos[etapa] || "";
 }
@@ -843,8 +1068,8 @@ function renderModelosOcorrencia(appInstance) {
         ${Object.keys(MODELOS_OCORRENCIA)
           .map(
             (key) => `
-          <button onclick="window._novaOcorrenciaAplicarModelo('${key}')" 
-            class="btn-secondary" 
+          <button onclick="window._novaOcorrenciaAplicarModelo('${key}')"
+            class="btn-secondary"
             style="padding:4px 10px;font-size:10px;min-height:auto;width:auto;border-radius:20px;background:${estado.modeloSelecionado === key ? "var(--azul-bandeira)" : "var(--branco)"};color:${estado.modeloSelecionado === key ? "var(--branco)" : "var(--cinza-escuro)"};">
             ${MODELOS_OCORRENCIA[key].titulo}
           </button>
@@ -894,13 +1119,15 @@ function renderEtapaForm(etapa, dados, appInstance) {
       return renderEtapa5(dados, appInstance);
     case 6:
       return renderEtapa6(dados, appInstance);
+    case 7:
+      return renderEtapa7(dados, appInstance);
     default:
       return "<p>Etapa não encontrada</p>";
   }
 }
 
 // ============================================
-// ETAPA 1 - ORIGEM DA SOLICITAÇÃO
+// ETAPA 1 - ORIGEM DA SOLICITAÇÃO (MANTIDO)
 // ============================================
 
 function renderEtapa1(dados) {
@@ -979,13 +1206,11 @@ function renderEtapa1(dados) {
 }
 
 // ============================================
-// ETAPA 2 - DADOS DA OCORRÊNCIA
+// ETAPA 2 - DADOS DA OCORRÊNCIA (SEM ENCERRAMENTO)
 // ============================================
 
 function renderEtapa2(dados, appInstance) {
-  // 🔥 CORRIGIDO: Usar a função auxiliar que retorna o horário LOCAL do dispositivo
   const dataHoraAtual = obterDataHoraLocalInput();
-
   let dataInicio = dados.data_hora_inicio || dataHoraAtual;
 
   return `
@@ -1046,33 +1271,24 @@ function renderEtapa2(dados, appInstance) {
         </button>
       </div>
     </div>
-    <div class="form-group">
-      <label for="data_hora_encerramento"><i class="fas fa-calendar-check" style="margin-right:6px;color:var(--azul-bandeira);"></i>Data e hora do encerramento</label>
-      <div style="display:flex;gap:8px;">
-        <div style="flex:1;position:relative;">
-          <i class="fas fa-calendar-check input-icon-left" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:14px;z-index:2;"></i>
-          <input type="datetime-local" id="data_hora_encerramento" class="form-control" value="${dados.data_hora_encerramento || ""}" style="min-height:44px;padding-left:36px;">
-        </div>
-        <button type="button" onclick="document.getElementById('data_hora_encerramento').value = window._obterDataHoraLocalInput()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
-          <i class="fas fa-clock"></i> Agora
-        </button>
-      </div>
-    </div>
+    <!-- 🔥 REMOVIDO: Data/Hora Encerramento (movido para etapa 7) -->
   `;
 }
 
 // ============================================
-// ETAPA 3 - ENVOLVIDOS
+// ETAPA 3 - ENVOLVIDOS (MANTIDO)
 // ============================================
 
 function renderEtapa3(dados, appInstance) {
   const envolvidos = dados.envolvidos || [];
 
   let html = `
+    ${renderEquipeGuardas(dados)}
     <div style="margin-bottom:16px;">
       <p style="color:var(--cinza-medio);font-size:14px;">
         <i class="fas fa-info-circle" style="margin-right:4px;"></i>
         Cadastre os envolvidos na ocorrência. Você pode adicionar quantos forem necessários.
+        <strong>Os envolvidos cadastrados aqui poderão assinar digitalmente na etapa 6.</strong>
       </p>
     </div>
     <div id="listaEnvolvidos">
@@ -1121,7 +1337,7 @@ function renderEtapa3(dados, appInstance) {
 }
 
 // ============================================
-// ETAPA 4 - OBSERVAÇÕES
+// ETAPA 4 - OBSERVAÇÕES (MANTIDO)
 // ============================================
 
 function renderEtapa4(dados, appInstance) {
@@ -1144,32 +1360,22 @@ function renderEtapa4(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 ALTERADO E CORRIGIDO: ETAPA 5 - ANEXOS E ASSINATURAS (SEM LIMITE)
+// 🔥 ETAPA 5 - ANEXOS (SEPARADO DAS ASSINATURAS)
 // ============================================
 
 function renderEtapa5(dados, appInstance) {
   const anexos = dados.anexos || [];
-  const assinaturas = dados.assinaturas || [];
 
-  // Mapear quais tipos já têm assinatura
-  const tiposAssinados = {};
-  assinaturas.forEach((ass) => {
-    tiposAssinados[ass.tipo] = true;
-  });
-
-  let html = `
+  return `
     <div style="margin-bottom:16px;">
       <p style="color:var(--cinza-medio);font-size:14px;">
         <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-        Adicione fotos, documentos e assinaturas como evidência.
+        Adicione fotos, vídeos ou documentos como evidência.
         <strong>Sem limite de quantidade.</strong>
       </p>
     </div>
 
-    <!-- ========================================== -->
-    <!-- SEÇÃO: ANEXOS REAIS (Fotos e Documentos)    -->
-    <!-- ========================================== -->
-    <div style="margin-bottom:20px;">
+    <div style="margin-bottom:16px;">
       <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
         <i class="fas fa-camera"></i> Fotos e Documentos (${anexos.length})
       </h4>
@@ -1201,88 +1407,143 @@ function renderEtapa5(dados, appInstance) {
         <i class="fas fa-plus-circle"></i> Adicionar Anexos
       </button>
     </div>
+  `;
+}
 
-    <!-- ========================================== -->
-    <!-- SEÇÃO: ASSINATURAS                          -->
-    <!-- ========================================== -->
-    <div style="margin-top:20px;border-top:2px solid var(--cinza-claro);padding-top:16px;">
-      <h4 style="font-size:14px;color:var(--azul-bandeira);margin:0 0 8px 0;">
-        <i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})
-      </h4>
-      <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
-        Colete a assinatura dos envolvidos diretamente na tela do celular.
-        As assinaturas são armazenadas separadamente e NÃO aparecem na galeria de anexos.
+// ============================================
+// 🔥 NOVA ETAPA 6 - ASSINATURAS (INTEGRADA COM ENVOLVIDOS)
+// ============================================
+
+function renderEtapa6(dados, appInstance) {
+  const assinaturas = dados.assinaturas || [];
+  const envolvidos = dados.envolvidos || [];
+
+  // Mapear quais envolvidos já assinaram
+  const envolvidosAssinados = {};
+  assinaturas.forEach((ass) => {
+    if (ass.envolvido_id) {
+      envolvidosAssinados[ass.envolvido_id] = true;
+    }
+  });
+
+  // Construir opções do dropdown
+  let opcoesDropdown = `<option value="">-- Selecione um envolvido --</option>`;
+  if (envolvidos.length === 0) {
+    opcoesDropdown = `
+      <option value="">-- Nenhum envolvido cadastrado --</option>
+    `;
+  } else {
+    envolvidos.forEach((env) => {
+      const jaAssinou = envolvidosAssinados[env.id] ? " ✅" : "";
+      const disabled = jaAssinou ? "disabled" : "";
+      opcoesDropdown += `
+        <option value="${env.id}" ${disabled}>
+          ${env.nome_completo} (${getTipoEnvolvidoLabel(env.tipo)})${jaAssinou}
+        </option>
+      `;
+    });
+  }
+
+  let html = `
+    <div style="margin-bottom:16px;">
+      <p style="color:var(--cinza-medio);font-size:14px;">
+        <i class="fas fa-info-circle" style="margin-right:4px;"></i>
+        Selecione um envolvido cadastrado na etapa 3 e colete a assinatura digital.
       </p>
+    </div>
 
-      <!-- Formulário para adicionar assinatura -->
-      <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:14px;margin-bottom:12px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-          <div class="form-group" style="margin-bottom:0;">
-            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Papel *</label>
-            <select id="assinatura_tipo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
-              <option value="">Selecione...</option>
-              ${TIPOS_ASSINATURA.map(
-                (op) => `
-                <option value="${op.value}" ${tiposAssinados[op.value] ? "disabled" : ""}>
-                  ${op.label} ${tiposAssinados[op.value] ? "✅" : ""}
-                </option>
-              `,
-              ).join("")}
-            </select>
-          </div>
-          <div class="form-group" style="margin-bottom:0;">
-            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Nome *</label>
-            <input type="text" id="assinatura_nome" placeholder="Nome completo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-          <div class="form-group" style="margin-bottom:0;">
-            <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">CPF</label>
-            <input type="text" id="assinatura_cpf" placeholder="123.456.789-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;min-height:36px;">
-          </div>
-        </div>
+    <div id="avisoSemEnvolvidos" style="display:${envolvidos.length === 0 ? "block" : "none"};padding:16px;background:#fef3c7;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:12px;">
+      <i class="fas fa-exclamation-triangle" style="color:var(--aviso);margin-right:8px;"></i>
+      <strong>Nenhum envolvido cadastrado!</strong>
+      <p style="margin:4px 0 0 0;font-size:13px;">Para coletar assinaturas, você precisa cadastrar os envolvidos na <strong>Etapa 3</strong>.</p>
+      <button onclick="window._novaOcorrenciaAnterior()" class="btn-secondary" style="margin-top:8px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+        <i class="fas fa-arrow-left"></i> Voltar para Etapa 3
+      </button>
+    </div>
 
-        <!-- Canvas para assinatura -->
-        <div style="margin-top:8px;">
-          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">Assinatura *</label>
-          <div style="border:2px solid var(--cinza-claro);border-radius:8px;overflow:hidden;background:white;touch-action:none;">
-            <canvas id="canvasAssinatura" width="400" height="150" style="width:100%;height:150px;touch-action:none;cursor:crosshair;"></canvas>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:6px;">
-            <button type="button" onclick="window._novaOcorrenciaLimparAssinatura()" class="btn-secondary" style="flex:1;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
-              <i class="fas fa-undo"></i> Limpar
-            </button>
-            <button type="button" onclick="window._novaOcorrenciaAdicionarAssinatura()" class="btn-primary" style="flex:2;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
-              <i class="fas fa-save"></i> Adicionar Assinatura
-            </button>
-          </div>
+    <div id="formAssinaturaWrapper" style="display:${envolvidos.length > 0 ? "block" : "none"};">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">
+          <i class="fas fa-user"></i> Selecione o Envolvido <span class="required">*</span>
+        </label>
+        <select id="selectEnvolvidoAssinatura" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;background:var(--branco);"
+          onchange="window._novaOcorrenciaSelecionarEnvolvido()">
+          ${opcoesDropdown}
+        </select>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Nome</label>
+          <input type="text" id="assinaturaNomeAuto" readonly disabled
+            style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;background:var(--branco-fumaca);color:var(--cinza-escuro);min-height:36px;"
+            placeholder="Selecione um envolvido">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">CPF</label>
+          <input type="text" id="assinaturaCpfAuto" readonly disabled
+            style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;background:var(--branco-fumaca);color:var(--cinza-escuro);min-height:36px;"
+            placeholder="Selecione um envolvido">
         </div>
       </div>
 
-      <!-- Lista de assinaturas salvas -->
+      <div style="margin-top:8px;">
+        <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">Assinatura Digital *</label>
+        <div style="border:2px solid var(--cinza-claro);border-radius:8px;overflow:hidden;background:white;touch-action:none;">
+          <canvas id="canvasAssinatura" width="400" height="150" style="width:100%;height:150px;touch-action:none;cursor:crosshair;"></canvas>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button type="button" onclick="window._novaOcorrenciaLimparAssinatura()" class="btn-secondary" style="flex:1;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
+            <i class="fas fa-undo"></i> Limpar
+          </button>
+          <button type="button" onclick="window._novaOcorrenciaAdicionarAssinatura()" class="btn-primary" style="flex:2;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
+            <i class="fas fa-save"></i> Atribuir Assinatura
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lista de assinaturas já coletadas -->
+    <div style="margin-top:16px;border-top:1px solid var(--cinza-claro);padding-top:12px;">
+      <h4 style="font-size:13px;color:var(--azul-bandeira);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
+        <i class="fas fa-list"></i> Assinaturas Coletadas (${assinaturas.length})
+      </h4>
       <div id="listaAssinaturas">
         ${
           assinaturas.length === 0
             ? `<div style="text-align:center;padding:16px;color:var(--cinza-medio);font-size:13px;background:var(--branco);border-radius:var(--border-radius);border:1px dashed var(--cinza-claro);">
                 <i class="fas fa-pen" style="font-size:24px;display:block;margin-bottom:4px;opacity:0.3;"></i>
-                Nenhuma assinatura adicionada
+                Nenhuma assinatura coletada ainda
                </div>`
             : assinaturas
-                .map(
-                  (ass, index) => `
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--branco);border-radius:var(--border-radius);border:1px solid var(--cinza-claro);margin-bottom:4px;">
-              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
-              <span style="font-weight:600;font-size:12px;flex:1;">${ass.nome}</span>
-              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
-              <span style="font-size:9px;color:var(--cinza-medio);">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-              <button type="button" onclick="window._novaOcorrenciaRemoverAssinatura('${ass.tipo}')" class="remove-btn" style="background:none;border:none;color:var(--erro);cursor:pointer;padding:2px 6px;font-size:14px;">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-          `,
-                )
+                .map((ass) => {
+                  const papelLabel =
+                    getTipoAssinaturaLabel(ass.tipo) || ass.tipo;
+                  const dataAss = ass.assinado_em
+                    ? new Date(ass.assinado_em).toLocaleString("pt-BR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "";
+                  return `
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--verde-muito-claro);border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:4px;">
+                      <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
+                      <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
+                      <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${papelLabel}</span>
+                      ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
+                      <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${dataAss}</span>
+                      <button type="button" onclick="window._novaOcorrenciaRemoverAssinatura('${ass.tipo}')" class="remove-btn" style="background:none;border:none;color:var(--erro);cursor:pointer;padding:2px 6px;font-size:14px;">
+                        <i class="fas fa-times"></i>
+                      </button>
+                    </div>
+                  `;
+                })
                 .join("")
         }
+      </div>
+      <div style="margin-top:6px;font-size:11px;color:var(--cinza-medio);">
+        <i class="fas fa-info-circle"></i>
+        Cada envolvido pode assinar apenas uma vez. Para substituir, remova a assinatura atual.
       </div>
     </div>
   `;
@@ -1291,8 +1552,223 @@ function renderEtapa5(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 NOVO: FUNÇÕES PARA ASSINATURA
+// 🔥 ETAPA 7 - REVISÃO E FINALIZAÇÃO (COM ENCERRAMENTO)
 // ============================================
+
+function renderEtapa7(dados, appInstance) {
+  const envolvidos = dados.envolvidos || [];
+  const anexos = dados.anexos || [];
+  const assinaturas = dados.assinaturas || [];
+
+  // 🔥 NOVO: Data/hora encerramento com valor atual ou do dispositivo
+  const dataEncerramentoAtual =
+    dados.data_hora_encerramento || obterDataHoraLocalInput();
+
+  const camposSolicitantePreenchidos = [
+    { label: "Forma", valor: dados.forma_solicitacao },
+    { label: "Solicitante", valor: dados.nome_solicitante },
+    { label: "CPF do Solicitante", valor: dados.cpf_solicitante },
+    { label: "RG do Solicitante", valor: dados.rg_solicitante },
+    { label: "Telefone", valor: dados.telefone_solicitante },
+    { label: "Endereço", valor: dados.endereco_solicitante },
+    { label: "Código Municipal", valor: dados.codigo_municipal },
+    { label: "Complemento", valor: dados.complemento },
+    { label: "Bairro", valor: dados.bairro_solicitante },
+    { label: "Identificação Adicional", valor: dados.identificacao_adicional },
+  ].filter((c) => c.valor && c.valor.toString().trim() !== "");
+
+  const camposOcorrencia = [
+    {
+      label: "Tipo",
+      valor: dados.tipo_ocorrencia ? getTipoLabel(dados.tipo_ocorrencia) : null,
+    },
+    { label: "Local", valor: dados.local_ocorrencia },
+    { label: "Rodovia", valor: dados.rodovia },
+    { label: "Bairro", valor: dados.bairro_ocorrencia },
+    { label: "Referência", valor: dados.referencia },
+    { label: "Código Operacional", valor: dados.codigo_operacional },
+  ].filter((c) => c.valor && c.valor.toString().trim() !== "");
+
+  const dataFinalizacao = dados.data_hora_finalizacao
+    ? formatarDataHoraLocal(dados.data_hora_finalizacao)
+    : "Será preenchida automaticamente na finalização";
+
+  return `
+    <div style="margin-bottom:16px;">
+      <p style="color:var(--cinza-medio);font-size:14px;">
+        <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
+        Revise todos os dados antes de finalizar a ocorrência.
+      </p>
+    </div>
+
+    ${
+      camposSolicitantePreenchidos.length > 0
+        ? `
+      <div class="card-revisao">
+        <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
+        ${camposSolicitantePreenchidos.map((c) => `<div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>`).join("")}
+      </div>
+    `
+        : ""
+    }
+
+    ${
+      camposOcorrencia.length > 0 || dados.data_hora_inicio
+        ? `
+      <div class="card-revisao">
+        <h4><i class="fas fa-map-marker-alt"></i> Dados da Ocorrência</h4>
+        ${camposOcorrencia.map((c) => `<div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>`).join("")}
+        <div class="campo"><span class="rotulo">Início:</span><span class="valor">${dados.data_hora_inicio ? formatarDataHoraLocal(dados.data_hora_inicio) : "Não informado"}</span></div>
+        <!-- 🔥 NOVO: Data/Hora Encerramento na revisão -->
+        <div class="campo" style="background:var(--azul-muito-claro);padding:6px 10px;border-radius:4px;border-left:3px solid var(--azul-bandeira);">
+          <span class="rotulo" style="color:var(--azul-bandeira);">📌 Data/Hora Encerramento:</span>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;">
+            <input type="datetime-local" id="revisao_data_hora_encerramento"
+              value="${dataEncerramentoAtual}"
+              style="flex:1;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;">
+            <button type="button" onclick="document.getElementById('revisao_data_hora_encerramento').value = window._obterDataHoraLocalInput()"
+              class="btn-secondary" style="padding:4px 10px;font-size:11px;min-height:auto;width:auto;border-radius:6px;white-space:nowrap;">
+              <i class="fas fa-clock"></i> Agora
+            </button>
+          </div>
+        </div>
+        <div class="campo" style="background:var(--verde-muito-claro);padding:4px 8px;border-radius:4px;">
+          <span class="rotulo" style="color:var(--verde-escuro);">✅ Finalização:</span>
+          <span class="valor" style="font-weight:500;">${dataFinalizacao}</span>
+        </div>
+      </div>
+    `
+        : ""
+    }
+
+    <div class="card-revisao">
+      <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
+      ${
+        envolvidos.length === 0
+          ? `<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>`
+          : envolvidos
+              .map(
+                (env) =>
+                  `<div class="envolvido-item"><span class="badge badge-azul" style="font-size:10px;">${getTipoEnvolvidoLabel(env.tipo)}</span> <strong>${env.nome_completo}</strong> ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - ${env.cpf}</span>` : ""}</div>`,
+              )
+              .join("")
+      }
+    </div>
+
+    ${
+      dados.observacoes && dados.observacoes.trim() !== ""
+        ? `
+      <div class="card-revisao">
+        <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
+        <p style="font-size:14px;white-space:pre-wrap;">${dados.observacoes}</p>
+      </div>
+    `
+        : ""
+    }
+
+    <div class="card-revisao">
+      <h4><i class="fas fa-paperclip"></i> Anexos</h4>
+      <div style="font-size:13px;">
+        <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s) (ilimitado)</div>
+        ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
+      </div>
+    </div>
+
+    <div class="card-revisao">
+      <h4><i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})</h4>
+      ${
+        assinaturas.length === 0
+          ? `<p style="color:var(--cinza-medio);font-size:13px;">Nenhuma assinatura coletada</p>`
+          : assinaturas
+              .map(
+                (ass) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
+              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
+              <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
+              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
+              <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          `,
+              )
+              .join("")
+      }
+    </div>
+
+    <div class="alert-finalizar">
+      <p><i class="fas fa-info-circle"></i> Ao finalizar, a ocorrência será numerada e não poderá mais ser editada.</p>
+      <p style="font-size:12px;margin-top:4px;color:var(--cinza-medio);">
+        <i class="fas fa-clock"></i> A data/hora de finalização será registrada automaticamente.
+      </p>
+      <p style="font-size:12px;margin-top:2px;color:var(--cinza-medio);">
+        <i class="fas fa-calendar-check"></i> A data/hora de encerramento foi preenchida acima.
+      </p>
+    </div>
+  `;
+}
+
+// ============================================
+// 🔥 NOVO: FUNÇÕES PARA ASSINATURA INTEGRADA
+// ============================================
+
+/**
+ * Atualiza o dropdown de envolvidos na etapa de assinaturas
+ */
+function atualizarDropdownEnvolvidos() {
+  const select = document.getElementById("selectEnvolvidoAssinatura");
+  if (!select) return;
+
+  const envolvidos = estado.dados.envolvidos || [];
+  const assinaturas = estado.dados.assinaturas || [];
+
+  // Mapear quais envolvidos já assinaram
+  const envolvidosAssinados = {};
+  assinaturas.forEach((ass) => {
+    if (ass.envolvido_id) {
+      envolvidosAssinados[ass.envolvido_id] = true;
+    }
+  });
+
+  let opcoes = `<option value="">-- Selecione um envolvido --</option>`;
+  if (envolvidos.length === 0) {
+    opcoes = `<option value="">-- Nenhum envolvido cadastrado --</option>`;
+  } else {
+    envolvidos.forEach((env) => {
+      const jaAssinou = envolvidosAssinados[env.id] ? " ✅" : "";
+      const disabled = jaAssinou ? "disabled" : "";
+      opcoes += `
+        <option value="${env.id}" ${disabled}>
+          ${env.nome_completo} (${getTipoEnvolvidoLabel(env.tipo)})${jaAssinou}
+        </option>
+      `;
+    });
+  }
+
+  select.innerHTML = opcoes;
+}
+
+/**
+ * Seleciona um envolvido para assinatura (auto-preenchimento)
+ */
+function selecionarEnvolvidoParaAssinatura(appInstance) {
+  const select = document.getElementById("selectEnvolvidoAssinatura");
+  if (!select) return;
+
+  const envolvidoId = select.value;
+  if (!envolvidoId) {
+    document.getElementById("assinaturaNomeAuto").value = "";
+    document.getElementById("assinaturaCpfAuto").value = "";
+    estado.envolvidoSelecionado = null;
+    return;
+  }
+
+  const envolvido = estado.dados.envolvidos.find((e) => e.id === envolvidoId);
+  if (!envolvido) return;
+
+  estado.envolvidoSelecionado = envolvido;
+  document.getElementById("assinaturaNomeAuto").value =
+    envolvido.nome_completo || "";
+  document.getElementById("assinaturaCpfAuto").value = envolvido.cpf || "";
+}
 
 /**
  * Inicializa o canvas para captura de assinatura
@@ -1361,40 +1837,52 @@ function inicializarCanvasAssinatura(appInstance) {
   });
 
   // Eventos para touch
-  canvas.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    estado.isDrawing = true;
-    estado.lastX = (touch.clientX - rect.left) * scaleX;
-    estado.lastY = (touch.clientY - rect.top) * scaleY;
-  }, { passive: false });
+  canvas.addEventListener(
+    "touchstart",
+    (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      estado.isDrawing = true;
+      estado.lastX = (touch.clientX - rect.left) * scaleX;
+      estado.lastY = (touch.clientY - rect.top) * scaleY;
+    },
+    { passive: false },
+  );
 
-  canvas.addEventListener("touchmove", (e) => {
-    e.preventDefault();
-    if (!estado.isDrawing) return;
-    const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (touch.clientX - rect.left) * scaleX;
-    const y = (touch.clientY - rect.top) * scaleY;
+  canvas.addEventListener(
+    "touchmove",
+    (e) => {
+      e.preventDefault();
+      if (!estado.isDrawing) return;
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (touch.clientX - rect.left) * scaleX;
+      const y = (touch.clientY - rect.top) * scaleY;
 
-    ctx.beginPath();
-    ctx.moveTo(estado.lastX, estado.lastY);
-    ctx.lineTo(x, y);
-    ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(estado.lastX, estado.lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
 
-    estado.lastX = x;
-    estado.lastY = y;
-  }, { passive: false });
+      estado.lastX = x;
+      estado.lastY = y;
+    },
+    { passive: false },
+  );
 
-  canvas.addEventListener("touchend", (e) => {
-    e.preventDefault();
-    estado.isDrawing = false;
-  }, { passive: false });
+  canvas.addEventListener(
+    "touchend",
+    (e) => {
+      e.preventDefault();
+      estado.isDrawing = false;
+    },
+    { passive: false },
+  );
 
   console.log("✅ Canvas de assinatura inicializado");
 }
@@ -1427,7 +1915,7 @@ function limparAssinatura(appInstance) {
 }
 
 /**
- * Adiciona uma assinatura à ocorrência
+ * 🔥 NOVO: Adiciona uma assinatura vinculada ao envolvido selecionado
  */
 async function adicionarAssinatura(appInstance) {
   const canvas = document.getElementById("canvasAssinatura");
@@ -1436,18 +1924,26 @@ async function adicionarAssinatura(appInstance) {
     return;
   }
 
-  const tipo = document.getElementById("assinatura_tipo")?.value;
-  const nome = document.getElementById("assinatura_nome")?.value?.trim();
-  const cpf = document.getElementById("assinatura_cpf")?.value?.trim();
-
-  if (!tipo) {
-    appInstance.showToast("Selecione o papel do signatário", "warning");
+  const envolvido = estado.envolvidoSelecionado;
+  if (!envolvido) {
+    appInstance.showToast("Selecione um envolvido primeiro", "warning");
     return;
   }
 
-  if (!nome) {
-    appInstance.showToast("Informe o nome do signatário", "warning");
-    return;
+  // Verificar se este envolvido já assinou
+  const assinaturaExistente = estado.dados.assinaturas.find(
+    (a) => a.envolvido_id === envolvido.id,
+  );
+
+  if (assinaturaExistente) {
+    const confirmado = await appInstance.confirmar(
+      `"${envolvido.nome_completo}" já assinou. Deseja substituir a assinatura?`,
+    );
+    if (!confirmado) return;
+    // Remover assinatura existente
+    estado.dados.assinaturas = estado.dados.assinaturas.filter(
+      (a) => a.envolvido_id !== envolvido.id,
+    );
   }
 
   // Verificar se a assinatura está vazia
@@ -1467,31 +1963,16 @@ async function adicionarAssinatura(appInstance) {
     return;
   }
 
-  // 🔥 CORRIGIDO: Verificar se já existe assinatura para este tipo
-  const assinaturaExistente = estado.dados.assinaturas.find(
-    (a) => a.tipo === tipo
-  );
-
-  if (assinaturaExistente) {
-    const confirmado = await appInstance.confirmar(
-      `Já existe uma assinatura para "${getTipoAssinaturaLabel(tipo)}". Deseja substituir?`,
-    );
-    if (!confirmado) return;
-    // Remover assinatura existente
-    estado.dados.assinaturas = estado.dados.assinaturas.filter(
-      (a) => a.tipo !== tipo,
-    );
-  }
-
   // Capturar a assinatura do canvas
   const assinaturaDataUrl = canvas.toDataURL("image/png");
 
-  // Criar objeto da assinatura
+  // Criar objeto da assinatura com vínculo ao envolvido
   const assinatura = {
     id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
-    tipo: tipo,
-    nome: nome,
-    cpf: cpf || null,
+    envolvido_id: envolvido.id,
+    tipo: envolvido.tipo,
+    nome: envolvido.nome_completo,
+    cpf: envolvido.cpf || null,
     assinatura_data_url: assinaturaDataUrl,
     assinado_em: new Date().toISOString(),
     assinado_por: authManager.getUserId(),
@@ -1505,10 +1986,12 @@ async function adicionarAssinatura(appInstance) {
   // Limpar canvas
   limparAssinatura(appInstance);
 
-  // Limpar campos
-  document.getElementById("assinatura_tipo").value = "";
-  document.getElementById("assinatura_nome").value = "";
-  document.getElementById("assinatura_cpf").value = "";
+  // Limpar seleção
+  const select = document.getElementById("selectEnvolvidoAssinatura");
+  if (select) select.value = "";
+  document.getElementById("assinaturaNomeAuto").value = "";
+  document.getElementById("assinaturaCpfAuto").value = "";
+  estado.envolvidoSelecionado = null;
 
   // Re-renderizar a etapa
   const container = document.getElementById("page-nova-ocorrencia");
@@ -1516,7 +1999,10 @@ async function adicionarAssinatura(appInstance) {
     renderizarFormularioCompleto(container, appInstance);
   }
 
-  appInstance.showToast("Assinatura adicionada com sucesso!", "success");
+  appInstance.showToast(
+    `Assinatura de ${envolvido.nome_completo} coletada!`,
+    "success",
+  );
 }
 
 /**
@@ -1524,6 +2010,14 @@ async function adicionarAssinatura(appInstance) {
  */
 function removerAssinatura(tipo, appInstance) {
   if (!tipo) return;
+
+  const assinatura = estado.dados.assinaturas.find((a) => a.tipo === tipo);
+  if (!assinatura) return;
+
+  const confirmado = appInstance.confirmar(
+    `Remover assinatura de ${assinatura.nome}?`,
+  );
+  if (!confirmado) return;
 
   estado.dados.assinaturas = estado.dados.assinaturas.filter(
     (a) => a.tipo !== tipo,
@@ -1535,10 +2029,7 @@ function removerAssinatura(tipo, appInstance) {
     renderizarFormularioCompleto(container, appInstance);
   }
 
-  appInstance.showToast(
-    `Assinatura de ${getTipoAssinaturaLabel(tipo)} removida`,
-    "info",
-  );
+  appInstance.showToast("Assinatura removida", "info");
 }
 
 /**
@@ -1552,145 +2043,6 @@ function getTipoAssinaturaLabel(tipo) {
     solicitante: "Solicitante",
   };
   return tipos[tipo] || tipo;
-}
-
-// ============================================
-// ETAPA 6 - REVISÃO (COM DATA_HORA_FINALIZACAO E ASSINATURAS)
-// ============================================
-
-function renderEtapa6(dados, appInstance) {
-  const envolvidos = dados.envolvidos || [];
-  const anexos = dados.anexos || [];
-  const assinaturas = dados.assinaturas || [];
-  const camposSolicitantePreenchidos = [
-    { label: "Forma", valor: dados.forma_solicitacao },
-    { label: "Solicitante", valor: dados.nome_solicitante },
-    { label: "CPF do Solicitante", valor: dados.cpf_solicitante },
-    { label: "RG do Solicitante", valor: dados.rg_solicitante },
-    { label: "Telefone", valor: dados.telefone_solicitante },
-    { label: "Endereço", valor: dados.endereco_solicitante },
-    { label: "Código Municipal", valor: dados.codigo_municipal },
-    { label: "Complemento", valor: dados.complemento },
-    { label: "Bairro", valor: dados.bairro_solicitante },
-    { label: "Identificação Adicional", valor: dados.identificacao_adicional },
-  ].filter((c) => c.valor && c.valor.toString().trim() !== "");
-
-  const camposOcorrencia = [
-    {
-      label: "Tipo",
-      valor: dados.tipo_ocorrencia ? getTipoLabel(dados.tipo_ocorrencia) : null,
-    },
-    { label: "Local", valor: dados.local_ocorrencia },
-    { label: "Rodovia", valor: dados.rodovia },
-    { label: "Bairro", valor: dados.bairro_ocorrencia },
-    { label: "Referência", valor: dados.referencia },
-    { label: "Código Operacional", valor: dados.codigo_operacional },
-  ].filter((c) => c.valor && c.valor.toString().trim() !== "");
-
-  // 🔥 NOVO: Mostrar data_hora_finalizacao se já estiver definida
-  const dataFinalizacao = dados.data_hora_finalizacao
-    ? formatarDataHoraLocal(dados.data_hora_finalizacao)
-    : "Será preenchida automaticamente na finalização";
-
-  return `
-    <div style="margin-bottom:16px;">
-      <p style="color:var(--cinza-medio);font-size:14px;">
-        <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
-        Revise todos os dados antes de finalizar a ocorrência.
-      </p>
-    </div>
-
-    ${
-      camposSolicitantePreenchidos.length > 0
-        ? `
-      <div class="card-revisao">
-        <h4><i class="fas fa-phone-alt"></i> Origem da Solicitação</h4>
-        ${camposSolicitantePreenchidos.map((c) => `<div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>`).join("")}
-      </div>
-    `
-        : ""
-    }
-
-    ${
-      camposOcorrencia.length > 0 || dados.data_hora_inicio
-        ? `
-      <div class="card-revisao">
-        <h4><i class="fas fa-map-marker-alt"></i> Dados da Ocorrência</h4>
-        ${camposOcorrencia.map((c) => `<div class="campo"><span class="rotulo">${c.label}:</span><span class="valor">${c.valor}</span></div>`).join("")}
-        <div class="campo"><span class="rotulo">Início:</span><span class="valor">${dados.data_hora_inicio ? formatarDataHoraLocal(dados.data_hora_inicio) : "Não informado"}</span></div>
-        ${dados.data_hora_encerramento ? `<div class="campo"><span class="rotulo">Encerramento:</span><span class="valor">${formatarDataHoraLocal(dados.data_hora_encerramento)}</span></div>` : ""}
-        <!-- 🔥 NOVO: Data de finalização -->
-        <div class="campo" style="background:var(--azul-muito-claro);padding:4px 8px;border-radius:4px;">
-          <span class="rotulo" style="color:var(--azul-bandeira);">📌 Finalização:</span>
-          <span class="valor" style="font-weight:500;">${dataFinalizacao}</span>
-        </div>
-      </div>
-    `
-        : ""
-    }
-
-    <div class="card-revisao">
-      <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-      ${
-        envolvidos.length === 0
-          ? `<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>`
-          : envolvidos
-              .map(
-                (env) =>
-                  `<div class="envolvido-item"><span class="badge badge-azul" style="font-size:10px;">${getTipoEnvolvidoLabel(env.tipo)}</span> <strong>${env.nome_completo}</strong> ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - ${env.cpf}</span>` : ""}</div>`,
-              )
-              .join("")
-      }
-    </div>
-
-    ${
-      dados.observacoes && dados.observacoes.trim() !== ""
-        ? `
-      <div class="card-revisao">
-        <h4><i class="fas fa-pencil-alt"></i> Observações</h4>
-        <p style="font-size:14px;white-space:pre-wrap;">${dados.observacoes}</p>
-      </div>
-    `
-        : ""
-    }
-
-    <!-- 🔥 ALTERADO: Anexos reais (sem assinaturas) -->
-    <div class="card-revisao">
-      <h4><i class="fas fa-paperclip"></i> Anexos</h4>
-      <div style="font-size:13px;">
-        <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s) (ilimitado)</div>
-        ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
-      </div>
-    </div>
-
-    <!-- 🔥 NOVO: Assinaturas -->
-    <div class="card-revisao">
-      <h4><i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})</h4>
-      ${
-        assinaturas.length === 0
-          ? `<p style="color:var(--cinza-medio);font-size:13px;">Nenhuma assinatura coletada</p>`
-          : assinaturas
-              .map(
-                (ass) => `
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
-              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
-              <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
-              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
-              <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-            </div>
-          `,
-              )
-              .join("")
-      }
-    </div>
-
-    <div class="alert-finalizar">
-      <p><i class="fas fa-info-circle"></i> Ao finalizar, a ocorrência será numerada e não poderá mais ser editada.</p>
-      <p style="font-size:12px;margin-top:4px;color:var(--cinza-medio);">
-        <i class="fas fa-clock"></i> A data/hora de finalização será registrada automaticamente.
-      </p>
-    </div>
-  `;
 }
 
 // ============================================
@@ -1712,13 +2064,7 @@ function configurarEventosFormulario(appInstance) {
     });
   }
 
-  // 🔥 NOVO: Máscara para CPF da assinatura
-  const assinaturaCpf = document.getElementById("assinatura_cpf");
-  if (assinaturaCpf) {
-    assinaturaCpf.addEventListener("input", function () {
-      this.value = aplicarMascaraCPF(this.value);
-    });
-  }
+  // 🔥 NOVO: Máscara para CPF da assinatura (já é automático do envolvido)
 
   document
     .querySelectorAll(
@@ -1728,6 +2074,16 @@ function configurarEventosFormulario(appInstance) {
       input.addEventListener("change", () => salvarDadosEtapa());
       input.addEventListener("input", () => salvarDadosEtapa());
     });
+
+  // 🔥 NOVO: Salvar data/hora encerramento da etapa 7
+  const encerramentoInput = document.getElementById(
+    "revisao_data_hora_encerramento",
+  );
+  if (encerramentoInput) {
+    encerramentoInput.addEventListener("change", () => {
+      estado.dados.data_hora_encerramento = encerramentoInput.value;
+    });
+  }
 }
 
 // ============================================
@@ -1773,11 +2129,24 @@ function salvarDadosEtapa() {
       dados.referencia = document.getElementById("referencia")?.value || "";
       dados.data_hora_inicio =
         document.getElementById("data_hora_inicio")?.value || "";
-      dados.data_hora_encerramento =
-        document.getElementById("data_hora_encerramento")?.value || "";
       break;
     case 4:
       dados.observacoes = document.getElementById("observacoes")?.value || "";
+      break;
+    case 5:
+      // Anexos já são salvos via estado
+      break;
+    case 6:
+      // Assinaturas já são salvas via estado
+      break;
+    case 7:
+      // Data/hora encerramento é salva via evento change
+      const encerramentoInput = document.getElementById(
+        "revisao_data_hora_encerramento",
+      );
+      if (encerramentoInput) {
+        dados.data_hora_encerramento = encerramentoInput.value;
+      }
       break;
   }
 }
@@ -1841,6 +2210,23 @@ function validarEtapa(appInstance) {
         isValid = false;
       }
       break;
+    case 6:
+      // Não obriga a ter assinaturas, mas avisa se não houver envolvidos
+      if (estado.dados.envolvidos.length === 0) {
+        mensagem = "Cadastre envolvidos na etapa 3 para coletar assinaturas";
+        isValid = false;
+      }
+      break;
+    case 7:
+      // Valida se data/hora encerramento foi preenchida
+      const encerramento = document.getElementById(
+        "revisao_data_hora_encerramento",
+      )?.value;
+      if (!encerramento) {
+        mensagem = "Informe a data e hora de encerramento";
+        isValid = false;
+      }
+      break;
   }
 
   if (!isValid) {
@@ -1850,7 +2236,7 @@ function validarEtapa(appInstance) {
 }
 
 // ============================================
-// ENVOLVIDOS - ADICIONAR
+// ENVOLVIDOS - ADICIONAR (MANTIDO)
 // ============================================
 
 function adicionarEnvolvido(appInstance) {
@@ -1938,6 +2324,7 @@ function adicionarEnvolvido(appInstance) {
     }
 
     const envolvido = {
+      id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
       tipo: tipo,
       nome_completo: nome,
       cpf: document.getElementById("env_cpf")?.value || "",
@@ -1946,6 +2333,8 @@ function adicionarEnvolvido(appInstance) {
     };
 
     estado.dados.envolvidos.push(envolvido);
+    // 🔥 NOVO: Atualizar mapa de envolvidos
+    estado.dados.envolvidosMap[envolvido.id] = envolvido;
     appInstance.alteracoesNaoSalvas = true;
 
     const modal = document.querySelector(".modal-overlay");
@@ -1962,7 +2351,24 @@ function adicionarEnvolvido(appInstance) {
 // ============================================
 
 function removerEnvolvido(index, appInstance) {
+  const envolvido = estado.dados.envolvidos[index];
+  if (!envolvido) return;
+
+  // Verificar se o envolvido já assinou
+  const jaAssinou = estado.dados.assinaturas.some(
+    (a) => a.envolvido_id === envolvido.id,
+  );
+
+  if (jaAssinou) {
+    appInstance.showToast(
+      "Este envolvido já assinou. Remova a assinatura primeiro.",
+      "warning",
+    );
+    return;
+  }
+
   estado.dados.envolvidos.splice(index, 1);
+  delete estado.dados.envolvidosMap[envolvido.id];
   appInstance.alteracoesNaoSalvas = true;
 
   const container = document.getElementById("page-nova-ocorrencia");
@@ -2040,7 +2446,7 @@ function removerAnexo(index, appInstance) {
 }
 
 // ============================================
-// 🔥 CORRIGIDO: FINALIZAR OCORRÊNCIA (COM DATA_HORA_FINALIZACAO E SEM FUSO)
+// 🔥 CORRIGIDO: FINALIZAR OCORRÊNCIA (COM DATA/HORA ENCERRAMENTO DA ETAPA 7)
 // ============================================
 
 async function finalizarOcorrencia(container, appInstance) {
@@ -2086,6 +2492,19 @@ async function finalizarOcorrencia(container, appInstance) {
     return;
   }
 
+  // 🔥 NOVO: Validar data/hora encerramento da etapa 7
+  if (!dados.data_hora_encerramento || dados.data_hora_encerramento === "") {
+    // Preencher automaticamente se estiver vazio
+    dados.data_hora_encerramento = obterDataHoraLocalInput();
+  }
+
+  if (!equipeTemMinima(dados.guardasParticipantes)) {
+    appInstance.showToast("Selecione o guarda acompanhante na Etapa 3", "warning");
+    estado.etapa = 3;
+    renderizarFormularioCompleto(container, appInstance);
+    return;
+  }
+
   if (dados.envolvidos.length === 0) {
     const confirmado = await appInstance.confirmar(
       "Nenhum envolvido cadastrado. Deseja continuar assim?",
@@ -2103,15 +2522,18 @@ async function finalizarOcorrencia(container, appInstance) {
   if (!confirmado) return;
 
   const envolvidos = dados.envolvidos || [];
+  const guardas = dados.guardasParticipantes || [];
   const anexos = dados.anexos || [];
   const assinaturas = dados.assinaturas || [];
 
   const dadosParaSalvar = { ...dados };
+  delete dadosParaSalvar.guardasParticipantes;
   delete dadosParaSalvar.envolvidos;
   delete dadosParaSalvar.anexos;
-  // 🔥 CORRIGIDO: Remover assinaturas_objeto (não existe no banco)
   delete dadosParaSalvar.assinaturas_objeto;
-  // 🔥 Manter assinaturas no objeto
+
+  // 🔥 Garantir que assinaturas seja um array com envolvido_id
+  dadosParaSalvar.assinaturas = assinaturas || [];
 
   // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
   if (dadosParaSalvar.data_hora_inicio) {
@@ -2135,6 +2557,7 @@ async function finalizarOcorrencia(container, appInstance) {
     }
   }
 
+  // 🔥 NOVO: Data/hora encerramento da etapa 7
   if (dadosParaSalvar.data_hora_encerramento) {
     try {
       const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
@@ -2146,8 +2569,6 @@ async function finalizarOcorrencia(container, appInstance) {
         const minutes = String(dateObj.getMinutes()).padStart(2, "0");
         const seconds = String(dateObj.getSeconds()).padStart(2, "0");
         dadosParaSalvar.data_hora_encerramento = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-      } else {
-        dadosParaSalvar.data_hora_encerramento = null;
       }
     } catch (e) {
       dadosParaSalvar.data_hora_encerramento = null;
@@ -2164,9 +2585,6 @@ async function finalizarOcorrencia(container, appInstance) {
   const seconds = String(agora.getSeconds()).padStart(2, "0");
   const dataFinalizacao = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
   dadosParaSalvar.data_hora_finalizacao = dataFinalizacao;
-
-  // 🔥 Garantir que assinaturas seja um array
-  dadosParaSalvar.assinaturas = assinaturas || [];
 
   let localizacao = await appInstance.obterLocalizacao({ timeout: 5000 });
   if (
@@ -2195,6 +2613,11 @@ async function finalizarOcorrencia(container, appInstance) {
 
   const ocorrenciaId = result.data.id;
   let erros = [];
+
+  const guardasResult = await ocorrenciaManager.salvarGuardas(ocorrenciaId, guardas);
+  if (!guardasResult.success) {
+    erros.push("Erro ao salvar equipe: " + guardasResult.error);
+  }
 
   if (envolvidos.length > 0) {
     const envResult = await ocorrenciaManager.salvarEnvolvidos(
@@ -2256,7 +2679,7 @@ async function finalizarOcorrencia(container, appInstance) {
 }
 
 // ============================================
-// FUNÇÕES AUXILIARES
+// FUNÇÕES AUXILIARES (MANTIDAS)
 // ============================================
 
 function getTipoEnvolvidoLabel(tipo) {
@@ -2356,7 +2779,7 @@ function renderAcessoNegado(appInstance) {
 }
 
 // ============================================
-// RENDERIZAR FORMULÁRIO COMPLETAR (continuação)
+// RENDERIZAR FORMULÁRIO COMPLETAR (MANTIDO)
 // ============================================
 
 async function salvarCompletarRapido(appInstance) {
@@ -2366,6 +2789,7 @@ async function salvarCompletarRapido(appInstance) {
     return;
   }
 
+  const guardas = estado.dados.guardasParticipantes || [];
   const dadosAtualizados = {
     forma_solicitacao:
       document.getElementById("completar_forma_solicitacao")?.value || "",
@@ -2384,7 +2808,7 @@ async function salvarCompletarRapido(appInstance) {
     assinaturas: estado.dados.assinaturas || [],
   };
 
-  // 🔥 CORRIGIDO: Remover campos que não existem no banco
+  delete dadosAtualizados.guardasParticipantes;
   delete dadosAtualizados.assinaturas_objeto;
 
   if (estado.dadosOriginais) {
@@ -2398,6 +2822,7 @@ async function salvarCompletarRapido(appInstance) {
   try {
     appInstance.showToast("Salvando alterações...", "info");
 
+    delete dadosAtualizados.guardasParticipantes;
     const result = await ocorrenciaManager.atualizar(id, dadosAtualizados);
     if (!result.success) {
       appInstance.showToast("Erro ao salvar: " + result.error, "error");
@@ -2408,6 +2833,7 @@ async function salvarCompletarRapido(appInstance) {
     if (envolvidos.length > 0) {
       await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
     }
+    await ocorrenciaManager.salvarGuardas(id, guardas);
 
     const anexos = estado.dados.anexos || [];
     if (anexos.length > 0) {
@@ -2482,7 +2908,6 @@ async function finalizarCompletarRapido(appInstance) {
       status: "synced",
     };
 
-    // 🔥 CORRIGIDO: Remover campos que não existem no banco
     delete dadosAtualizados.assinaturas_objeto;
 
     const result = await ocorrenciaManager.atualizar(id, dadosAtualizados);
@@ -2495,6 +2920,7 @@ async function finalizarCompletarRapido(appInstance) {
     if (envolvidos.length > 0) {
       await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
     }
+    await ocorrenciaManager.salvarGuardas(id, estado.dados.guardasParticipantes || []);
 
     const anexos = estado.dados.anexos || [];
     if (anexos.length > 0) {
@@ -2521,10 +2947,6 @@ function compararObjetos(obj1, obj2) {
   }
   return diff;
 }
-
-// ============================================
-// RENDERIZAR FORMULÁRIO COMPLETAR
-// ============================================
 
 function renderizarFormularioCompletar(container, appInstance) {
   const dados = estado.dados;

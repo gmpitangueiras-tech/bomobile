@@ -208,15 +208,24 @@ class PDFExport {
         await ocorrenciaManager.listarEnvolvidos(ocorrenciaId);
       const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
 
+      // P4: equipe operacional do BO, separada dos envolvidos civis.
+      const guardasResult = ocorrenciaManager.listarGuardas
+        ? await ocorrenciaManager.listarGuardas(ocorrenciaId)
+        : { success: true, data: [] };
+      const guardas = guardasResult.success ? guardasResult.data : [];
+
       const anexosResult = await ocorrenciaManager.listarAnexos(ocorrenciaId);
       const anexos = anexosResult.success ? anexosResult.data : [];
 
       // 🔥 NOVO: Buscar assinaturas separadamente
-      const assinaturasResult = await ocorrenciaManager.listarAssinaturas(ocorrenciaId);
-      const assinaturas = assinaturasResult.success ? assinaturasResult.data : [];
+      const assinaturasResult =
+        await ocorrenciaManager.listarAssinaturas(ocorrenciaId);
+      const assinaturas = assinaturasResult.success
+        ? assinaturasResult.data
+        : [];
 
       // 🔥 FILTRAR: Separar anexos reais de assinaturas
-      const anexosReais = anexos.filter(a => a.tipo !== 'assinatura');
+      const anexosReais = anexos.filter((a) => a.tipo !== "assinatura");
 
       const historicoResult =
         await ocorrenciaManager.buscarHistorico(ocorrenciaId);
@@ -248,6 +257,7 @@ class PDFExport {
       const doc = await this.gerarPDFOcorrencia(
         ocorrencia,
         envolvidos,
+        guardas,
         anexosComImagens,
         assinaturas, // 🔥 NOVO: Passar assinaturas
         historico,
@@ -268,543 +278,520 @@ class PDFExport {
   // GERAR PDF OCORRÊNCIA (COM ASSINATURAS)
   // ============================================
 
-  async gerarPDFOcorrencia(ocorrencia, envolvidos, anexos, assinaturas, historico, options) {
-    const jsPDF = this.getJSPDF();
-    const doc = new jsPDF(options);
-    const pageWidth = doc.internal.pageSize.width;
-    const margin = options.margins.left || 15;
-    let y = 15;
-
-    const titulo = `Ocorrência ${ocorrencia.numero_ocorrencia || "Rascunho"} - ${this.getTipoLabel(ocorrencia.tipo_ocorrencia)}`;
-    doc.setProperties({
-      title: titulo,
-      author: ocorrencia.criador?.nome_completo || "Guarda Municipal",
-      subject: `Registro de Ocorrência - ${ocorrencia.tipo_ocorrencia || "Sem tipo"}`,
-      keywords: `Guarda Municipal, Ocorrência, ${ocorrencia.tipo_ocorrencia || ""}`,
-      creator: "Sistema da Guarda Municipal de Pitangueiras - PR",
-    });
-
-    // Cabeçalho
-    doc.setFillColor(0, 63, 135);
-    doc.rect(margin - 5, y - 3, pageWidth - 2 * margin + 10, 28, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS - PR", pageWidth / 2, y + 6, {
-      align: "center",
-    });
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    doc.text("Sistema de Registro de Ocorrências", pageWidth / 2, y + 14, {
-      align: "center",
-    });
-    doc.setFontSize(8);
-    doc.text(`Documento: ${titulo}`, pageWidth / 2, y + 22, {
-      align: "center",
-    });
-    y += 32;
-
-    const numero =
-      ocorrencia.numero_ocorrencia ||
-      ocorrencia.numero_temporario ||
-      "Rascunho";
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(0, 63, 135);
-    doc.text(`Ocorrência #${numero}`, margin, y);
-    y += 8;
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(30, 41, 59);
-    doc.text(`Status: ${this.getStatusLabel(ocorrencia.status)}`, margin, y);
-    doc.text(
-      `Tipo: ${this.getTipoLabel(ocorrencia.tipo_ocorrencia)}`,
-      margin + 70,
-      y,
-    );
-    y += 6;
-
-    if (ocorrencia.hash_pericial) {
-      doc.setFontSize(7);
-      doc.setTextColor(0, 63, 135);
-      doc.setFont("helvetica", "italic");
-      doc.text(`Hash SHA-256: ${ocorrencia.hash_pericial}`, margin, y);
-      y += 6;
-      doc.setFont("helvetica", "normal");
-    }
-
-    doc.setDrawColor(200, 200, 200);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 4;
-
-    // Informações Gerais
-    const infoData = [
-      {
-        label: "Criado em:",
-        value: new Date(ocorrencia.criado_em).toLocaleString("pt-BR"),
-      },
-      {
-        label: "Data/Hora Início:",
-        value: ocorrencia.data_hora_inicio
-          ? new Date(ocorrencia.data_hora_inicio).toLocaleString("pt-BR")
-          : "Não informado",
-      },
-      {
-        label: "Data/Hora Encerramento:",
-        value: ocorrencia.data_hora_encerramento
-          ? new Date(ocorrencia.data_hora_encerramento).toLocaleString("pt-BR")
-          : "Não encerrado",
-      },
-      {
-        label: "Criado por:",
-        value: ocorrencia.criador?.nome_completo || "Desconhecido",
-      },
-    ];
-
-    if (ocorrencia.local_ocorrencia)
-      infoData.push({ label: "Local:", value: ocorrencia.local_ocorrencia });
-    if (ocorrencia.bairro_ocorrencia)
-      infoData.push({ label: "Bairro:", value: ocorrencia.bairro_ocorrencia });
-    if (ocorrencia.referencia)
-      infoData.push({ label: "Referência:", value: ocorrencia.referencia });
-    if (ocorrencia.latitude && ocorrencia.longitude) {
-      infoData.push({
-        label: "Coordenadas:",
-        value: `${ocorrencia.latitude.toFixed(6)}, ${ocorrencia.longitude.toFixed(6)}`,
-      });
-    }
-
-    doc.setDrawColor(200, 200, 200);
-    doc.roundedRect(
-      margin,
-      y - 2,
-      pageWidth - 2 * margin,
-      10 + infoData.length * 6,
-      3,
-      3,
-      "S",
-    );
-    doc.setFillColor(245, 247, 250);
-    doc.roundedRect(
-      margin,
-      y - 2,
-      pageWidth - 2 * margin,
-      10 + infoData.length * 6,
-      3,
-      3,
-      "F",
-    );
-
-    y = y + 4;
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(0, 63, 135);
-    doc.text("INFORMAÇÕES GERAIS", margin + 4, y);
-    y += 4;
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(30, 41, 59);
-
-    infoData.forEach((item) => {
-      doc.setFontSize(9);
-      doc.text(`${item.label}`, margin + 6, y);
-      doc.setFont("helvetica", "bold");
-      doc.text(`${item.value}`, margin + 50, y);
-      doc.setFont("helvetica", "normal");
-      y += 6;
-    });
-    y += 4;
-
-    // Solicitante
-    if (
-      options.sections.solicitante !== false &&
-      (ocorrencia.nome_solicitante || ocorrencia.telefone_solicitante)
+  async gerarPDFOcorrencia(
+      ocorrencia,
+      envolvidos,
+      guardas,
+      anexos,
+      assinaturas,
+      historico,
+      options,
     ) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 30, 3, 3, "S");
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 30, 3, 3, "F");
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text("DADOS DO SOLICITANTE", margin + 4, y + 4);
-      y += 8;
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(30, 41, 59);
-
-      const solicitanteData = [
-        { label: "Nome:", value: ocorrencia.nome_solicitante || "Anônimo" },
-        { label: "CPF:", value: ocorrencia.cpf_solicitante || "Não informado" },
-        {
-          label: "Telefone:",
-          value: ocorrencia.telefone_solicitante || "Não informado",
-        },
-        {
-          label: "Endereço:",
-          value: ocorrencia.endereco_solicitante || "Não informado",
-        },
-      ];
-
-      let sx = margin + 6;
-      let sy = y;
-      solicitanteData.forEach((item) => {
-        if (
-          item.value &&
-          item.value !== "Não informado" &&
-          item.value !== "Anônimo"
-        ) {
-          doc.setFontSize(8);
-          doc.text(`${item.label}`, sx, sy);
-          doc.setFont("helvetica", "bold");
-          doc.text(`${item.value}`, sx + 30, sy);
-          doc.setFont("helvetica", "normal");
-          sy += 5;
-        }
+      const jsPDF = this.getJSPDF();
+      const doc = new jsPDF({
+        ...options,
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+        compress: true,
       });
-      y = sy + 4;
-    }
+      const pageWidth = doc.internal.pageSize.width;
+      const pageHeight = doc.internal.pageSize.height;
+      const margin = 14;
+      const contentWidth = pageWidth - margin * 2;
+      const ink = [0, 0, 0];
+      const rule = [45, 45, 45];
+      const softRule = [125, 125, 125];
+      const logoUrl = options.logoUrl || "assets/logo-guarda.png";
+      const logo = await this.carregarImagemBase64(logoUrl);
+      const numero = ocorrencia.numero_ocorrencia || ocorrencia.numero_temporario || "Rascunho";
+      const emissao = new Date();
+      const emissaoTexto = emissao.toLocaleString("pt-BR");
+      const titulo = `BO ${numero} — ${this.getTipoLabel(ocorrencia.tipo_ocorrencia)}`;
 
-    // Envolvidos
-    if (options.sections.envolvidos !== false && envolvidos.length > 0) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      doc.roundedRect(
-        margin,
-        y - 2,
-        pageWidth - 2 * margin,
-        10 + envolvidos.length * 12,
-        3,
-        3,
-        "S",
-      );
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(
-        margin,
-        y - 2,
-        pageWidth - 2 * margin,
-        10 + envolvidos.length * 12,
-        3,
-        3,
-        "F",
-      );
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text(`ENVOLVIDOS (${envolvidos.length})`, margin + 4, y + 4);
-      y += 8;
-
-      envolvidos.forEach((env, idx) => {
-        const tipo = this.getTipoEnvolvidoLabel(env.tipo);
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${idx + 1}. ${tipo}:`, margin + 6, y);
-        doc.setFont("helvetica", "normal");
-        doc.text(`${env.nome_completo || "N/A"}`, margin + 40, y);
-        if (env.cpf) {
-          doc.text(`CPF: ${env.cpf}`, margin + 100, y);
-        }
-        y += 6;
+      doc.setProperties({
+        title: titulo,
+        author: ocorrencia.criador?.nome_completo || "Guarda Municipal de Pitangueiras/PR",
+        subject: "Registro de ocorrência — Guarda Municipal de Pitangueiras/PR",
+        keywords: `Guarda Municipal, BO, ${ocorrencia.tipo_ocorrencia || ""}`,
+        creator: "Sistema de Registro de Ocorrências — Guarda Municipal de Pitangueiras/PR",
       });
-      y += 4;
-    }
 
-    // Observações
-    if (options.sections.observacoes !== false && ocorrencia.observacoes) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 20, 3, 3, "S");
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 20, 3, 3, "F");
+      const safe = (value, fallback = "Não informado") =>
+        value === null || value === undefined || String(value).trim() === ""
+          ? fallback
+          : String(value);
+      const hasValue = (value) =>
+        value !== null && value !== undefined && String(value).trim() !== "";
+      const date = (value, fallback = "Não informado") => {
+        if (!value) return fallback;
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? safe(value, fallback) : d.toLocaleString("pt-BR");
+      };
+      const shortDate = (value, fallback = "Não informado") => {
+        if (!value) return fallback;
+        const dateOnly = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? safe(value, fallback) : d.toLocaleDateString("pt-BR");
+      };
+      const role = (value) =>
+        ({ responsavel: "RESPONSÁVEL", acompanhante: "ACOMPANHANTE" }[value] || String(value || "PARTICIPANTE").toUpperCase());
+      const equipeAtiva = (guardas || []).filter((g) => g.esta_ativo !== false);
+      const footerLimit = pageHeight - 19;
+      let page = 1;
+      let y = 39;
+      let historicoResumo = "";
 
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text("OBSERVAÇÕES", margin + 4, y + 4);
-      y += 8;
-
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(30, 41, 59);
-      const textoQuebrado = doc.splitTextToSize(
-        ocorrencia.observacoes,
-        pageWidth - 2 * margin - 12,
-      );
-      doc.text(textoQuebrado, margin + 6, y);
-      y += textoQuebrado.length * 5 + 4;
-    }
-
-    // 🔥 NOVO: SEÇÃO DE ASSINATURAS
-    if (options.sections.assinaturas !== false && assinaturas && assinaturas.length > 0) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      const alturaAssinaturas = 10 + assinaturas.length * 28;
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, alturaAssinaturas, 3, 3, "S");
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, alturaAssinaturas, 3, 3, "F");
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text(`ASSINATURAS (${assinaturas.length})`, margin + 4, y + 4);
-      y += 8;
-
-      assinaturas.forEach((ass, idx) => {
-        const tipoLabel = this.getTipoAssinaturaLabel(ass.tipo);
-        const dataAssinatura = ass.assinado_em
-          ? new Date(ass.assinado_em).toLocaleString("pt-BR")
-          : "Data não informada";
-        const nomeGuarda = ass.nome_guarda || "Desconhecido";
-
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${idx + 1}. ${tipoLabel}:`, margin + 6, y);
-        doc.setFont("helvetica", "normal");
-        doc.text(`${ass.nome}`, margin + 45, y);
-        if (ass.cpf) {
-          doc.text(`CPF: ${ass.cpf}`, margin + 95, y);
-        }
-        y += 6;
-        doc.setFontSize(7);
-        doc.setTextColor(100, 100, 100);
-        doc.text(`Coletada por: ${nomeGuarda} em ${dataAssinatura}`, margin + 6, y);
-        y += 8;
-
-        // Adicionar imagem da assinatura (se houver e for possível)
-        if (ass.assinatura_data_url) {
+      // Cabeçalho institucional em três blocos: brasão, identificação e número do BO.
+      const drawHeader = (pageNumber) => {
+        doc.setPage(pageNumber);
+        doc.setDrawColor(...rule);
+        doc.setLineWidth(0.55);
+        doc.line(margin, 4, pageWidth - margin, 4);
+        if (logo) {
           try {
-            // Tentar carregar a imagem da assinatura
-            const imgData = ass.assinatura_data_url;
-            if (imgData && imgData.startsWith('data:image')) {
-              doc.addImage(imgData, 'PNG', margin + 6, y, 50, 12);
-              y += 14;
-            } else {
-              // Fallback: linha de assinatura
-              doc.setDrawColor(100, 100, 100);
-              doc.line(margin + 6, y + 4, margin + 56, y + 4);
-              doc.setFontSize(7);
-              doc.setTextColor(150, 150, 150);
-              doc.text("Assinatura digital", margin + 6, y + 8);
-              y += 10;
-            }
+            doc.addImage(logo, "PNG", margin + 1, 6, 21, 21, undefined, "FAST");
           } catch (e) {
-            // Fallback: linha de assinatura
-            doc.setDrawColor(100, 100, 100);
-            doc.line(margin + 6, y + 4, margin + 56, y + 4);
+            doc.setLineWidth(0.35);
+            doc.rect(margin + 1, 6, 21, 21);
+          }
+        }
+
+        const centerX = pageWidth / 2;
+        doc.setTextColor(...ink);
+        doc.setFont("times", "bold");
+        doc.setFontSize(8.5);
+        doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS/PR", centerX, 9, { align: "center" });
+        doc.setFontSize(7.2);
+        doc.text("REGISTRO OPERACIONAL", centerX, 15, { align: "center" });
+        doc.setFontSize(9);
+        doc.text("BOLETIM DE OCORRÊNCIA", centerX, 21, { align: "center" });
+        doc.setFontSize(6.2);
+        doc.text("COMUNICAÇÃO DA OCORRÊNCIA", centerX, 26, { align: "center" });
+
+        const rightX = pageWidth - margin - 35;
+        doc.setDrawColor(...softRule);
+        doc.setLineWidth(0.25);
+        doc.line(rightX - 3, 6, rightX - 3, 27);
+        doc.setFont("courier", "bold");
+        doc.setFontSize(6.2);
+        doc.text("NÚMERO DO BO", rightX, 9);
+        doc.setFontSize(8.2);
+        const numeroLines = doc.splitTextToSize(String(numero), 34).slice(0, 2);
+        doc.text(numeroLines, rightX, 14);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(5.8);
+        doc.text(`EMISSÃO ${shortDate(emissao)}`, rightX, 24);
+
+        doc.setDrawColor(...rule);
+        doc.setLineWidth(0.55);
+        doc.line(margin, 31, pageWidth - margin, 31);
+        doc.setLineWidth(0.2);
+        doc.line(margin, 32.2, pageWidth - margin, 32.2);
+      };
+
+      const drawFooter = (pageNumber, totalPages) => {
+        doc.setPage(pageNumber);
+        doc.setDrawColor(...rule);
+        doc.setLineWidth(0.45);
+        doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+        doc.setTextColor(...ink);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(5.8);
+        doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS/PR  |  SISTEMA DE REGISTRO DE OCORRÊNCIAS", margin, pageHeight - 10);
+        doc.text(`EMITIDO EM ${emissaoTexto}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+        doc.setFont("courier", "bold");
+        doc.text(`PÁGINA ${pageNumber} DE ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: "center" });
+      };
+
+      const newPage = () => {
+        doc.addPage();
+        page = doc.internal.getCurrentPageInfo().pageNumber;
+        drawHeader(page);
+        y = 39;
+      };
+      const ensureSpace = (height) => {
+        if (y + height > footerLimit) newPage();
+      };
+      const sectionTitle = (label) => {
+        ensureSpace(11);
+        doc.setTextColor(...ink);
+        doc.setFont("times", "bold");
+        doc.setFontSize(8.5);
+        doc.text(String(label).toUpperCase(), pageWidth / 2, y + 4, { align: "center" });
+        doc.setDrawColor(...rule);
+        doc.setLineWidth(0.3);
+        doc.line(margin, y + 6.2, pageWidth - margin, y + 6.2);
+        y += 9;
+      };
+
+      const drawParagraphSection = (label, value, fontSize = 8.1, lineHeight = 3.8) => {
+        const text = safe(value, "");
+        if (!text) return;
+        sectionTitle(label);
+        const lines = doc.splitTextToSize(text, contentWidth);
+        let offset = 0;
+        while (offset < lines.length) {
+          const availableLines = Math.max(1, Math.floor((footerLimit - y - 2) / lineHeight));
+          const chunk = lines.slice(offset, offset + availableLines);
+          doc.setFont("courier", "normal");
+          doc.setFontSize(fontSize);
+          doc.setTextColor(...ink);
+          doc.text(chunk, margin, y + 2.5, { lineHeightFactor: 1.12 });
+          y += chunk.length * lineHeight + 4;
+          offset += chunk.length;
+          if (offset < lines.length) {
+            newPage();
+            sectionTitle(`${label} — continuação`);
+          }
+        }
+      };
+
+      const prepareField = (item, width) => {
+        const labelText = `${String(item[0]).toUpperCase()}: `;
+        const valueText = safe(item[1], "—");
+        doc.setFont("courier", "bold");
+        doc.setFontSize(6.4);
+        const labelWidth = doc.getTextWidth(labelText);
+        const stacked = labelWidth > width * 0.46;
+        const valueWidth = Math.max(12, width - (stacked ? 0 : labelWidth + 1.2));
+        doc.setFont("courier", "normal");
+        doc.setFontSize(7.2);
+        const valueLines = doc.splitTextToSize(valueText, valueWidth);
+        const height = Math.max(4, (stacked ? 3.1 : 0) + valueLines.length * 3.2);
+        return { labelText, labelWidth, stacked, valueLines, height };
+      };
+
+      const drawRow = (items) => {
+        if (!items || !items.length) return;
+        const gap = items.length === 1 ? 0 : 4;
+        const cellWidth = (contentWidth - gap * (items.length - 1)) / items.length;
+        const prepared = items.map((item) => prepareField(item, cellWidth));
+        const rowHeight = Math.max(...prepared.map((p) => p.height));
+        ensureSpace(rowHeight + 3);
+        const top = y;
+        items.forEach((item, i) => {
+          const x = margin + i * (cellWidth + gap);
+          const p = prepared[i];
+          doc.setTextColor(...ink);
+          doc.setFont("courier", "bold");
+          doc.setFontSize(6.4);
+          if (p.stacked) {
+            doc.text(p.labelText.trim(), x, top + 2.5);
+            doc.setFont("courier", "normal");
+            doc.setFontSize(7.2);
+            doc.text(p.valueLines, x, top + 5.7, { lineHeightFactor: 1.05 });
+          } else {
+            doc.text(p.labelText, x, top + 2.7);
+            doc.setFont("courier", "normal");
+            doc.setFontSize(7.2);
+            doc.text(p.valueLines, x + p.labelWidth + 1.2, top + 2.7, { lineHeightFactor: 1.05 });
+          }
+          doc.setDrawColor(...softRule);
+          doc.setLineWidth(0.15);
+          doc.line(x, top + rowHeight + 1, x + cellWidth, top + rowHeight + 1);
+        });
+        y += rowHeight + 4;
+      };
+
+      const drawTable = (titleText, headers, rows, widths) => {
+        if (!rows || !rows.length) return;
+        sectionTitle(titleText);
+        doc.autoTable({
+          startY: y,
+          margin: { left: margin, right: margin, top: 38, bottom: 18 },
+          theme: "grid",
+          head: [headers],
+          body: rows,
+          styles: {
+            font: "courier",
+            fontSize: 6.8,
+            textColor: ink,
+            cellPadding: 1.6,
+            lineColor: rule,
+            lineWidth: 0.18,
+            overflow: "linebreak",
+            valign: "middle",
+          },
+          headStyles: {
+            fillColor: [255, 255, 255],
+            textColor: ink,
+            font: "courier",
+            fontStyle: "bold",
+            fontSize: 6.6,
+            lineColor: rule,
+            lineWidth: 0.3,
+          },
+          alternateRowStyles: { fillColor: [255, 255, 255] },
+          columnStyles: widths.reduce((result, width, i) => {
+            result[i] = { cellWidth: width };
+            return result;
+          }, {}),
+          didDrawPage: (data) => {
+            const pageNumber = data.doc.internal.getCurrentPageInfo().pageNumber;
+            page = Math.max(page, pageNumber);
+            drawHeader(pageNumber);
+          },
+        });
+        page = doc.internal.getCurrentPageInfo().pageNumber;
+        y = (doc.lastAutoTable?.finalY || y) + 4;
+      };
+
+      drawHeader(page);
+      sectionTitle("Identificação do registro");
+      drawRow([
+        ["Número do BO", numero],
+        ["Natureza", this.getTipoLabel(ocorrencia.tipo_ocorrencia)],
+        ["Situação", this.getStatusLabel(ocorrencia.status)],
+      ]);
+      drawRow([
+        ["Data e hora do registro", date(ocorrencia.criado_em)],
+        ["Origem da comunicação", safe(ocorrencia.forma_solicitacao)],
+      ]);
+      drawRow([
+        ["Início da ocorrência", date(ocorrencia.data_hora_inicio)],
+        ["Encerramento", date(ocorrencia.data_hora_encerramento, "Não encerrado")],
+      ]);
+      if (hasValue(ocorrencia.codigo_operacional)) {
+        drawRow([["Código operacional", ocorrencia.codigo_operacional]]);
+      }
+      if (hasValue(ocorrencia.data_hora_finalizacao) || hasValue(ocorrencia.completado_em)) {
+        drawRow([
+          ["Finalização", hasValue(ocorrencia.data_hora_finalizacao) ? date(ocorrencia.data_hora_finalizacao) : "—"],
+          ["Conclusão", hasValue(ocorrencia.completado_em) ? date(ocorrencia.completado_em) : "—"],
+        ]);
+      }
+      if (hasValue(ocorrencia.modo_criacao)) {
+        drawRow([["Modo de criação", ocorrencia.modo_criacao]]);
+      }
+      if (hasValue(ocorrencia.criador?.nome_completo)) {
+        drawRow([["Registrado por", ocorrencia.criador.nome_completo]]);
+      }
+
+      if (options.sections.equipe !== false) {
+        const equipe = equipeAtiva.length
+          ? equipeAtiva
+          : [{ papel: "participante", nome_snapshot: "Equipe não informada", matricula_snapshot: "—", perfil_snapshot: "—" }];
+        drawTable(
+          "Equipe operacional",
+          ["PAPEL", "NOME", "MATRÍCULA", "PERFIL"],
+          equipe.map((g) => [
+            role(g.papel),
+            safe(g.nome_snapshot || g.nome_completo),
+            safe(g.matricula_snapshot || g.matricula, "—"),
+            safe(g.perfil_snapshot || g.perfil, "—"),
+          ]),
+          [28, 68, 40, 46],
+        );
+      }
+
+      sectionTitle("Dados do local da ocorrência");
+      const camposLocal = [
+        ["Local/endereço", ocorrencia.local_ocorrencia],
+        ["Bairro da ocorrência", ocorrencia.bairro_ocorrencia],
+        ["Rodovia", ocorrencia.rodovia],
+        ["Referência", ocorrencia.referencia],
+        ["Latitude", ocorrencia.latitude],
+        ["Longitude", ocorrencia.longitude],
+      ].filter(([, value]) => hasValue(value));
+      if (camposLocal.length) {
+        for (let i = 0; i < camposLocal.length; i += 2) {
+          drawRow(camposLocal.slice(i, i + 2));
+        }
+      } else {
+        drawRow([["Local/endereço", "Não informado"]]);
+      }
+
+      if (options.sections.solicitante !== false) {
+        sectionTitle("Identificação do solicitante");
+        const camposSolicitante = [
+          ["Nome", hasValue(ocorrencia.nome_solicitante) ? ocorrencia.nome_solicitante : "Anônimo"],
+          ["CPF", ocorrencia.cpf_solicitante],
+          ["RG", ocorrencia.rg_solicitante],
+          ["Telefone", ocorrencia.telefone_solicitante],
+          ["Endereço", ocorrencia.endereco_solicitante],
+          ["Bairro", ocorrencia.bairro_solicitante],
+          ["Complemento", ocorrencia.complemento],
+          ["Código municipal", ocorrencia.codigo_municipal],
+          ["Identificação adicional", ocorrencia.identificacao_adicional],
+        ].filter(([, value]) => hasValue(value));
+        for (let i = 0; i < camposSolicitante.length; i += 2) {
+          drawRow(camposSolicitante.slice(i, i + 2));
+        }
+      }
+
+      if (options.sections.observacoes !== false) {
+        drawParagraphSection("Histórico / narrativa da ocorrência", ocorrencia.observacoes);
+      }
+
+      sectionTitle("Classificação da ocorrência");
+      drawRow([
+        ["Natureza constatada", this.getTipoLabel(ocorrencia.tipo_ocorrencia)],
+        ["Subtipo", safe(ocorrencia.sub_tipo_ocorrencia, "—")],
+      ]);
+      drawRow([["Gravidade", safe(ocorrencia.gravidade, "—")]]);
+
+      if (hasValue(ocorrencia.numero_bo) || hasValue(ocorrencia.orgao_bo) || hasValue(ocorrencia.data_bo)) {
+        sectionTitle("Referência de BO de outro órgão");
+        drawRow([
+          ["Número do BO", safe(ocorrencia.numero_bo, "—")],
+          ["Órgão registrador", safe(ocorrencia.orgao_bo, "—")],
+          ["Data do BO", hasValue(ocorrencia.data_bo) ? shortDate(ocorrencia.data_bo) : "—"],
+        ]);
+      }
+
+      if (options.sections.envolvidos !== false && envolvidos?.length) {
+        drawTable(
+          `Envolvidos (${envolvidos.length})`,
+          ["PAPEL", "NOME", "RG", "CPF", "TELEFONE"],
+          envolvidos.map((e) => [
+            this.getTipoEnvolvidoLabel(e.tipo),
+            safe(e.nome_completo),
+            safe(e.rg, "—"),
+            safe(e.cpf, "—"),
+            safe(e.telefone, "—"),
+          ]),
+          [30, 52, 30, 39, 31],
+        );
+        for (const envolvido of envolvidos) {
+          const detalhesEnvolvido = [
+            ["Nascimento", hasValue(envolvido.data_nascimento) ? shortDate(envolvido.data_nascimento) : null],
+            ["Nome do pai", envolvido.nome_pai],
+            ["Nome da mãe", envolvido.nome_mae],
+            ["Endereço", envolvido.endereco],
+            ["Bairro", envolvido.bairro],
+            ["Cidade", envolvido.cidade],
+          ].filter(([, value]) => hasValue(value));
+          if (detalhesEnvolvido.length) {
+            sectionTitle("Dados complementares do envolvido");
+            drawRow([["Nome", safe(envolvido.nome_completo)]]);
+            for (let i = 0; i < detalhesEnvolvido.length; i += 2) {
+              drawRow(detalhesEnvolvido.slice(i, i + 2));
+            }
+          }
+          if (hasValue(envolvido.observacoes)) {
+            sectionTitle("Observações do envolvido");
+            drawRow([["Nome", safe(envolvido.nome_completo)]]);
+            drawParagraphSection("Relato complementar", envolvido.observacoes, 7.4, 3.5);
+          }
+        }
+      }
+
+      if (options.sections.assinaturas !== false && assinaturas?.length) {
+        drawTable(
+          `Assinaturas (${assinaturas.length})`,
+          ["TIPO", "ASSINANTE", "CPF", "RESPONSÁVEL PELA COLETA / DATA"],
+          assinaturas.map((a) => [
+            this.getTipoAssinaturaLabel(a.tipo),
+            safe(a.nome),
+            safe(a.cpf, "—"),
+            `${safe(a.nome_guarda, "—")} / ${date(a.assinado_em)}`,
+          ]),
+          [28, 51, 35, 68],
+        );
+      }
+
+      if (options.sections.historico !== false && historico?.length > 1) {
+        const versoes = historico
+          .slice()
+          .sort((a, b) => new Date(b.criado_em) - new Date(a.criado_em))
+          .slice(0, 8);
+        historicoResumo = versoes
+          .map((h) => (h.is_original ? "Original" : `v${h.numero_versao || 1}`))
+          .join(" / ");
+        sectionTitle("Controle de versões");
+        drawRow([["Versões registradas", historicoResumo]]);
+      }
+
+      const justificativaRetificacao =
+        ocorrencia.justificativa_retificacao || ocorrencia.solicitacao_retificacao_justificativa;
+      const isRetificacao =
+        hasValue(ocorrencia.ocorrencia_original_id) || Number(ocorrencia.numero_versao || 1) > 1;
+      if (isRetificacao || hasValue(justificativaRetificacao)) {
+        sectionTitle("Controle de retificação");
+        const dataControle = ocorrencia.retificado_em || ocorrencia.solicitada_em;
+        drawRow([
+          ["Tipo de registro", isRetificacao ? "Retificação vinculada" : "Registro original"],
+          ["Versão", safe(ocorrencia.numero_versao, "1")],
+          [hasValue(ocorrencia.retificado_em) ? "Retificado em" : "Solicitado em", hasValue(dataControle) ? date(dataControle) : "—"],
+        ]);
+        if (hasValue(justificativaRetificacao)) {
+          drawParagraphSection("Justificativa da retificação", justificativaRetificacao, 7.4, 3.5);
+        }
+        if (hasValue(ocorrencia.campos_alterados)) {
+          const camposAlterados = Array.isArray(ocorrencia.campos_alterados)
+            ? ocorrencia.campos_alterados.join(", ")
+            : typeof ocorrencia.campos_alterados === "object"
+              ? Object.keys(ocorrencia.campos_alterados).join(", ")
+              : String(ocorrencia.campos_alterados);
+          if (hasValue(camposAlterados)) drawRow([["Campos alterados", camposAlterados]]);
+        }
+      }
+      if (hasValue(ocorrencia.motivo_cancelamento)) {
+        sectionTitle("Cancelamento do registro");
+        drawRow([
+          ["Cancelado em", hasValue(ocorrencia.cancelado_em) ? date(ocorrencia.cancelado_em) : "—"],
+        ]);
+        drawParagraphSection("Motivo do cancelamento", ocorrencia.motivo_cancelamento, 7.4, 3.5);
+      }
+
+      const imagens = (anexos || []).filter(
+        (a) => a.base64 && (a.tipo_arquivo === "image" || a.tipo === "image") && a.tipo !== "assinatura",
+      );
+      if (options.sections.anexos !== false && imagens.length) {
+        newPage();
+        sectionTitle("Anexos fotográficos");
+        for (const img of imagens) {
+          try {
+            const image = new Image();
+            image.src = img.base64;
+            await new Promise((resolve) => {
+              if (image.complete) resolve();
+              else {
+                image.onload = resolve;
+                image.onerror = resolve;
+              }
+            });
+            const ratio = image.width && image.height ? image.width / image.height : 1.4;
+            const width = Math.min(contentWidth - 8, 92);
+            const height = Math.min(68, width / ratio);
+            if (y + height + 12 > footerLimit) {
+              newPage();
+              sectionTitle("Anexos fotográficos — continuação");
+            }
+            const x = margin + (contentWidth - width) / 2;
+            doc.setDrawColor(...rule);
+            doc.setLineWidth(0.25);
+            doc.rect(x - 1, y - 1, width + 2, height + 2);
+            const format = String(img.base64).startsWith("data:image/png") ? "PNG" : "JPEG";
+            doc.addImage(img.base64, format, x, y, width, height);
+            y += height + 3;
+            doc.setFont("courier", "normal");
+            doc.setFontSize(6.8);
+            doc.setTextColor(...ink);
+            doc.text(safe(img.nome_arquivo || img.nome, "Anexo fotográfico"), x, y + 2.5);
+            y += 7;
+          } catch (e) {
+            ensureSpace(8);
+            doc.setFont("courier", "normal");
             doc.setFontSize(7);
-            doc.setTextColor(150, 150, 150);
-            doc.text("Assinatura digital", margin + 6, y + 8);
-            y += 10;
+            doc.setTextColor(...ink);
+            doc.text(`Imagem não disponível: ${safe(img.nome_arquivo || img.nome, "Anexo")}`, margin, y + 3);
+            y += 7;
           }
-        } else {
-          // Linha de assinatura vazia
-          doc.setDrawColor(100, 100, 100);
-          doc.line(margin + 6, y + 4, margin + 56, y + 4);
-          y += 10;
-        }
-        y += 2;
-      });
-      y += 4;
-    }
-
-    // Anexos (imagens) - APENAS ANEXOS REAIS
-    const imagensParaExibir = anexos.filter(
-      (a) => a.base64 && (a.tipo_arquivo === "image" || a.tipo === "image") && a.tipo !== "assinatura",
-    );
-    if (options.sections.anexos !== false && imagensParaExibir.length > 0) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 15, 3, 3, "S");
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(margin, y - 2, pageWidth - 2 * margin, 15, 3, 3, "F");
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text(
-        `ANEXOS (${imagensParaExibir.length} IMAGENS)`,
-        margin + 4,
-        y + 4,
-      );
-      y += 10;
-
-      const maxHeight = options.images.maxHeight || 50;
-      const spacing = 6;
-      const cols = 2;
-      const imgWidth = (pageWidth - 2 * margin - (cols - 1) * spacing) / cols;
-
-      let imgX = margin + 6;
-      let imgY = y;
-      let colCount = 0;
-
-      for (const img of imagensParaExibir) {
-        try {
-          const base64 = img.base64;
-          if (!base64) continue;
-          const imgObj = new Image();
-          imgObj.src = base64;
-          await new Promise((resolve) => {
-            if (imgObj.complete) resolve();
-            else imgObj.onload = resolve;
-          });
-          const aspectRatio = imgObj.width / imgObj.height;
-          let w = Math.min(imgWidth, 70);
-          let h = w / aspectRatio;
-          if (h > maxHeight) {
-            h = maxHeight;
-            w = h * aspectRatio;
-          }
-          doc.addImage(base64, "JPEG", imgX, imgY, w, h);
-          doc.setFontSize(6);
-          doc.setTextColor(100, 100, 100);
-          const nome = img.nome_arquivo || "Imagem";
-          const nomeExibido =
-            nome.length > 20 ? nome.slice(0, 18) + "..." : nome;
-          doc.text(nomeExibido, imgX, imgY + h + 4);
-
-          imgX += w + spacing;
-          colCount++;
-          if (colCount >= cols) {
-            imgX = margin + 6;
-            imgY += h + 10;
-            colCount = 0;
-          }
-        } catch (e) {
-          console.warn("Erro ao adicionar imagem:", e.message);
         }
       }
-      y = imgY + 10;
-    }
 
-    // Histórico
-    if (
-      options.sections.historico !== false &&
-      historico &&
-      historico.length > 1
-    ) {
-      y += 6;
-      doc.setDrawColor(200, 200, 200);
-      doc.roundedRect(
-        margin,
-        y - 2,
-        pageWidth - 2 * margin,
-        15 + Math.min(historico.length, 4) * 10,
-        3,
-        3,
-        "S",
-      );
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(
-        margin,
-        y - 2,
-        pageWidth - 2 * margin,
-        15 + Math.min(historico.length, 4) * 10,
-        3,
-        3,
-        "F",
-      );
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 63, 135);
-      doc.text("HISTÓRICO DE VERSÕES", margin + 4, y + 4);
-      y += 8;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(30, 41, 59);
-
-      const sorted = [...historico].sort(
-        (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
-      );
-      const mostrar = sorted.slice(0, 4);
-      mostrar.forEach((item) => {
-        const versao = item.numero_versao || 1;
-        const data = new Date(item.criado_em).toLocaleString("pt-BR");
-        const isOriginal = item.is_original;
-        const status = this.getStatusLabel(item.status);
-        doc.text(
-          `${isOriginal ? "Original" : `v${versao}`} - ${data} (${status})`,
-          margin + 6,
-          y,
-        );
-        y += 6;
-      });
-      if (sorted.length > 4) {
-        doc.text(`+ ${sorted.length - 4} outras versões`, margin + 6, y);
-        y += 6;
+      if (hasValue(ocorrencia.hash_pericial)) {
+        sectionTitle("Integridade do registro");
+        drawRow([["Hash registrado no sistema", ocorrencia.hash_pericial]]);
       }
-      y += 4;
-    }
 
-    // Rodapé
-    const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setDrawColor(200, 200, 200);
-      doc.line(
-        margin,
-        doc.internal.pageSize.height - 12,
-        pageWidth - margin,
-        doc.internal.pageSize.height - 12,
-      );
-      doc.setFontSize(7);
-      doc.setTextColor(150, 150, 150);
-      doc.text(
-        `Guarda Municipal de Pitangueiras - PR | ${new Date().toLocaleString("pt-BR")}`,
-        margin,
-        doc.internal.pageSize.height - 5,
-      );
-      if (options.footer.includeHash && ocorrencia.hash_pericial) {
-        const hashShort = ocorrencia.hash_pericial.substring(0, 16) + "...";
-        doc.text(
-          `Hash: ${hashShort}`,
-          pageWidth / 2,
-          doc.internal.pageSize.height - 5,
-          { align: "center" },
-        );
-      }
-      doc.text(
-        `Página ${i} de ${pageCount}`,
-        pageWidth - margin,
-        doc.internal.pageSize.height - 5,
-        { align: "right" },
-      );
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) drawFooter(i, totalPages);
+      return doc;
     }
-
-    // Marca d'água
-    if (options.watermark) {
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(options.watermark.fontSize || 32);
-        doc.setTextColor(200, 200, 200);
-        doc.setFont("helvetica", "bold");
-        try {
-          doc.text(
-            options.watermark.text,
-            pageWidth / 2,
-            doc.internal.pageSize.height / 2,
-            {
-              align: "center",
-              angle: options.watermark.angle || 45,
-            },
-          );
-        } catch (e) {
-          doc.text(
-            options.watermark.text,
-            pageWidth / 2,
-            doc.internal.pageSize.height / 2,
-            {
-              align: "center",
-            },
-          );
-        }
-      }
-    }
-
-    return doc;
-  }
 
   // ============================================
   // EXPORTAÇÃO DE RELATÓRIO

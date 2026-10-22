@@ -22,6 +22,11 @@
  * - Configurações de geolocalização (precisão, timeout)
  * - Configurações de segurança (criptografia, tentativas)
  * - Constantes centralizadas para facilitar manutenção
+ * - 🔥 ALTERADO: Removido MAX_ANEXOS (agora ilimitado)
+ * - 🔥 NOVO: Configurações para retificações de abordagens
+ * - 🔥 NOVO: Configurações para notificações
+ * - 🔥 NOVO: Configurações de limites para abordagens
+ * - 🔥 NOVO: Configurações para data/hora finalização
  */
 
 // ============================================
@@ -92,18 +97,19 @@ const CONFIG = {
   PUSH: {
     VAPID_PUBLIC_KEY:
       "BEl62iU3gU0tG3tW5x8vK6oQ3pM1N7oK2lN9sP0rS5tV6wX9yZ4aB7cD8eF0gH1iJ2kL3mN4oP5qR6sT7uV8wX9yZ0",
-    VAPID_PRIVATE_KEY: "", // Mantido em segredo no servidor
     APPLICATION_SERVER_KEY:
       "BEl62iU3gU0tG3tW5x8vK6oQ3pM1N7oK2lN9sP0rS5tV6wX9yZ4aB7cD8eF0gH1iJ2kL3mN4oP5qR6sT7uV8wX9yZ0",
-    ICON: "/assets/icons/icon-192x192.ico",
-    BADGE: "/assets/icons/icon-192x192.ico",
-    SOUND: "/assets/sounds/notification.mp3",
+    ICON: "./assets/icons/icon-192x192.png",
+    BADGE: "./assets/icons/favicon-32x32.png",
+    SOUND: null,
     VIBRATE_PATTERN: [200, 100, 200],
     REQUIRES_INTERACTION: true,
     TTL: 86400, // 24 horas
     TOPICS: {
       RETIFICACOES: "retificacoes",
+      RETIFICACOES_ABORDAGENS: "retificacoes_abordagens",
       NOVAS_OCORRENCIAS: "novas_ocorrencias",
+      NOVAS_ABORDAGENS: "novas_abordagens",
       MURAL: "mural",
       SISTEMA: "sistema",
     },
@@ -144,9 +150,11 @@ const CONFIG = {
   // LIMITES E THRESHOLDS
   // ============================================
   LIMITS: {
-    MAX_ANEXOS: 5,
-    MAX_IMAGE_SIZE: 10485760, // 10MB
-    MAX_FILE_SIZE: 20971520, // 20MB
+    // 🔥 ALTERADO: MAX_ANEXOS removido - agora ilimitado
+    // MAX_ANEXOS: 5, // REMOVIDO - Substituído por ANEXOS_ILIMITADO: true
+    ANEXOS_ILIMITADO: true, // 🔥 NOVO: Indica que anexos são ilimitados
+    MAX_IMAGE_SIZE: 10485760, // 10MB (mantido para controle de tamanho individual)
+    MAX_FILE_SIZE: 20971520, // 20MB (mantido para controle de tamanho individual)
     MAX_COMENTARIOS: 100,
     MAX_REACOES: 50,
     MAX_ENVOLVIDOS: 20,
@@ -155,6 +163,26 @@ const CONFIG = {
     SEARCH_MIN_CHARS: 2,
     REINCIDENCIA_ADVERTENCIA: 2,
     REINCIDENCIA_MULTA: 4,
+    // 🔥 NOVO: Limites para abordagens
+    ABORDAGENS: {
+      MAX_FOTOS: null, // null = ilimitado
+      MAX_TAMANHO_TOTAL_MB: 50, // 50MB total
+      MAX_TAMANHO_ARQUIVO_MB: 10, // 10MB por arquivo
+      PRAZO_MAXIMO_DIAS: 180, // 180 dias
+    },
+    // 🔥 NOVO: Limites para retificações
+    RETIFICACOES: {
+      JUSTIFICATIVA_MIN_CARACTERES: 10,
+      MAX_CAMPOS_ALTERADOS: 20,
+      PRAZO_MAXIMO_DIAS: 30, // 30 dias para retificação
+    },
+    // 🔥 NOVO: Limites para notificações
+    NOTIFICACOES: {
+      MAX_POR_USUARIO: 100,
+      RETENCAO_DIAS: 30, // 30 dias
+      INTERVALO_VERIFICACAO: 30000, // 30 segundos
+      MAX_BADGE: 99,
+    },
   },
 
   // ============================================
@@ -165,8 +193,10 @@ const CONFIG = {
     MURAL_UPDATE: 300000, // 5 minutos
     CONSULTA_UPDATE: 60000, // 1 minuto
     RELATORIOS_UPDATE: 300000, // 5 minutos
-    NOTIFICACOES_CHECK: 60000, // 1 minuto
+    NOTIFICACOES_CHECK: 30000, // 30 segundos 🔥 ALTERADO (era 60000)
     GPS_UPDATE: 30000, // 30 segundos
+    RETIFICACOES_CHECK: 60000, // 1 minuto 🔥 NOVO
+    ABORDAGENS_CHECK: 60000, // 1 minuto 🔥 NOVO
   },
 
   // ============================================
@@ -181,6 +211,9 @@ const CONFIG = {
     MAP_TILE_URL: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     MAP_ATTRIBUTION:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    // 🔥 NOVO: URLs para notificações
+    NOTIFICACOES_ICON: "./assets/icons/icon-192x192.png",
+    NOTIFICACOES_BADGE: "./assets/icons/favicon-32x32.png",
   },
 
   // ============================================
@@ -194,6 +227,15 @@ const CONFIG = {
     RECTIFIED: "rectified",
     PENDING_RECTIFICATION: "pending_rectification",
     RECTIFICATION_REJECTED: "rectification_rejected",
+    // 🔥 NOVO: Status para abordagens
+    ABORDAGEM_ATIVA: "ativa",
+    ABORDAGEM_ENCERRADA: "encerrada",
+    ABORDAGEM_FINALIZADA: "finalizada",
+    ABORDAGEM_CANCELADA: "cancelada",
+    // 🔥 NOVO: Status para retificações de abordagens
+    RETIFICACAO_ABORDAGEM_PENDENTE: "pending_rectification",
+    RETIFICACAO_ABORDAGEM_APROVADA: "rectified",
+    RETIFICACAO_ABORDAGEM_REJEITADA: "rectification_rejected",
   },
 
   PERFIS: {
@@ -218,6 +260,22 @@ const CONFIG = {
     SYNC_ERROR: "Erro ao sincronizar dados. Tentando novamente...",
     NO_INTERNET:
       "Sem conexão com a internet. Algumas funcionalidades podem estar limitadas.",
+    // 🔥 NOVO: Mensagens para retificações
+    RETIFICACAO_SOLICITADA: "Solicitação de retificação enviada com sucesso!",
+    RETIFICACAO_APROVADA: "Retificação aprovada com sucesso!",
+    RETIFICACAO_REJEITADA: "Retificação rejeitada.",
+    RETIFICACAO_PENDENTE: "Aguardando análise do supervisor.",
+    // 🔥 NOVO: Mensagens para abordagens
+    ABORDAGEM_SALVA: "Abordagem registrada com sucesso!",
+    ABORDAGEM_FINALIZADA: "Abordagem finalizada com sucesso!",
+    ABORDAGEM_ENCERRADA: "Abordagem encerrada com sucesso!",
+    ABORDAGEM_CANCELADA: "Abordagem cancelada.",
+    // 🔥 NOVO: Mensagens para notificações
+    NOTIFICACOES_MARCADAS: "Todas as notificações marcadas como lidas.",
+    NOTIFICACOES_VAZIAS: "Nenhuma notificação encontrada.",
+    NOTIFICACAO_NOVA: "🔔 Nova notificação!",
+    NOTIFICACOES_NAO_LIDAS: (n) =>
+      `Você tem ${n} notificação(ões) não lida(s).`,
   },
 
   // ============================================
@@ -233,6 +291,14 @@ const CONFIG = {
     DASHBOARD_OCORRENCIAS: "dashboard_ocorrencias",
     SESSION_STATE: "session_state",
     ENCRYPTION_KEY: "encryption_key",
+    // 🔥 NOVO: Chaves para notificações
+    NOTIFICACOES_NAO_LIDAS: "notificacoes_nao_lidas",
+    NOTIFICACOES_ULTIMA_VERIFICACAO: "notificacoes_ultima_verificacao",
+    // 🔥 NOVO: Chaves para abordagens
+    ABORDAGENS_CACHE: "abordagens_cache",
+    ABORDAGENS_STATS: "abordagens_stats",
+    // 🔥 NOVO: Chaves para retificações de abordagens
+    RETIFICACOES_ABORDAGENS_CACHE: "retificacoes_abordagens_cache",
   },
 
   // ============================================
@@ -247,6 +313,15 @@ const CONFIG = {
     INFO: "#003F87",
     DARK: "#1E293B",
     LIGHT: "#F1F5F9",
+    // 🔥 NOVO: Cores para tipos de retificação
+    RETIFICACAO_BO: "#003F87",
+    RETIFICACAO_VEICULO: "#00843D",
+    RETIFICACAO_PESSOA: "#8B5CF6",
+    // 🔥 NOVO: Cores para status de abordagem
+    ABORDAGEM_ATIVA_COLOR: "#00843D",
+    ABORDAGEM_ENCERRADA_COLOR: "#F59E0B",
+    ABORDAGEM_FINALIZADA_COLOR: "#003F87",
+    ABORDAGEM_CANCELADA_COLOR: "#DC2626",
     GRADIENT_PRIMARY: "linear-gradient(135deg, #003F87 0%, #00843D 100%)",
     GRADIENT_HEADER: "linear-gradient(90deg, #002D62 0%, #006B31 100%)",
   },
@@ -261,9 +336,165 @@ const CONFIG = {
     MAX_RETRIES: 5,
     BATCH_SIZE: 50,
     MAX_ITEMS_CACHE: 100,
-    MAX_ANEXOS: 5,
+    // 🔥 ALTERADO: MAX_ANEXOS removido
+    // MAX_ANEXOS: 5, // REMOVIDO
     MAX_IMAGE_SIZE_MB: 10,
     MAX_FILE_SIZE_MB: 20,
+    // 🔥 NOVO: Unidades para notificações
+    NOTIFICACOES_RETENCAO_DIAS: 30,
+    NOTIFICACOES_INTERVALO_VERIFICACAO: 30, // segundos
+    // 🔥 NOVO: Unidades para retificações
+    RETIFICACAO_JUSTIFICATIVA_MIN: 10, // caracteres
+    RETIFICACAO_PRAZO_MAXIMO_DIAS: 30,
+    // 🔥 NOVO: Unidades para abordagens
+    ABORDAGEM_PRAZO_MAXIMO_DIAS: 180,
+    ABORDAGEM_MAX_TAMANHO_TOTAL_MB: 50,
+    ABORDAGEM_MAX_TAMANHO_ARQUIVO_MB: 10,
+  },
+
+  // ============================================
+  // 🔥 NOVO: CONFIGURAÇÕES PARA RETIFICAÇÕES DE ABORDAGENS
+  // ============================================
+  RETIFICACOES_ABORDAGENS: {
+    CAMPOS_RETIFICAVEIS_VEICULO: [
+      "placa",
+      "marca_modelo",
+      "cor",
+      "condutor_nome",
+      "condutor_cpf",
+      "local_abordagem",
+      "motivo",
+      "observacoes",
+      "data_hora_inicio",
+      "data_hora_encerramento",
+    ],
+    CAMPOS_RETIFICAVEIS_PESSOA: [
+      "nome",
+      "alcunha",
+      "cpf",
+      "rg",
+      "caracteristicas_fisicas",
+      "vestimentas",
+      "local_abordagem",
+      "motivo",
+      "observacoes",
+      "data_hora_inicio",
+      "data_hora_encerramento",
+    ],
+    LABELS_VEICULO: {
+      placa: "Placa",
+      marca_modelo: "Marca/Modelo",
+      cor: "Cor",
+      condutor_nome: "Nome do Condutor",
+      condutor_cpf: "CPF do Condutor",
+      local_abordagem: "Local da Abordagem",
+      motivo: "Motivo",
+      observacoes: "Observações",
+      data_hora_inicio: "Data/Hora Início",
+      data_hora_encerramento: "Data/Hora Encerramento",
+    },
+    LABELS_PESSOA: {
+      nome: "Nome",
+      alcunha: "Alcunha",
+      cpf: "CPF",
+      rg: "RG",
+      caracteristicas_fisicas: "Características Físicas",
+      vestimentas: "Vestimentas",
+      local_abordagem: "Local da Abordagem",
+      motivo: "Motivo",
+      observacoes: "Observações",
+      data_hora_inicio: "Data/Hora Início",
+      data_hora_encerramento: "Data/Hora Encerramento",
+    },
+  },
+
+  // ============================================
+  // 🔥 NOVO: CONFIGURAÇÕES PARA NOTIFICAÇÕES
+  // ============================================
+  NOTIFICACOES_CONFIG: {
+    TIPOS: {
+      NOVA_OCORRENCIA: {
+        label: "Nova Ocorrência",
+        icon: "fa-file-alt",
+        cor: "#003F87",
+        som: "notification.mp3",
+      },
+      NOVA_ABORDAGEM: {
+        label: "Nova Abordagem",
+        icon: "fa-search",
+        cor: "#00843D",
+        som: "notification.mp3",
+      },
+      NOVO_MURAL: {
+        label: "Novo Aviso",
+        icon: "fa-bullhorn",
+        cor: "#8B5CF6",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_PENDENTE: {
+        label: "Retificação Pendente",
+        icon: "fa-clock",
+        cor: "#F59E0B",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_APROVADA: {
+        label: "Retificação Aprovada",
+        icon: "fa-check-circle",
+        cor: "#00843D",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_REJEITADA: {
+        label: "Retificação Rejeitada",
+        icon: "fa-times-circle",
+        cor: "#DC2626",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_ABORDAGEM_PENDENTE: {
+        label: "Retificação de Abordagem Pendente",
+        icon: "fa-clock",
+        cor: "#F59E0B",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_ABORDAGEM_APROVADA: {
+        label: "Retificação de Abordagem Aprovada",
+        icon: "fa-check-circle",
+        cor: "#00843D",
+        som: "notification.mp3",
+      },
+      RETIFICACAO_ABORDAGEM_REJEITADA: {
+        label: "Retificação de Abordagem Rejeitada",
+        icon: "fa-times-circle",
+        cor: "#DC2626",
+        som: "notification.mp3",
+      },
+      SISTEMA: {
+        label: "Sistema",
+        icon: "fa-cog",
+        cor: "#6B7280",
+        som: "notification.mp3",
+      },
+    },
+    PRIORIDADES: {
+      ALTA: "alta",
+      MEDIA: "media",
+      BAIXA: "baixa",
+    },
+    DURACOES: {
+      TOAST: 4000, // 4 segundos
+      PUSH_TTL: 86400, // 24 horas
+    },
+  },
+
+  // ============================================
+  // 🔥 NOVO: CONFIGURAÇÕES PARA DATA/HORA FINALIZAÇÃO
+  // ============================================
+  FINALIZACAO: {
+    // Se true, data_hora_finalizacao é preenchida automaticamente
+    AUTO_PREENCHE: true,
+    // Campos que recebem data_hora_finalizacao
+    TABELAS: ["ocorrencias", "abordagens_veiculos", "abordagens_pessoas"],
+    // Status que disparam a finalização
+    STATUS_FINALIZACAO: ["synced", "finalizada", "rectified"],
   },
 };
 
@@ -284,6 +515,10 @@ Object.freeze(CONFIG.MESSAGES);
 Object.freeze(CONFIG.CACHE_KEYS);
 Object.freeze(CONFIG.THEME);
 Object.freeze(CONFIG.UNITS);
+// 🔥 NOVO: Congelar novas configurações
+Object.freeze(CONFIG.RETIFICACOES_ABORDAGENS);
+Object.freeze(CONFIG.NOTIFICACOES_CONFIG);
+Object.freeze(CONFIG.FINALIZACAO);
 
 console.log("📋 CONFIG carregado e congelado");
 console.log(`📍 ${CONFIG.MUNICIPIO} - ${CONFIG.ESTADO}`);
@@ -295,6 +530,19 @@ console.log(`🔄 Sync interval: ${CONFIG.SYNC_INTERVAL / 60000} minutos`);
 console.log(`⏰ Sessão timeout: ${CONFIG.SESSION_TIMEOUT} minutos`);
 console.log(
   `🔔 Notificações: ${CONFIG.PUSH.VAPID_PUBLIC_KEY ? "Ativadas" : "Desativadas"}`,
+);
+// 🔥 NOVO: Log das novas configurações
+console.log(
+  `📎 Anexos: ${CONFIG.LIMITS.ANEXOS_ILIMITADO ? "Ilimitados" : "Limitados"}`,
+);
+console.log(
+  `📋 Retificações de abordagens: ${Object.keys(CONFIG.RETIFICACOES_ABORDAGENS.CAMPOS_RETIFICAVEIS_VEICULO).length} campos (veículos), ${Object.keys(CONFIG.RETIFICACOES_ABORDAGENS.CAMPOS_RETIFICAVEIS_PESSOA).length} campos (pessoas)`,
+);
+console.log(
+  `🔄 Notificações: ${Object.keys(CONFIG.NOTIFICACOES_CONFIG.TIPOS).length} tipos configurados`,
+);
+console.log(
+  `✅ Finalização automática: ${CONFIG.FINALIZACAO.AUTO_PREENCHE ? "Ativada" : "Desativada"}`,
 );
 
 // ============================================
@@ -320,6 +568,22 @@ const STATUS = CONFIG.STATUS;
 const PERFIS = CONFIG.PERFIS;
 const LIMITS = CONFIG.LIMITS;
 
+// 🔥 NOVO: Constantes para retificações de abordagens
+const RETIFICACOES_ABORDAGENS = CONFIG.RETIFICACOES_ABORDAGENS;
+const CAMPOS_RETIFICAVEIS_VEICULO =
+  RETIFICACOES_ABORDAGENS.CAMPOS_RETIFICAVEIS_VEICULO;
+const CAMPOS_RETIFICAVEIS_PESSOA =
+  RETIFICACOES_ABORDAGENS.CAMPOS_RETIFICAVEIS_PESSOA;
+const LABELS_RETIFICACAO_VEICULO = RETIFICACOES_ABORDAGENS.LABELS_VEICULO;
+const LABELS_RETIFICACAO_PESSOA = RETIFICACOES_ABORDAGENS.LABELS_PESSOA;
+
+// 🔥 NOVO: Constantes para notificações
+const NOTIFICACOES_TIPOS = CONFIG.NOTIFICACOES_CONFIG.TIPOS;
+const NOTIFICACOES_PRIORIDADES = CONFIG.NOTIFICACOES_CONFIG.PRIORIDADES;
+
+// 🔥 NOVO: Constantes para finalização
+const FINALIZACAO = CONFIG.FINALIZACAO;
+
 // Função auxiliar para obter configuração por chave
 function getConfig(key, defaultValue = null) {
   const keys = key.split(".");
@@ -344,6 +608,47 @@ function getStorageUrl(path) {
   return `${CONFIG.URLS.STORAGE_PUBLIC_URL}/${path}`;
 }
 
+// 🔥 NOVO: Função auxiliar para verificar se anexos são ilimitados
+function anexosIlimitados() {
+  return CONFIG.LIMITS.ANEXOS_ILIMITADO === true;
+}
+
+// 🔥 NOVO: Função auxiliar para obter limite de anexos (null = ilimitado)
+function getLimiteAnexos() {
+  return CONFIG.LIMITS.ANEXOS_ILIMITADO
+    ? null
+    : CONFIG.LIMITS.MAX_ANEXOS || 999;
+}
+
+// 🔥 NOVO: Função auxiliar para obter campos retificáveis por tipo
+function getCamposRetificaveis(tipo) {
+  if (tipo === "veiculo") {
+    return CAMPOS_RETIFICAVEIS_VEICULO;
+  }
+  if (tipo === "pessoa") {
+    return CAMPOS_RETIFICAVEIS_PESSOA;
+  }
+  return [];
+}
+
+// 🔥 NOVO: Função auxiliar para obter label de campo retificável
+function getLabelCampoRetificavel(tipo, campo) {
+  const labels =
+    tipo === "veiculo" ? LABELS_RETIFICACAO_VEICULO : LABELS_RETIFICACAO_PESSOA;
+  return labels[campo] || campo;
+}
+
+// 🔥 NOVO: Função auxiliar para verificar se um campo é retificável
+function isCampoRetificavel(tipo, campo) {
+  const campos = getCamposRetificaveis(tipo);
+  return campos.includes(campo);
+}
+
+// 🔥 NOVO: Função auxiliar para obter tipo de notificação
+function getTipoNotificacao(tipo) {
+  return NOTIFICACOES_TIPOS[tipo] || null;
+}
+
 // Exportar funções auxiliares
 if (typeof window !== "undefined") {
   window.getConfig = getConfig;
@@ -352,6 +657,18 @@ if (typeof window !== "undefined") {
   window.STATUS = STATUS;
   window.PERFIS = PERFIS;
   window.LIMITS = LIMITS;
+  // 🔥 NOVO: Exportar novas funções auxiliares
+  window.anexosIlimitados = anexosIlimitados;
+  window.getLimiteAnexos = getLimiteAnexos;
+  window.getCamposRetificaveis = getCamposRetificaveis;
+  window.getLabelCampoRetificavel = getLabelCampoRetificavel;
+  window.isCampoRetificavel = isCampoRetificavel;
+  window.getTipoNotificacao = getTipoNotificacao;
+  window.RETIFICACOES_ABORDAGENS = RETIFICACOES_ABORDAGENS;
+  window.NOTIFICACOES_TIPOS = NOTIFICACOES_TIPOS;
+  window.FINALIZACAO = FINALIZACAO;
+  window.CAMPOS_RETIFICAVEIS_VEICULO = CAMPOS_RETIFICAVEIS_VEICULO;
+  window.CAMPOS_RETIFICAVEIS_PESSOA = CAMPOS_RETIFICAVEIS_PESSOA;
 }
 
 console.log("📋 Configurações auxiliares carregadas");

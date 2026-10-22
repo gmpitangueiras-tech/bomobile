@@ -15,6 +15,12 @@
  * - Suporte a múltiplas imagens com carrossel
  * - Avisos urgentes com destaque
  *
+ * MELHORIAS APLICADAS:
+ * - 🔥 ALTERADO: Anexos sem limite (removido MAX_ANEXOS)
+ * - 🔥 NOVO: Upload de múltiplas imagens sem limite
+ * - 🔥 NOVO: Validação de anexos sem limite de quantidade
+ * - 🔥 NOVO: Indicador visual de anexos ilimitados
+ *
  * Depende de: authManager (global), supabaseClient (global),
  *             utils, ui
  */
@@ -81,6 +87,9 @@ const TIPOS_AVISO_LISTA = [
 const CACHE_KEY_MURAL = "mural_avisos_cache";
 const CACHE_EXPIRY = 60000; // 1 minuto
 const ITENS_POR_PAGINA = 5;
+
+// 🔥 ALTERADO: Removido MAX_ANEXOS
+// const MAX_ANEXOS = 3; // REMOVIDO
 
 // ============================================
 // ESTADO DO MÓDULO
@@ -1442,7 +1451,7 @@ export async function marcarMuralComoLido() {
 }
 
 // ============================================
-// FORMULÁRIO - NOVO AVISO
+// 🔥 ALTERADO: FORMULÁRIO - NOVO AVISO (SEM LIMITE DE ANEXOS)
 // ============================================
 
 export function abrirFormularioMural(container, appInstance) {
@@ -1518,18 +1527,22 @@ export function abrirFormularioMural(container, appInstance) {
               style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:80px;resize:vertical;"></textarea>
           </div>
 
+          <!-- 🔥 ALTERADO: Fotos - sem limite -->
           <div class="form-group" style="margin-bottom:12px;">
             <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
-              <i class="fas fa-camera"></i> Fotos (máx 3)
+              <i class="fas fa-camera"></i> Fotos (ilimitado) 🔥
             </label>
             <div style="display:flex;flex-direction:column;gap:6px;">
               <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" 
                 onchange="window._muralPreviewImagens(this)">
               <button type="button" onclick="document.getElementById('muralArquivo').click()" 
-                class="btn-secondary" style="width:100%;font-size:12px;padding:6px;border-radius:12px;min-height:40px;">
+                class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:12px;min-height:40px;">
                 <i class="fas fa-camera"></i> Selecionar Fotos
               </button>
               <div id="muralPreviewArea" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
+              <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
+                <i class="fas fa-info-circle"></i> Sem limite de quantidade. Cada imagem será comprimida.
+              </div>
             </div>
           </div>
 
@@ -1558,18 +1571,17 @@ export function abrirFormularioMural(container, appInstance) {
   window._muralArquivosTemp = [];
 }
 
+// ============================================
+// 🔥 ALTERADO: PREVIEW DE IMAGENS (SEM LIMITE)
+// ============================================
+
 function previewMultiplasImagensMural(input) {
   const area = document.getElementById("muralPreviewArea");
   if (!area) return;
 
+  // 🔥 ALTERADO: Removido limite de 3 imagens
   const files = input.files;
-  if (files.length > 3) {
-    if (typeof window.app !== "undefined" && window.app.showToast) {
-      window.app.showToast("Máximo 3 imagens permitidas", "warning");
-    }
-    input.value = "";
-    return;
-  }
+  // if (files.length > 3) { ... } // REMOVIDO
 
   area.innerHTML = "";
   const imagensData = [];
@@ -1621,7 +1633,7 @@ function removerImagemMuralPreview(btn) {
 }
 
 // ============================================
-// SALVAR AVISO
+// 🔥 ALTERADO: SALVAR AVISO (SEM LIMITE DE ANEXOS)
 // ============================================
 
 export async function salvarAvisoMural(container, appInstance) {
@@ -1650,13 +1662,9 @@ export async function salvarAvisoMural(container, appInstance) {
     return;
   }
 
+  // 🔥 ALTERADO: Removido limite de arquivos
   const files = window._muralArquivosTemp || [];
-  if (files.length > 3) {
-    if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Máximo 3 imagens permitidas", "warning");
-    }
-    return;
-  }
+  // if (files.length > 3) { ... } // REMOVIDO
 
   if (appInstance && appInstance.showToast) {
     appInstance.showToast("Publicando aviso...", "info");
@@ -1719,11 +1727,15 @@ export async function salvarAvisoMural(container, appInstance) {
   }
 }
 
+// ============================================
+// 🔥 ALTERADO: PROCESSAR ANEXOS DO MURAL (SEM LIMITE)
+// ============================================
+
 async function processarAnexosMural(files) {
-  const maxFiles = 3;
+  // 🔥 ALTERADO: Removido limite de arquivos
   const maxSize = 1 * 1024 * 1024;
   const anexos = [];
-  const filesToProcess = Array.from(files).slice(0, maxFiles);
+  const filesToProcess = Array.from(files); // Removido .slice(0, maxFiles)
 
   for (const file of filesToProcess) {
     try {

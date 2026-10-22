@@ -962,8 +962,8 @@ class Notificacoes {
 
       registration.showNotification(titulo, {
         body: mensagem,
-        icon: "/assets/icons/icon-192x192.png",
-        badge: "/assets/icons/icon-192x192.png",
+        icon: new URL("assets/icons/icon-192x192.png", document.baseURI).href,
+        badge: new URL("assets/icons/favicon-32x32.png", document.baseURI).href,
         vibrate: [200, 100, 200],
         data: {
           date: new Date().toISOString(),

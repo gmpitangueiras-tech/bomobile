@@ -18,6 +18,7 @@
  * - Logs: todas as ações importantes são registradas na tabela logs_acesso
  * - Dados do criador (nome, cpf) são carregados após a listagem (busca separada otimizada com cache)
  * - 🔥 NOVO: Assinaturas são armazenadas separadamente e NÃO aparecem na galeria de anexos
+ * - 🔥 NOVO: Assinaturas são vinculadas a envolvidos via envolvido_id
  *
  * MELHORIAS APLICADAS:
  * - Correção de anexos (verificação de URLs e persistência)
@@ -34,9 +35,11 @@
  * - 🔥 NOVO: Logs de finalização com data_hora_finalizacao
  * - 🔥 NOVO: Método para atualizar data_hora_finalizacao
  * - 🔥 NOVO: Assinaturas separadas de anexos (campo assinaturas JSONB)
- * - 🔥 NOVO: Métodos para salvar, listar e remover assinaturas
+ * - 🔥 NOVO: Assinaturas vinculadas a envolvidos via envolvido_id
+ * - 🔥 NOVO: Métodos para salvar, listar e remover assinaturas com envolvido_id
  * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
  * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
+ * - 🔥 CORRIGIDO: Método listarAssinaturas retorna dados completos com envolvido_id
  */
 class OcorrenciaManager {
   constructor() {
@@ -466,6 +469,18 @@ class OcorrenciaManager {
           .slice(0, 19);
       }
 
+      // 🔥 GARANTIR QUE ASSINATURAS SEJA UM ARRAY COM INVOLVIDO_ID
+      let assinaturas = dados.assinaturas || [];
+      // Garantir que cada assinatura tenha envolvido_id se disponível
+      assinaturas = assinaturas.map((ass) => {
+        // Se não tiver envolvido_id, tentar buscar pelo tipo (fallback)
+        if (!ass.envolvido_id && ass.tipo) {
+          // Fallback: manter como está, mas logar aviso
+          console.warn("Assinatura sem envolvido_id:", ass);
+        }
+        return ass;
+      });
+
       const ocorrencia = {
         ...dados,
         numero_temporario: numeroTemporario,
@@ -509,14 +524,16 @@ class OcorrenciaManager {
         modo_criacao: dados.modo_criacao || "completo",
         completado_em: null,
         completado_por: null,
-        // 🔥 NOVO: Assinaturas - array vazio por padrão
-        assinaturas: dados.assinaturas || [],
+        // 🔥 NOVO: Assinaturas - array com envolvido_id
+        assinaturas: assinaturas,
       };
 
       // 🔥 CORRIGIDO: Remover campos que não existem no banco
       delete ocorrencia.assinaturas_objeto;
       delete ocorrencia.envolvidos;
+      delete ocorrencia.guardasParticipantes;
       delete ocorrencia.anexos;
+      delete ocorrencia.envolvidosMap;
 
       const { data, error } = await client
         .from("ocorrencias")
@@ -531,6 +548,8 @@ class OcorrenciaManager {
         data.id,
         "| Modo:",
         data.modo_criacao,
+        "| Assinaturas:",
+        data.assinaturas?.length || 0,
       );
 
       await authManager.logCriarOcorrencia(user.id, data.id);
@@ -541,7 +560,10 @@ class OcorrenciaManager {
         "ocorrencias",
         data.id,
         null,
-        { modo_criacao: data.modo_criacao },
+        {
+          modo_criacao: data.modo_criacao,
+          total_assinaturas: data.assinaturas?.length || 0,
+        },
       );
 
       return { success: true, data };
@@ -592,6 +614,9 @@ class OcorrenciaManager {
       }
       if (filtros.limit) {
         query = query.limit(filtros.limit);
+      }
+      if (filtros.modo_criacao) {
+        query = query.eq("modo_criacao", filtros.modo_criacao);
       }
 
       query = query.order("criado_em", { ascending: false });
@@ -895,7 +920,7 @@ class OcorrenciaManager {
         status: status,
         numero_ocorrencia: numeroOficial,
         data_hora_encerramento: dataEncerramento,
-        data_hora_finalizacao: dataFinalizacao, // 🔥 NOVO
+        data_hora_finalizacao: dataFinalizacao,
         esta_ativa: true,
         hash_pericial: hashHex,
       });
@@ -1403,7 +1428,6 @@ class OcorrenciaManager {
           )
             .toISOString()
             .slice(0, 19),
-          // 🔥 NOVO: data_hora_finalizacao
           data_hora_finalizacao: dataFinalizacao,
         })
         .eq("id", retificacaoId)
@@ -2086,13 +2110,14 @@ class OcorrenciaManager {
   }
 
   // ============================================
-  // 🔥 NOVO: ASSINATURAS
+  // 🔥 NOVO: ASSINATURAS COM ENVOLVIDO_ID
   // ============================================
 
   /**
-   * Adiciona uma assinatura à ocorrência
+   * Adiciona uma assinatura à ocorrência vinculada a um envolvido
    * @param {string} ocorrenciaId - ID da ocorrência
    * @param {Object} dadosAssinatura - Dados da assinatura
+   * @param {string} dadosAssinatura.envolvido_id - ID do envolvido (OBRIGATÓRIO)
    * @param {string} dadosAssinatura.tipo - 'autor', 'vitima', 'testemunha', 'solicitante'
    * @param {string} dadosAssinatura.nome - Nome do signatário
    * @param {string} dadosAssinatura.cpf - CPF do signatário (opcional)
@@ -2111,6 +2136,14 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
+      // Validar envolvido_id
+      if (!dadosAssinatura.envolvido_id) {
+        return {
+          success: false,
+          error: "envolvido_id é obrigatório para vincular a assinatura",
+        };
+      }
+
       // Buscar a ocorrência
       const { data: ocorrencia, error: buscaError } = await client
         .from("ocorrencias")
@@ -2123,10 +2156,26 @@ class OcorrenciaManager {
       // Obter array atual de assinaturas
       let assinaturas = ocorrencia.assinaturas || [];
 
+      // Verificar se este envolvido já assinou
+      const assinaturaExistente = assinaturas.find(
+        (a) => a.envolvido_id === dadosAssinatura.envolvido_id,
+      );
+
+      if (assinaturaExistente) {
+        // Substituir a assinatura existente
+        assinaturas = assinaturas.filter(
+          (a) => a.envolvido_id !== dadosAssinatura.envolvido_id,
+        );
+        console.log(
+          `🔄 Substituindo assinatura do envolvido ${dadosAssinatura.envolvido_id}`,
+        );
+      }
+
       // Criar nova assinatura
       const novaAssinatura = {
         id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
-        tipo: dadosAssinatura.tipo,
+        envolvido_id: dadosAssinatura.envolvido_id,
+        tipo: dadosAssinatura.tipo || "outro",
         nome: dadosAssinatura.nome,
         cpf: dadosAssinatura.cpf || null,
         assinatura_data_url: dadosAssinatura.assinatura_data_url,
@@ -2152,7 +2201,12 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      console.log("✅ Assinatura adicionada à ocorrência:", ocorrenciaId);
+      console.log(
+        "✅ Assinatura adicionada à ocorrência:",
+        ocorrenciaId,
+        "| Envolvido:",
+        dadosAssinatura.envolvido_id,
+      );
 
       // Registrar log pericial
       await this.registrarLogPericial(
@@ -2160,7 +2214,13 @@ class OcorrenciaManager {
         "ocorrencias",
         ocorrenciaId,
         null,
-        { assinatura: novaAssinatura },
+        {
+          assinatura: {
+            envolvido_id: novaAssinatura.envolvido_id,
+            tipo: novaAssinatura.tipo,
+            nome: novaAssinatura.nome,
+          },
+        },
       );
 
       return { success: true, data: data, assinatura: novaAssinatura };
@@ -2171,7 +2231,7 @@ class OcorrenciaManager {
   }
 
   /**
-   * Lista todas as assinaturas de uma ocorrência
+   * Lista todas as assinaturas de uma ocorrência com dados completos
    * @param {string} ocorrenciaId - ID da ocorrência
    * @returns {Promise<Object>}
    */
@@ -2190,7 +2250,39 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      return { success: true, data: data?.assinaturas || [] };
+      const assinaturas = data?.assinaturas || [];
+
+      // 🔥 Buscar dados completos dos envolvidos para cada assinatura
+      if (assinaturas.length > 0) {
+        const idsEnvolvidos = assinaturas
+          .map((a) => a.envolvido_id)
+          .filter((id) => id);
+
+        if (idsEnvolvidos.length > 0) {
+          const { data: envolvidos, error: envError } = await client
+            .from("envolvidos")
+            .select("id, nome_completo, tipo, cpf, telefone")
+            .in("id", idsEnvolvidos);
+
+          if (!envError && envolvidos) {
+            const mapaEnvolvidos = {};
+            envolvidos.forEach((env) => {
+              mapaEnvolvidos[env.id] = env;
+            });
+
+            // Enriquecer as assinaturas com dados completos dos envolvidos
+            return {
+              success: true,
+              data: assinaturas.map((ass) => ({
+                ...ass,
+                envolvido: mapaEnvolvidos[ass.envolvido_id] || null,
+              })),
+            };
+          }
+        }
+      }
+
+      return { success: true, data: assinaturas };
     } catch (error) {
       console.error("❌ Erro ao listar assinaturas:", error);
       return { success: false, error: error.message };
@@ -2200,10 +2292,11 @@ class OcorrenciaManager {
   /**
    * Remove uma assinatura de uma ocorrência
    * @param {string} ocorrenciaId - ID da ocorrência
-   * @param {string} assinaturaId - ID da assinatura a remover
+   * @param {string} assinaturaId - ID da assinatura a remover (ou envolvido_id)
+   * @param {boolean} porEnvolvido - Se true, busca por envolvido_id em vez de id
    * @returns {Promise<Object>}
    */
-  async removerAssinatura(ocorrenciaId, assinaturaId) {
+  async removerAssinatura(ocorrenciaId, assinaturaId, porEnvolvido = false) {
     try {
       const user = authManager.getUser();
       if (!user) {
@@ -2225,12 +2318,30 @@ class OcorrenciaManager {
       if (buscaError) throw buscaError;
 
       let assinaturas = ocorrencia.assinaturas || [];
+      let assinaturaRemovida = null;
 
-      // Filtrar a assinatura a remover
-      const assinaturaRemovida = assinaturas.find(
-        (a) => a.id === assinaturaId,
-      );
-      assinaturas = assinaturas.filter((a) => a.id !== assinaturaId);
+      if (porEnvolvido) {
+        // Remover por envolvido_id
+        assinaturaRemovida = assinaturas.find(
+          (a) => a.envolvido_id === assinaturaId,
+        );
+        assinaturas = assinaturas.filter(
+          (a) => a.envolvido_id !== assinaturaId,
+        );
+      } else {
+        // Remover por id da assinatura
+        assinaturaRemovida = assinaturas.find((a) => a.id === assinaturaId);
+        assinaturas = assinaturas.filter((a) => a.id !== assinaturaId);
+      }
+
+      if (!assinaturaRemovida) {
+        return {
+          success: false,
+          error: porEnvolvido
+            ? "Assinatura não encontrada para este envolvido"
+            : "Assinatura não encontrada",
+        };
+      }
 
       // Atualizar a ocorrência
       const { data, error } = await client
@@ -2260,6 +2371,142 @@ class OcorrenciaManager {
       return { success: true, data: data };
     } catch (error) {
       console.error("❌ Erro ao remover assinatura:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Verifica se um envolvido já possui assinatura em uma ocorrência
+   * @param {string} ocorrenciaId - ID da ocorrência
+   * @param {string} envolvidoId - ID do envolvido
+   * @returns {Promise<Object>}
+   */
+  async verificarAssinaturaExistente(ocorrenciaId, envolvidoId) {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) {
+        return { success: false, error: "Erro ao conectar ao servidor" };
+      }
+
+      const { data, error } = await client
+        .from("ocorrencias")
+        .select("assinaturas")
+        .eq("id", ocorrenciaId)
+        .single();
+
+      if (error) throw error;
+
+      const assinaturas = data?.assinaturas || [];
+      const existente = assinaturas.find((a) => a.envolvido_id === envolvidoId);
+
+      return {
+        success: true,
+        data: { existe: !!existente, assinatura: existente || null },
+      };
+    } catch (error) {
+      console.error("❌ Erro ao verificar assinatura existente:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ============================================
+  // P3 — EQUIPE OPERACIONAL DA OCORRÊNCIA
+  // ============================================
+
+  async listarGuardasDisponiveis() {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
+      const { data, error } = await client
+        .from("usuarios")
+        .select("id, nome_completo, matricula, perfil, status")
+        .eq("status", "ativo")
+        .order("nome_completo", { ascending: true });
+      if (error) throw error;
+      return { success: true, data: data || [] };
+    } catch (error) {
+      console.error("❌ Erro ao listar guardas disponíveis:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async listarGuardas(ocorrenciaId) {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
+      const { data, error } = await client
+        .from("ocorrencia_guardas")
+        .select("*")
+        .eq("ocorrencia_id", ocorrenciaId)
+        .eq("esta_ativo", true)
+        .order("ordem", { ascending: true });
+      if (error) throw error;
+      return { success: true, data: data || [] };
+    } catch (error) {
+      console.error("❌ Erro ao listar equipe da ocorrência:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async salvarGuardas(ocorrenciaId, guardas) {
+    const equipe = (guardas || []).filter((g) => g && g.guarda_id && g.papel);
+    if (!ocorrenciaId || equipe.length === 0) {
+      return { success: false, error: "Equipe da ocorrência incompleta" };
+    }
+
+    try {
+      const user = authManager.getUser();
+      const client = supabaseClient.getClient();
+      if (!client || !user) return { success: false, error: "Usuário não autenticado" };
+
+      const atuaisResult = await this.listarGuardas(ocorrenciaId);
+      if (!atuaisResult.success) return atuaisResult;
+      const atuais = atuaisResult.data || [];
+      const desejados = equipe.map((g) => ({
+        guarda_id: g.guarda_id,
+        papel: g.papel,
+      }));
+      const chave = (g) => `${g.guarda_id}:${g.papel}`;
+      const desejadasChaves = new Set(desejados.map(chave));
+
+      const remover = atuais.filter((g) => !desejadasChaves.has(chave(g)));
+      if (remover.length > 0) {
+        const ids = remover.map((g) => g.id);
+        const { error } = await client
+          .from("ocorrencia_guardas")
+          .update({
+            esta_ativo: false,
+            removido_em: new Date().toISOString(),
+            removido_por: user.id,
+            motivo_remocao: "Substituição da equipe durante edição",
+            atualizado_em: new Date().toISOString(),
+          })
+          .in("id", ids);
+        if (error) throw error;
+      }
+
+      const atuaisChaves = new Set(atuais.map(chave));
+      const novos = equipe
+        .filter((g) => !atuaisChaves.has(chave(g)))
+        .map((g, index) => ({
+          ocorrencia_id: ocorrenciaId,
+          guarda_id: g.guarda_id,
+          papel: g.papel,
+          ordem: g.ordem || index + 1,
+          nome_snapshot: g.nome_snapshot || g.nome_completo || "Guarda não informado",
+          matricula_snapshot: g.matricula_snapshot || g.matricula || null,
+          perfil_snapshot: g.perfil_snapshot || g.perfil || null,
+          selecionado_por: g.selecionado_por || user.id,
+          esta_ativo: true,
+        }));
+
+      if (novos.length > 0) {
+        const { error } = await client.from("ocorrencia_guardas").insert(novos);
+        if (error) throw error;
+      }
+      return { success: true };
+    } catch (error) {
+      console.error("❌ Erro ao salvar equipe da ocorrência:", error);
       return { success: false, error: error.message };
     }
   }
@@ -2341,8 +2588,6 @@ class OcorrenciaManager {
       if (!client) {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
-
-      // 🔥 ALTERADO: Removido limite de anexos
 
       const resultados = [];
 
@@ -2476,6 +2721,18 @@ class OcorrenciaManager {
         .toISOString()
         .slice(0, 10);
 
+      // 🔥 NOVO: Estatísticas de assinaturas com envolvido_id
+      const totalAssinaturas = data.reduce(
+        (acc, o) => acc + (o.assinaturas?.length || 0),
+        0,
+      );
+      const assinaturasComEnvolvido = data.reduce((acc, o) => {
+        if (o.assinaturas) {
+          return acc + o.assinaturas.filter((a) => a.envolvido_id).length;
+        }
+        return acc;
+      }, 0);
+
       const stats = {
         total: data.length,
         hoje: data.filter((o) => o.criado_em.slice(0, 10) === hoje).length,
@@ -2511,10 +2768,9 @@ class OcorrenciaManager {
         com_assinaturas: data.filter(
           (o) => o.assinaturas && o.assinaturas.length > 0,
         ).length,
-        total_assinaturas: data.reduce(
-          (acc, o) => acc + (o.assinaturas?.length || 0),
-          0,
-        ),
+        total_assinaturas: totalAssinaturas,
+        assinaturas_com_envolvido: assinaturasComEnvolvido,
+        assinaturas_sem_envolvido: totalAssinaturas - assinaturasComEnvolvido,
       };
 
       return { success: true, data: stats };

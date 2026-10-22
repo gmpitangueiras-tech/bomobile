@@ -109,9 +109,14 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
           navigator.serviceWorker
-            .register("sw.js")
+            .register("sw.js", { updateViaCache: "none" })
             .then(function (registration) {
               console.log("✅ Service Worker registrado com sucesso");
+
+              // Forçar a verificação do script novo a cada abertura do app.
+              registration.update().catch(function (error) {
+                console.warn("⚠️ Erro ao verificar atualização do app:", error);
+              });
 
               // Verificar se há suporte para notificações push
               if (

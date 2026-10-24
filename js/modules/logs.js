@@ -9,7 +9,7 @@
 const PAGE_SIZE = 50;
 const EXPORT_PAGE_SIZE = 500;
 const EXPORT_MAX_ROWS = 5000;
-const TZ_OPERACIONAL = "America/Sao_Paulo";
+const TZ_OPERACIONAL = globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo";
 
 let estado = {
   filtros: {
@@ -65,7 +65,7 @@ const ENTIDADE_LABELS = {
 };
 
 export async function renderLogs(container, appInstance) {
-  if (typeof authManager === "undefined" || !authManager.isSupervisor()) {
+  if (typeof authManager === "undefined" || !authManager.isAdministrador()) {
     container.innerHTML = renderAcessoNegado();
     return;
   }

@@ -714,12 +714,12 @@ class SyncManager {
 
       const dataInicio =
         options.dataInicio ||
-        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        globalThis.obterTimestampBrasilSemFuso(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
 
       const results = {
         ocorrencias: [],
         abordagens: { veiculos: [], pessoas: [] },
-        atualizado_em: new Date().toISOString(),
+        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
       };
 
       // Baixar ocorrências do usuário

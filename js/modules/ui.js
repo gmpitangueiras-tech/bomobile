@@ -470,6 +470,10 @@ export function renderBottomSheetItems() {
 
   const isSupervisor =
     typeof authManager !== "undefined" && authManager.isSupervisor();
+  const podeVerRelatorios =
+    typeof authManager !== "undefined" && authManager.podeAcessarRelatorios?.();
+  const isAdministrador =
+    typeof authManager !== "undefined" && authManager.isAdministrador?.();
 
   // 🔥 NOVO: Atualizar badge de notificações
   atualizarBadgeNotificacoes();
@@ -504,20 +508,19 @@ export function renderBottomSheetItems() {
           <i class="fas fa-rotate" aria-hidden="true"></i><span>Retificações de abordagens</span>
           <span id="sheetBadgeRetificacoesAbordagens" class="bottom-sheet-badge" style="display:none">0</span>
         </button>
-        <button class="bottom-sheet-menu-button" data-page="relatorios">
+        ${podeVerRelatorios ? `<button class="bottom-sheet-menu-button" data-page="relatorios">
           <i class="fas fa-chart-column" aria-hidden="true"></i><span>Relatórios</span>
-        </button>
-      ` : `<p class="bottom-sheet-note">As opções de gestão são exibidas conforme o perfil de acesso.</p>`}
+        </button>` : ""}
+      ` : `${podeVerRelatorios ? `<button class="bottom-sheet-menu-button" data-page="relatorios">
+          <i class="fas fa-chart-column" aria-hidden="true"></i><span>Relatórios</span>
+        </button>` : ""}<p class="bottom-sheet-note">As opções de gestão são exibidas conforme o perfil de acesso.</p>`}
     </section>
 
-    ${isSupervisor ? `
+    ${isAdministrador ? `
       <section class="bottom-sheet-group" aria-labelledby="moreAdminTitle">
-        <h3 class="bottom-sheet-section-title" id="moreAdminTitle">Administração</h3>
-        <button class="bottom-sheet-menu-button" data-page="usuarios">
-          <i class="fas fa-users" aria-hidden="true"></i><span>Usuários</span>
-        </button>
-        <button class="bottom-sheet-menu-button" data-page="logs">
-          <i class="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Logs do sistema</span>
+        <h3 class="bottom-sheet-section-title" id="moreAdminTitle">Administração do sistema</h3>
+        <button class="bottom-sheet-menu-button" data-page="admin-governanca">
+          <i class="fas fa-shield-halved" aria-hidden="true"></i><span>Painel de governança</span>
         </button>
       </section>
     ` : ""}
@@ -872,7 +875,7 @@ export async function marcarMuralComoLido() {
       {
         usuario_id: user.id,
         ultimo_aviso_lido_id: ultimoAviso?.id || null,
-        lido_em: new Date().toISOString(),
+        lido_em: globalThis.obterTimestampBrasilSemFuso(),
       },
       { onConflict: "usuario_id" },
     );

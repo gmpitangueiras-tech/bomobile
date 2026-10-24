@@ -2,19 +2,17 @@
  * MÓDULO UTILS - Funções auxiliares
  * Guarda Municipal de Pitangueiras - PR
  *
- * CORREÇÃO DE FUSO HORÁRIO:
- * - Todas as funções agora usam o horário LOCAL do dispositivo
- * - SEM ajustes de timezone
- * - SEM conversões para UTC
- * - Apenas exibição formatada com o horário local
+ * POLÍTICA TEMPORAL v47:
+ * - Campos operacionais usam sempre America/Sao_Paulo, sem Z/offset.
+ * - Instantes puramente técnicos de fila/sincronização podem continuar em ISO/UTC.
+ * - Exibições institucionais usam o fuso operacional configurado.
  */
 
 // ============================================
 // CONSTANTES
 // ============================================
 
-const FUSO_BRASILIA = "America/Sao_Paulo";
-const TIMEZONE_OFFSET_BRASILIA = -3; // UTC-3 em horas
+const FUSO_BRASILIA = globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo";
 const CACHE_DURATION_MS = 60000; // 1 minuto de cache para o horário
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
@@ -85,8 +83,7 @@ export async function obterDataHoraPrecisa(forceRefresh = false) {
 }
 
 /**
- * 🔥 CORRIGIDO: Obtém data/hora atual no formato ISO
- * Usa a data do dispositivo SEM ajuste
+ * Obtém o instante atual em ISO/UTC para auditoria, sincronização e colunas de instante.
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
@@ -96,23 +93,20 @@ export async function obterDataHoraISO(forceRefresh = false) {
     console.warn("⚠️ Data inválida, usando fallback");
     return new Date().toISOString();
   }
-  // ✅ Retornar a data exata do dispositivo, sem conversão
   return date.toISOString();
 }
 
 /**
- * 🔥 CORRIGIDO: Obtém a data atual no formato YYYY-MM-DD
- * Usa a data do dispositivo SEM ajuste
+ * Obtém a data civil atual no formato YYYY-MM-DD, sem deixar UTC deslocar o dia.
  * @param {boolean} forceRefresh - Forçar atualização do cache
  * @returns {Promise<string>}
  */
 export async function obterDataAtualISO(forceRefresh = false) {
   const date = await obterDataHoraPrecisa(forceRefresh);
   if (isNaN(date.getTime())) {
-    return new Date().toISOString().slice(0, 10);
+    return formatarDataInput(new Date());
   }
-  // ✅ Usar o horário do dispositivo
-  return date.toISOString().slice(0, 10);
+  return formatarDataInput(date);
 }
 
 /**
@@ -143,17 +137,49 @@ export async function obterHoraAtual(forceRefresh = false) {
  * @returns {Promise<string>}
  */
 export async function obterDataHoraInput(forceRefresh = false) {
-  const date = await obterDataHoraPrecisa(forceRefresh);
-  if (isNaN(date.getTime())) {
-    return new Date().toISOString().slice(0, 16);
-  }
-  // ✅ Usar o horário do dispositivo, remover timezone
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return globalThis.obterDataHoraInputBrasil();
+}
+
+/**
+ * Formata os componentes locais como timestamp sem fuso.
+ * Deve ser usado para colunas PostgreSQL `timestamp without time zone` e para
+ * valores originados de inputs `datetime-local`; não acrescenta `Z` nem aplica
+ * offset manual.
+ * @param {string|Date} value
+ * @param {boolean} includeSeconds
+ * @returns {string|null}
+ */
+export function formatarTimestampLocalSemFuso(value = new Date(), includeSeconds = true) {
+  return globalThis.obterTimestampBrasilSemFuso(value, includeSeconds);
+}
+
+export function obterTimestampBrasilSemFuso(value = new Date(), includeSeconds = true) {
+  return globalThis.obterTimestampBrasilSemFuso(value, includeSeconds);
+}
+
+/**
+ * Formata um instante para exibição no fuso operacional configurado.
+ * @param {string|Date} value
+ * @param {boolean} includeSeconds
+ * @returns {string}
+ */
+export function formatarDataHoraOperacional(value, includeSeconds = false) {
+  return formatarDataHoraBrasil(value, includeSeconds);
+}
+
+function formatarDataHoraBrasil(value, includeSeconds = false) {
+  if (!value) return "";
+  const texto = typeof value === "string" ? value.trim() : "";
+  const semFuso = texto && /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/.test(texto);
+  const date = semFuso ? new Date(`${texto.replace(" ", "T")}Z`) : (value instanceof Date ? value : new Date(value));
+  if (Number.isNaN(date.getTime())) return "Data inválida";
+  const options = {
+    timeZone: semFuso ? "UTC" : FUSO_BRASILIA,
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  };
+  if (includeSeconds) options.second = "2-digit";
+  return date.toLocaleString("pt-BR", options);
 }
 
 /**
@@ -164,26 +190,10 @@ export async function obterDataHoraInput(forceRefresh = false) {
  * @returns {string}
  */
 export function formatarDataHoraLocal(date, includeSeconds = false) {
-  if (!date) return "";
   try {
-    const d = typeof date === "string" ? new Date(date) : date;
-    if (isNaN(d.getTime())) return "Data inválida";
-
-    // ✅ CORRIGIDO: Usar apenas formatação local, SEM timezone fixo
-    // Isso usa o fuso do dispositivo automaticamente
-    const options = {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    };
-    if (includeSeconds) options.second = "2-digit";
-
-    // ✅ Usar locale 'pt-BR' sem timezone forçado
-    return d.toLocaleString("pt-BR", options);
+    return formatarDataHoraBrasil(date, includeSeconds);
   } catch (e) {
-    return String(date);
+    return String(date || "");
   }
 }
 
@@ -926,7 +936,7 @@ export function calcularDataAnterior(dataInicio, dataFim) {
   const diff = fim - inicio;
   const data = new Date(inicio);
   data.setTime(data.getTime() - diff);
-  return data.toISOString().slice(0, 10);
+  return formatarDataInput(data);
 }
 
 /**
@@ -939,11 +949,11 @@ export async function obterPrimeiroDiaMes(forceRefresh = false) {
   if (isNaN(date.getTime())) {
     const fallback = new Date();
     fallback.setDate(1);
-    return fallback.toISOString().slice(0, 10);
+    return formatarDataInput(fallback);
   }
   const data = new Date(date);
   data.setDate(1);
-  return data.toISOString().slice(0, 10);
+  return formatarDataInput(data);
 }
 
 /**
@@ -1445,6 +1455,9 @@ if (typeof window !== "undefined") {
     formatarDataHoraLocal,
     formatarDataInput,
     formatarDataHoraInput,
+    formatarTimestampLocalSemFuso,
+    obterTimestampBrasilSemFuso,
+    formatarDataHoraOperacional,
     obterDataHoraAtual,
     formatarDataLocal,
     // Depreciados (compatibilidade)
@@ -1511,6 +1524,8 @@ export default {
   formatarDataHoraLocal,
   formatarDataInput,
   formatarDataHoraInput,
+  formatarTimestampLocalSemFuso,
+  formatarDataHoraOperacional,
   obterDataHoraAtual,
   formatarDataLocal,
 

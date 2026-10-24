@@ -264,7 +264,7 @@ class PDFExport {
         opts,
       );
 
-      const nomeArquivo = `Ocorrencia_${ocorrencia.numero_ocorrencia || "Rascunho"}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const nomeArquivo = `Ocorrencia_${ocorrencia.numero_ocorrencia || "Rascunho"}_${globalThis.obterTimestampBrasilSemFuso().slice(0, 10)}.pdf`;
       doc.save(nomeArquivo);
 
       return { success: true, fileName: nomeArquivo };
@@ -336,7 +336,7 @@ class PDFExport {
         return Number.isNaN(d.getTime()) ? safe(value, fallback) : d.toLocaleDateString("pt-BR");
       };
       const role = (value) =>
-        ({ responsavel: "RESPONSÁVEL", acompanhante: "ACOMPANHANTE" }[value] || String(value || "PARTICIPANTE").toUpperCase());
+        ({ responsavel: "RESPONSÁVEL", acompanhante: "GM DE APOIO" }[value] || String(value || "PARTICIPANTE").toUpperCase());
       const equipeAtiva = (guardas || []).filter((g) => g.esta_ativo !== false);
       const footerLimit = pageHeight - 19;
       let page = 1;
@@ -950,7 +950,7 @@ class PDFExport {
     const isApproachReport = reportType === "abordagens" || reportType.startsWith("abordagens-");
     const reportTitle = String(dados.titulo || options.title || "Relatório operacional");
     const period = String(dados.periodo || "Período não informado");
-    const emitted = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const emitted = new Date().toLocaleString("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo" });
     const logo = await this.carregarImagemBase64(options.logoUrl || "assets/logo-guarda.png");
     const safe = (value, fallback = "—") => value === null || value === undefined || String(value).trim() === "" ? fallback : String(value);
     const list = (value) => Array.isArray(value) ? value : [];
@@ -974,7 +974,7 @@ class PDFExport {
     const formatDateTime = (value) => {
       if (!value) return "—";
       const d = parseDate(value);
-      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(d);
+      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(d);
     };
     const formatDate = (value) => {
       if (!value) return "—";
@@ -982,7 +982,7 @@ class PDFExport {
       const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
       const d = parseDate(value);
-      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short" }).format(d);
+      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", dateStyle: "short" }).format(d);
     };
 
     const percent = (n, denominator) => denominator > 0 ? `${((n / denominator) * 100).toFixed(1)}%` : "—";
@@ -1468,7 +1468,7 @@ class PDFExport {
       labelStatus(o.status),
     ]);
     const localParts = (value) => {
-      const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(parseDate(value));
+      const p = new Intl.DateTimeFormat("en-CA", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(parseDate(value));
       return Object.fromEntries(p.filter((x) => x.type !== "literal").map((x) => [x.type, Number(x.value)]));
     };
     const daysInPeriod = (start, end) => {
@@ -1814,7 +1814,7 @@ class PDFExport {
       const reportType = options.reportType || dados?.tipoRelatorio || tipo;
       const doc = await this.gerarPDFRelatorioInstitucional({ ...dados, tipoRelatorio: reportType }, opts);
       const slug = String(reportType).toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
-      const nomeArquivo = `Relatorio_${slug}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const nomeArquivo = `Relatorio_${slug}_${globalThis.obterTimestampBrasilSemFuso().slice(0, 10)}.pdf`;
       doc.save(nomeArquivo);
       console.log(`✅ Relatório ${reportType} exportado com sucesso`);
       return { success: true, fileName: nomeArquivo };

@@ -1,190 +1,213 @@
 {
-  "name": "Guarda Municipal - Pitangueiras/PR",
-  "short_name": "Guarda Municipal",
-  "description": "Sistema de Registro de Ocorrências da Guarda Municipal de Pitangueiras - PR",
-  "start_url": "./index.html",
-  "display": "standalone",
   "background_color": "#003F87",
-  "theme_color": "#003F87",
-  "orientation": "portrait-primary",
-  "scope": "./",
-  "lang": "pt-BR",
+  "categories": [
+    "productivity",
+    "government",
+    "safety"
+  ],
+  "description": "Sistema de Registro de Ocorrências da Guarda Municipal de Pitangueiras - PR",
   "dir": "ltr",
-  "categories": ["productivity", "government", "safety"],
-  "iarc_rating_id": "",
-  "prefer_related_applications": false,
-  "related_applications": [],
-  "shortcuts": [
-    {
-      "name": "Nova Ocorrência",
-      "short_name": "Novo BO",
-      "description": "Registrar uma nova ocorrência",
-      "url": "./index.html#nova-ocorrencia",
-      "icons": [
-        {
-          "src": "assets/icons/icon-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png",
-          "purpose": "any"
-        }
-      ]
-    },
-    {
-      "name": "Minhas Ocorrências",
-      "short_name": "Ocorrências",
-      "description": "Visualizar ocorrências registradas",
-      "url": "./index.html#ocorrencias",
-      "icons": [
-        {
-          "src": "assets/icons/icon-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png",
-          "purpose": "any"
-        }
-      ]
-    },
-    {
-      "name": "Mural de Avisos",
-      "short_name": "Mural",
-      "description": "Visualizar avisos do mural",
-      "url": "./index.html#mural",
-      "icons": [
-        {
-          "src": "assets/icons/icon-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png",
-          "purpose": "any"
-        }
-      ]
-    },
-    {
-      "name": "Consulta Operacional",
-      "short_name": "Consulta",
-      "description": "Realizar consultas operacionais",
-      "url": "./index.html#consulta",
-      "icons": [
-        {
-          "src": "assets/icons/icon-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png",
-          "purpose": "any"
-        }
-      ]
-    }
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "fullscreen"
   ],
-  "screenshots": [
-    {
-      "src": "assets/screenshots/login.png",
-      "sizes": "360x640",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Tela de Login"
-    },
-    {
-      "src": "assets/screenshots/dashboard.png",
-      "sizes": "360x640",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Dashboard"
-    },
-    {
-      "src": "assets/screenshots/ocorrencias.png",
-      "sizes": "360x640",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Lista de Ocorrências"
-    }
-  ],
-  "icons": [
-    {
-      "src": "assets/icons/icon-72x72.png",
-      "sizes": "72x72",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-96x96.png",
-      "sizes": "96x96",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-128x128.png",
-      "sizes": "128x128",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-144x144.png",
-      "sizes": "144x144",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-152x152.png",
-      "sizes": "152x152",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-256x256.png",
-      "sizes": "256x256",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-384x384.png",
-      "sizes": "384x384",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/favicon-32x32.png",
-      "sizes": "32x32",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icons/favicon-16x16.png",
-      "sizes": "16x16",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "display_override": ["standalone", "fullscreen"],
   "edge_side_panel": {
     "preferred_width": 400
   },
-  "handle_links": "preferred",
-  "launch_handler": {
-    "client_mode": ["focus-existing", "auto"]
-  },
   "file_handlers": [
     {
-      "action": "./index.html",
       "accept": {
-        "image/*": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"],
-        "application/pdf": [".pdf"],
-        "video/*": [".mp4", ".webm", ".mov"]
-      }
+        "application/pdf": [
+          ".pdf"
+        ],
+        "image/*": [
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".gif",
+          ".webp",
+          ".svg"
+        ],
+        "video/*": [
+          ".mp4",
+          ".webm",
+          ".mov"
+        ]
+      },
+      "action": "./index.html"
     }
   ],
+  "handle_links": "preferred",
+  "iarc_rating_id": "",
+  "icons": [
+    {
+      "purpose": "any maskable",
+      "sizes": "72x72",
+      "src": "assets/icons/icon-72x72.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "96x96",
+      "src": "assets/icons/icon-96x96.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "128x128",
+      "src": "assets/icons/icon-128x128.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "144x144",
+      "src": "assets/icons/icon-144x144.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "152x152",
+      "src": "assets/icons/icon-152x152.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "192x192",
+      "src": "assets/icons/icon-192x192.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "256x256",
+      "src": "assets/icons/icon-256x256.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "384x384",
+      "src": "assets/icons/icon-384x384.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "512x512",
+      "src": "assets/icons/icon-512x512.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "32x32",
+      "src": "assets/icons/favicon-32x32.png",
+      "type": "image/png"
+    },
+    {
+      "purpose": "any maskable",
+      "sizes": "16x16",
+      "src": "assets/icons/favicon-16x16.png",
+      "type": "image/png"
+    }
+  ],
+  "lang": "pt-BR",
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  },
+  "name": "Guarda Municipal - Pitangueiras/PR",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
   "protocol_handlers": [
     {
       "protocol": "web+guarda",
       "url": "./index.html?protocol=%s"
     }
-  ]
+  ],
+  "related_applications": [],
+  "scope": "./",
+  "screenshots": [
+    {
+      "form_factor": "narrow",
+      "label": "Tela de Login",
+      "sizes": "360x640",
+      "src": "assets/screenshots/login.png",
+      "type": "image/png"
+    },
+    {
+      "form_factor": "narrow",
+      "label": "Dashboard",
+      "sizes": "360x640",
+      "src": "assets/screenshots/dashboard.png",
+      "type": "image/png"
+    },
+    {
+      "form_factor": "narrow",
+      "label": "Lista de Ocorrências",
+      "sizes": "360x640",
+      "src": "assets/screenshots/ocorrencias.png",
+      "type": "image/png"
+    }
+  ],
+  "short_name": "Guarda Municipal",
+  "shortcuts": [
+    {
+      "description": "Registrar uma nova ocorrência",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "assets/icons/icon-192x192.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Nova Ocorrência",
+      "short_name": "Novo BO",
+      "url": "./index.html#nova-ocorrencia"
+    },
+    {
+      "description": "Visualizar ocorrências registradas",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "assets/icons/icon-192x192.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Minhas Ocorrências",
+      "short_name": "Ocorrências",
+      "url": "./index.html#ocorrencias"
+    },
+    {
+      "description": "Visualizar avisos do mural",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "assets/icons/icon-192x192.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Mural de Avisos",
+      "short_name": "Mural",
+      "url": "./index.html#mural"
+    },
+    {
+      "description": "Realizar consultas operacionais",
+      "icons": [
+        {
+          "purpose": "any",
+          "sizes": "192x192",
+          "src": "assets/icons/icon-192x192.png",
+          "type": "image/png"
+        }
+      ],
+      "name": "Consulta Operacional",
+      "short_name": "Consulta",
+      "url": "./index.html#consulta"
+    }
+  ],
+  "start_url": "./index.html",
+  "theme_color": "#003F87"
 }

@@ -403,10 +403,10 @@ export class DatabaseService {
    */
   async saveOcorrencia(ocorrencia) {
     if (!ocorrencia.data_criacao) {
-      ocorrencia.data_criacao = new Date().toISOString();
+      ocorrencia.data_criacao = globalThis.obterTimestampBrasilSemFuso();
     }
     if (!ocorrencia.data_atualizacao) {
-      ocorrencia.data_atualizacao = new Date().toISOString();
+      ocorrencia.data_atualizacao = globalThis.obterTimestampBrasilSemFuso();
     }
     if (!ocorrencia.id) {
       ocorrencia.id = crypto.randomUUID
@@ -415,7 +415,7 @@ export class DatabaseService {
     }
     if (!ocorrencia.numero_oficial && !ocorrencia.numero_local) {
       const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+      const dateStr = globalThis.obterTimestampBrasilSemFuso(now, false).slice(0, 10).replace(/-/g, "");
       const random = Math.floor(Math.random() * 1000)
         .toString()
         .padStart(3, "0");
@@ -510,7 +510,7 @@ export class DatabaseService {
       envolvido.id = crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID();
     }
     if (!envolvido.criado_em) {
-      envolvido.criado_em = new Date().toISOString();
+      envolvido.criado_em = globalThis.obterTimestampBrasilSemFuso();
     }
     return this.save(STORES.envolvidos, envolvido);
   }
@@ -550,7 +550,7 @@ export class DatabaseService {
       anexo.id = crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID();
     }
     if (!anexo.criado_em) {
-      anexo.criado_em = new Date().toISOString();
+      anexo.criado_em = globalThis.obterTimestampBrasilSemFuso();
     }
     return this.save(STORES.anexos, anexo);
   }

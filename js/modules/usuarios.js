@@ -44,7 +44,7 @@ let estado = {
  */
 export async function renderUsuarios(container, appInstance) {
   // Verificar permissão
-  if (typeof authManager === "undefined" || !authManager.isSupervisor()) {
+  if (typeof authManager === "undefined" || !authManager.isAdministrador()) {
     container.innerHTML = renderAcessoNegado(appInstance);
     return;
   }
@@ -1055,7 +1055,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

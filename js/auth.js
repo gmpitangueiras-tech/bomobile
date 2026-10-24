@@ -43,7 +43,7 @@ function dataLocalSPParaUtcSemFuso(dataString, diasAdicionais = 0) {
   const diaAlvo = dia + diasAdicionais;
   const meioDiaUtc = Date.UTC(ano, mes - 1, diaAlvo, 12, 0, 0);
   const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   }).formatToParts(new Date(meioDiaUtc));
@@ -430,7 +430,7 @@ class AuthManager {
               dispositivo: infoDispositivo.tipo,
               navegador: infoDispositivo.navegador,
             }),
-        data_hora: new Date().toISOString(),
+        data_hora: globalThis.obterTimestampBrasilSemFuso(),
       };
 
       const { data, error } = await client
@@ -739,7 +739,7 @@ class AuthManager {
         await client
           .from("usuarios")
           .update({
-            ultimo_login: new Date().toISOString(),
+            ultimo_login: globalThis.obterTimestampBrasilSemFuso(),
             ultimo_ip: await this.obterIP(),
             ultimo_user_agent: navigator?.userAgent || null,
           })
@@ -791,7 +791,7 @@ class AuthManager {
         senha_hash: hashData,
         status: "ativo",
         primeiro_acesso: false,
-        atualizado_em: new Date().toISOString(),
+        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
       };
       if (telefone) updates.telefone = telefone;
       if (email) updates.email = email;
@@ -870,6 +870,26 @@ class AuthManager {
     return this.user?.perfil === "supervisor";
   }
 
+  isAdministrador() {
+    return this.user?.perfil === "administrador";
+  }
+
+  isSupervisorOperacional() {
+    return this.isSupervisor();
+  }
+
+  can(permission) {
+    const matrix = {
+      governanca: this.isAdministrador(),
+      logs: this.isAdministrador(),
+      usuarios: this.isAdministrador(),
+      resetar_senha: this.isAdministrador(),
+      relatorios: this.podeAcessarRelatorios(),
+      retificacoes: this.isSupervisor(),
+    };
+    return Boolean(matrix[permission]);
+  }
+
   isGuarda() {
     return this.user?.perfil === "guarda";
   }
@@ -945,15 +965,17 @@ class AuthManager {
   }
 
   podeAcessarRelatorios() {
-    return this.isSupervisor();
+    // Todos os perfis autenticados podem consultar relatórios; o módulo aplica
+    // escopo próprio para guarda e escopo completo para supervisor/admin.
+    return this.isLoggedIn();
   }
 
   podeGerenciarUsuarios() {
-    return this.isSupervisor();
+    return this.isAdministrador();
   }
 
   podeVerLogs() {
-    return this.isSupervisor();
+    return this.isAdministrador();
   }
 
   // ============================================
@@ -961,10 +983,10 @@ class AuthManager {
   // ============================================
 
   async listarUsuarios(filtros = {}) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
-        error: "Permissão negada. Apenas supervisores podem listar usuários.",
+        error: "Permissão negada. Apenas administradores podem listar usuários.",
       };
     }
 
@@ -996,8 +1018,8 @@ class AuthManager {
   }
 
   async listarUsuariosParaLogs() {
-    if (!this.isSupervisor()) {
-      return { success: false, error: "Permissão negada. Apenas supervisores podem consultar usuários nos logs." };
+    if (!this.isAdministrador()) {
+      return { success: false, error: "Permissão negada. Apenas administradores podem consultar usuários nos logs." };
     }
     try {
       const client = supabaseClient.getClient();
@@ -1016,10 +1038,10 @@ class AuthManager {
   }
 
   async criarUsuario(dados) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
-        error: "Permissão negada. Apenas supervisores podem criar usuários.",
+        error: "Permissão negada. Apenas administradores podem criar usuários.",
       };
     }
 
@@ -1065,7 +1087,7 @@ class AuthManager {
         primeiro_acesso: true,
         senha_hash: hashData,
         criado_por: this.user.id,
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
         // Campos criptografados
         cpf_encrypted: sensitiveData.cpf_encrypted,
         cpf_hash: sensitiveData.cpf_hash,
@@ -1108,24 +1130,14 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      if (!this.isSupervisor()) {
-        if (id !== this.user.id) {
-          return {
-            success: false,
-            error: "Permissão negada. Você só pode editar seu próprio perfil.",
-          };
-        }
-        const camposPermitidos = ["nome_completo", "telefone", "email", "apelido"];
-        const dadosFiltrados = {};
-        for (const campo of camposPermitidos) {
-          if (dados[campo] !== undefined) {
-            dadosFiltrados[campo] = dados[campo];
-          }
-        }
-        dados = dadosFiltrados;
+      if (!this.isAdministrador()) {
+        return {
+          success: false,
+          error: "Permissão negada. Apenas administradores podem editar usuários.",
+        };
       }
 
-      // Se for supervisor, pode editar todos os campos
+      // O administrador só pode alterar os campos recebidos pela operação administrativa.
       delete dados.senha_hash;
 
       // Processar dados sensíveis se presentes
@@ -1149,7 +1161,7 @@ class AuthManager {
         .update({
           ...dados,
           atualizado_por: this.user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -1188,11 +1200,11 @@ class AuthManager {
   }
 
   async ativarDesativarUsuario(id, status) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
         error:
-          "Permissão negada. Apenas supervisores podem alterar status de usuários.",
+          "Permissão negada. Apenas administradores podem alterar status de usuários.",
       };
     }
 
@@ -1212,7 +1224,7 @@ class AuthManager {
         .update({
           status: status,
           atualizado_por: this.user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -1240,10 +1252,10 @@ class AuthManager {
   }
 
   async resetarSenha(id) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
-        error: "Permissão negada. Apenas supervisores podem resetar senhas.",
+        error: "Permissão negada. Apenas administradores podem resetar senhas.",
       };
     }
 
@@ -1263,7 +1275,7 @@ class AuthManager {
           status: "primeiro_acesso",
           primeiro_acesso: true,
           atualizado_por: this.user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -1307,10 +1319,10 @@ class AuthManager {
   // ============================================
 
   async listarLogsAcesso(filtros = {}) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
-        error: "Permissão negada. Apenas supervisores podem visualizar logs.",
+        error: "Permissão negada. Apenas administradores podem visualizar logs.",
       };
     }
 
@@ -1352,11 +1364,11 @@ class AuthManager {
   }
 
   async getLogStats(filtros = {}) {
-    if (!this.isSupervisor()) {
+    if (!this.isAdministrador()) {
       return {
         success: false,
         error:
-          "Permissão negada. Apenas supervisores podem visualizar estatísticas de logs.",
+          "Permissão negada. Apenas administradores podem visualizar estatísticas de logs.",
       };
     }
 

@@ -1008,7 +1008,7 @@ function exportarResultados(results, termo, appInstance) {
     link.setAttribute("href", url);
     link.setAttribute(
       "download",
-      `busca_profunda_${termo.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`,
+      `busca_profunda_${termo.replace(/[^a-zA-Z0-9]/g, "_")}_${globalThis.obterTimestampBrasilSemFuso().slice(0, 10)}.csv`,
     );
     link.style.display = "none";
     document.body.appendChild(link);
@@ -1095,7 +1095,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

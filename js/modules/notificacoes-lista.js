@@ -172,7 +172,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -208,7 +208,7 @@ function formatarTempoRelativo(date, referencia = new Date()) {
 function chaveDataSaoPaulo(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "sem-data";
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -224,7 +224,7 @@ function formatarDataAgrupamento(chave) {
   const data = new Date(`${chave}T12:00:00Z`);
   if (Number.isNaN(data.getTime())) return "Data indisponível";
   return data.toLocaleDateString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -326,7 +326,7 @@ function getNotificacoes() {
 
         const { data, error } = await client
           .from("notificacoes")
-          .update({ lida: true, lida_em: new Date().toISOString() })
+          .update({ lida: true, lida_em: globalThis.obterTimestampBrasilSemFuso() })
           .eq("usuario_id", user.id)
           .eq("lida", false)
           .select();
@@ -352,7 +352,7 @@ function getNotificacoes() {
 
         const { data, error } = await client
           .from("notificacoes")
-          .update({ lida: true, lida_em: new Date().toISOString() })
+          .update({ lida: true, lida_em: globalThis.obterTimestampBrasilSemFuso() })
           .eq("id", id)
           .eq("usuario_id", user.id)
           .select()
@@ -573,7 +573,7 @@ async function carregarNotificacoes(pagina = 1) {
     estado.notificacoes = data || [];
     estado.totalRegistros = count ?? estado.notificacoes.length;
     estado.totalPaginas = Math.max(1, Math.ceil(estado.totalRegistros / ITENS_POR_PAGINA));
-    estado.ultimaAtualizacao = new Date().toISOString();
+    estado.ultimaAtualizacao = globalThis.obterTimestampBrasilSemFuso();
 
     const naoLidas = await atualizarBadgeNotificacoes();
     if (Number.isFinite(naoLidas)) estado.totalNaoLidas = naoLidas;
@@ -599,7 +599,7 @@ function renderizarLista(container, appInstance) {
   const naoLidas = Number(estado.totalNaoLidas) || 0;
   const agrupadas = agruparPorData(notificacoes);
   const horaAtualizacao = estado.ultimaAtualizacao
-    ? new Date(estado.ultimaAtualizacao).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })
+    ? new Date(estado.ultimaAtualizacao).toLocaleTimeString("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })
     : "—";
 
   const categoriasHtml = CATEGORIAS_RAPIDAS.map((categoria) => `

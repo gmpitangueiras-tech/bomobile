@@ -41,6 +41,15 @@
  * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
  * - 🔥 CORRIGIDO: Método listarAssinaturas retorna dados completos com envolvido_id
  */
+
+/**
+ * Retorna os componentes locais para colunas timestamp sem fuso.
+ * Não usa getTimezoneOffset nem acrescenta o sufixo Z.
+ */
+function formatarTimestampLocalSemFuso(value = new Date(), includeSeconds = true) {
+  return globalThis.obterTimestampBrasilSemFuso(value, includeSeconds);
+}
+
 class OcorrenciaManager {
   constructor() {
     this.initialized = false;
@@ -270,7 +279,7 @@ class OcorrenciaManager {
         user_agent: navigator.userAgent,
         latitude: latitude?.toString(),
         longitude: longitude?.toString(),
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       };
 
       await client.from("logs_periciais").insert([logData]);
@@ -330,7 +339,7 @@ class OcorrenciaManager {
         const { error: updateError } = await client
           .from("visualizacoes_ocorrencias")
           .update({
-            visualizado_em: new Date().toISOString(),
+            visualizado_em: globalThis.obterTimestampBrasilSemFuso(),
             visualizacoes: novoContador,
           })
           .eq("id", existing.id);
@@ -345,7 +354,7 @@ class OcorrenciaManager {
           .insert({
             ocorrencia_id: ocorrenciaId,
             usuario_id: user.id,
-            visualizado_em: new Date().toISOString(),
+            visualizado_em: globalThis.obterTimestampBrasilSemFuso(),
             visualizacoes: 1,
           });
 
@@ -462,11 +471,7 @@ class OcorrenciaManager {
         dataHoraInicio === "" ||
         dataHoraInicio === "null"
       ) {
-        dataHoraInicio = new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19);
+        dataHoraInicio = formatarTimestampLocalSemFuso(new Date(), true);
       }
 
       // 🔥 GARANTIR QUE ASSINATURAS SEJA UM ARRAY COM INVOLVIDO_ID
@@ -486,11 +491,7 @@ class OcorrenciaManager {
         numero_temporario: numeroTemporario,
         status: dados.status || "draft",
         criado_por: user.id,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
         data_hora_inicio: dataHoraInicio,
         numero_versao: 1,
         esta_ativa: true,
@@ -746,18 +747,10 @@ class OcorrenciaManager {
       const dadosAtualizados = {
         ...dados,
         modo_criacao: "completo",
-        completado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        completado_em: formatarTimestampLocalSemFuso(new Date(), true),
         completado_por: user.id,
         status: navigator.onLine ? "synced" : "pending_sync",
-        atualizado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
         atualizado_por: user.id,
       };
 
@@ -830,11 +823,7 @@ class OcorrenciaManager {
         .update({
           ...dados,
           atualizado_por: user.id,
-          atualizado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
         })
         .eq("id", id)
         .select()
@@ -901,8 +890,8 @@ class OcorrenciaManager {
 
       const status = navigator.onLine ? "synced" : "pending_sync";
 
-      const dataEncerramento = new Date().toISOString();
-      const dataFinalizacao = new Date().toISOString();
+      const dataEncerramento = globalThis.obterTimestampBrasilSemFuso();
+      const dataFinalizacao = globalThis.obterTimestampBrasilSemFuso();
 
       // Gerar Hash Pericial (SHA-256)
       const conteudoParaHash = `${ocorrencia.tipo_ocorrencia}|${ocorrencia.local_ocorrencia}|${ocorrencia.observacoes}|${dataEncerramento}|${ocorrencia.criado_por}`;
@@ -1002,17 +991,9 @@ class OcorrenciaManager {
         .update({
           status: "cancelled",
           cancelado_por: user.id,
-          cancelado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          cancelado_em: formatarTimestampLocalSemFuso(new Date(), true),
           motivo_cancelamento: motivo,
-          atualizado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
           esta_ativa: false,
         })
         .eq("id", id)
@@ -1141,11 +1122,7 @@ class OcorrenciaManager {
         ocorrencia_original_id: id,
         justificativa_retificacao: isSupervisor ? justificativa : null,
         retificado_em: isSupervisor
-          ? new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19)
+          ? formatarTimestampLocalSemFuso(new Date(), true)
           : null,
         retificado_por: isSupervisor ? user.id : null,
         solicitacao_retificacao_justificativa: isSupervisor
@@ -1153,18 +1130,10 @@ class OcorrenciaManager {
           : justificativa,
         solicitada_em: isSupervisor
           ? null
-          : new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19),
+          : formatarTimestampLocalSemFuso(new Date(), true),
         solicitada_por: isSupervisor ? null : user.id,
         aprovada_em: isSupervisor
-          ? new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19)
+          ? formatarTimestampLocalSemFuso(new Date(), true)
           : null,
         aprovada_por: isSupervisor ? user.id : null,
         rejeitada_em: null,
@@ -1173,16 +1142,8 @@ class OcorrenciaManager {
         status: statusFinal,
         esta_ativa: isSupervisor ? true : false,
         numero_versao: (original.numero_versao || 1) + 1,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
-        atualizado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
+        atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
         numero_ocorrencia: null,
         numero_temporario: `RET-${Date.now()}`,
         criado_por: original.criado_por,
@@ -1207,11 +1168,7 @@ class OcorrenciaManager {
           .from("ocorrencias")
           .update({
             esta_ativa: false,
-            atualizado_em: new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19),
+            atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
           })
           .eq("id", id);
 
@@ -1233,11 +1190,7 @@ class OcorrenciaManager {
           ...env,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
-          criado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          criado_em: formatarTimestampLocalSemFuso(new Date(), true),
         }));
 
         novosEnvolvidos.forEach((env) => delete env.id);
@@ -1263,11 +1216,7 @@ class OcorrenciaManager {
             ...anexo,
             id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
             ocorrencia_id: novaOcorrencia.id,
-            criado_em: new Date(
-              new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 19),
+            criado_em: formatarTimestampLocalSemFuso(new Date(), true),
           }));
 
           novosAnexos.forEach((anexo) => delete anexo.id);
@@ -1390,18 +1339,14 @@ class OcorrenciaManager {
         .update({
           esta_ativa: false,
           status: "rectified",
-          atualizado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
         })
         .eq("id", original.id);
 
       if (updateOrigError) throw updateOrigError;
 
       // 🔥 NOVO: Adicionar data_hora_finalizacao na aprovação
-      const dataFinalizacao = new Date().toISOString();
+      const dataFinalizacao = globalThis.obterTimestampBrasilSemFuso();
 
       const { data, error } = await client
         .from("ocorrencias")
@@ -1411,23 +1356,11 @@ class OcorrenciaManager {
           numero_ocorrencia: numeroOriginal,
           justificativa_retificacao:
             retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          retificado_em: formatarTimestampLocalSemFuso(new Date(), true),
           retificado_por: user.id,
-          aprovada_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          aprovada_em: formatarTimestampLocalSemFuso(new Date(), true),
           aprovada_por: user.id,
-          atualizado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
           data_hora_finalizacao: dataFinalizacao,
         })
         .eq("id", retificacaoId)
@@ -1504,18 +1437,10 @@ class OcorrenciaManager {
         .update({
           status: "rectification_rejected",
           esta_ativa: false,
-          rejeitada_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          rejeitada_em: formatarTimestampLocalSemFuso(new Date(), true),
           rejeitada_por: user.id,
           motivo_rejeicao: motivo,
-          atualizado_em: new Date(
-            new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-          )
-            .toISOString()
-            .slice(0, 19),
+          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
         })
         .eq("id", retificacaoId)
         .select()
@@ -1872,11 +1797,7 @@ class OcorrenciaManager {
         ...dados,
         ocorrencia_id: ocorrenciaId,
         criado_por: user.id,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
       };
 
       const { data, error } = await client
@@ -1984,15 +1905,11 @@ class OcorrenciaManager {
         mime_type: arquivoProcessado.type,
         hash_arquivo: hash,
         metadata: {
-          data_hora_upload: new Date().toISOString(),
+          data_hora_upload: globalThis.obterTimestampBrasilSemFuso(),
           tipo_original: arquivo.type,
         },
         criado_por: user.id,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
       };
 
       const { data, error } = await client
@@ -2164,7 +2081,7 @@ class OcorrenciaManager {
         nome: dadosAssinatura.nome,
         cpf: dadosAssinatura.cpf || null,
         assinatura_data_url: dadosAssinatura.assinatura_data_url,
-        assinado_em: new Date().toISOString(),
+        assinado_em: globalThis.obterTimestampBrasilSemFuso(),
         assinado_por: user.id,
         nome_guarda: user.nome_completo,
       };
@@ -2177,7 +2094,7 @@ class OcorrenciaManager {
         .from("ocorrencias")
         .update({
           assinaturas: assinaturas,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           atualizado_por: user.id,
         })
         .eq("id", ocorrenciaId)
@@ -2333,7 +2250,7 @@ class OcorrenciaManager {
         .from("ocorrencias")
         .update({
           assinaturas: assinaturas,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           atualizado_por: user.id,
         })
         .eq("id", ocorrenciaId)
@@ -2463,10 +2380,10 @@ class OcorrenciaManager {
           .from("ocorrencia_guardas")
           .update({
             esta_ativo: false,
-            removido_em: new Date().toISOString(),
+            removido_em: globalThis.obterTimestampBrasilSemFuso(),
             removido_por: user.id,
             motivo_remocao: "Substituição da equipe durante edição",
-            atualizado_em: new Date().toISOString(),
+            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           })
           .in("id", ids);
         if (error) throw error;
@@ -2534,11 +2451,7 @@ class OcorrenciaManager {
         cidade: env.cidade || null,
         observacoes: env.observacoes || null,
         criado_por: user.id,
-        criado_em: new Date(
-          new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-        )
-          .toISOString()
-          .slice(0, 19),
+        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
       }));
 
       const { data, error } = await client
@@ -2631,15 +2544,11 @@ class OcorrenciaManager {
               mime_type: anexo.arquivo?.type || null,
               hash_arquivo: hash,
               metadata: {
-                data_hora_upload: new Date().toISOString(),
+                data_hora_upload: globalThis.obterTimestampBrasilSemFuso(),
                 ...(anexo.metadata || {}),
               },
               criado_por: user.id,
-              criado_em: new Date(
-                new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-              )
-                .toISOString()
-                .slice(0, 19),
+              criado_em: formatarTimestampLocalSemFuso(new Date(), true),
             })
             .select()
             .single();
@@ -2703,11 +2612,7 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      const hoje = new Date(
-        new Date().getTime() - new Date().getTimezoneOffset() * 60000,
-      )
-        .toISOString()
-        .slice(0, 10);
+      const hoje = formatarTimestampLocalSemFuso(new Date(), true).slice(0, 10);
 
       // Normalizar o campo para tolerar arrays, JSON serializado e formatos legados.
       // Esta conversão é somente em memória para estatísticas; não grava dados.
@@ -2847,13 +2752,13 @@ class OcorrenciaManager {
         };
       }
 
-      const dataFinalizacao = dataHora || new Date().toISOString();
+      const dataFinalizacao = dataHora || globalThis.obterTimestampBrasilSemFuso();
 
       const { data, error } = await client
         .from("ocorrencias")
         .update({
           data_hora_finalizacao: dataFinalizacao,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           atualizado_por: user.id,
         })
         .eq("id", id)

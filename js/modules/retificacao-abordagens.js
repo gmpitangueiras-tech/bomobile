@@ -179,14 +179,14 @@ class RetificacaoAbordagens {
         id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
         abordagem_original_id: id,
         justificativa_retificacao: isSupervisor ? justificativa : null,
-        retificado_em: isSupervisor ? new Date().toISOString() : null,
+        retificado_em: isSupervisor ? globalThis.obterTimestampBrasilSemFuso() : null,
         retificado_por: isSupervisor ? user.id : null,
         solicitacao_retificacao_justificativa: isSupervisor
           ? null
           : justificativa,
-        solicitada_em: isSupervisor ? null : new Date().toISOString(),
+        solicitada_em: isSupervisor ? null : globalThis.obterTimestampBrasilSemFuso(),
         solicitada_por: isSupervisor ? null : user.id,
-        aprovada_em: isSupervisor ? new Date().toISOString() : null,
+        aprovada_em: isSupervisor ? globalThis.obterTimestampBrasilSemFuso() : null,
         aprovada_por: isSupervisor ? user.id : null,
         rejeitada_em: null,
         rejeitada_por: null,
@@ -194,8 +194,8 @@ class RetificacaoAbordagens {
         status_retificacao: statusFinal,
         esta_ativa: estaAtiva,
         numero_versao: (original.numero_versao || 1) + 1,
-        criado_em: new Date().toISOString(),
-        atualizado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
+        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         criado_por: original.criado_por,
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(original),
@@ -209,7 +209,7 @@ class RetificacaoAbordagens {
           .from(tabela)
           .update({
             esta_ativa: false,
-            atualizado_em: new Date().toISOString(),
+            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           })
           .eq("id", id);
 
@@ -313,7 +313,7 @@ class RetificacaoAbordagens {
         .update({
           esta_ativa: false,
           status_retificacao: "rectified",
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", original.id);
 
@@ -327,11 +327,11 @@ class RetificacaoAbordagens {
           esta_ativa: true,
           justificativa_retificacao:
             retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: new Date().toISOString(),
+          retificado_em: globalThis.obterTimestampBrasilSemFuso(),
           retificado_por: user.id,
-          aprovada_em: new Date().toISOString(),
+          aprovada_em: globalThis.obterTimestampBrasilSemFuso(),
           aprovada_por: user.id,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", retificacao.id)
         .select()
@@ -412,10 +412,10 @@ class RetificacaoAbordagens {
         .update({
           status_retificacao: "rectification_rejected",
           esta_ativa: false,
-          rejeitada_em: new Date().toISOString(),
+          rejeitada_em: globalThis.obterTimestampBrasilSemFuso(),
           rejeitada_por: user.id,
           motivo_rejeicao: motivo,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -581,7 +581,7 @@ class RetificacaoAbordagens {
         mensagem: `${identificador} solicitou retificação de ${tipo === "veiculo" ? "veículo" : "pessoa"}. Aguarda sua análise.`,
         tipo: "retificacao_pendente",
         link: "#retificacoes-abordagens",
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       }));
 
       // Inserir em lote
@@ -630,7 +630,7 @@ class RetificacaoAbordagens {
             ? "retificacao_aprovada"
             : "retificacao_rejeitada",
         link: "#consulta",
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       });
     } catch (error) {
       console.error("Erro ao notificar solicitante:", error);
@@ -685,7 +685,7 @@ class RetificacaoAbordagens {
         user_agent: navigator.userAgent,
         latitude: latitude?.toString(),
         longitude: longitude?.toString(),
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       };
 
       await client.from("logs_periciais").insert([logData]);

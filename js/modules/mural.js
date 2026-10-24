@@ -737,7 +737,7 @@ export async function toggleReacao(avisoId, tipo, container, appInstance) {
         aviso_id: avisoId,
         usuario_id: user.id,
         tipo: tipo,
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       });
 
       if (insertError) throw insertError;
@@ -791,7 +791,7 @@ export async function adicionarComentario(avisoId, container, appInstance) {
       aviso_id: avisoId,
       usuario_id: user.id,
       comentario: comentario,
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     });
 
     if (error) throw error;
@@ -1115,7 +1115,7 @@ export async function marcarMuralComoLido() {
       {
         usuario_id: user.id,
         ultimo_aviso_lido_id: ultimoAviso?.id || null,
-        lido_em: new Date().toISOString(),
+        lido_em: globalThis.obterTimestampBrasilSemFuso(),
       },
       { onConflict: "usuario_id" },
     );
@@ -1368,7 +1368,7 @@ export async function salvarAvisoMural(container, appInstance) {
       conteudo,
       prioridade,
       criado_por: user.id,
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
       anexos: anexosUrls,
       localizacao: localizacao,
       tag: tag,
@@ -1564,7 +1564,7 @@ async function notificarNovoAviso(aviso) {
       mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
       tipo: "sistema",
       link: "#mural",
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     }));
 
     const batchSize = 50;
@@ -1716,7 +1716,7 @@ export async function editarAvisoMural(id, container, appInstance) {
             prioridade,
             localizacao: localizacao,
             tag: tag,
-            atualizado_em: new Date().toISOString(),
+            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           })
           .eq("id", editId);
 
@@ -1790,7 +1790,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

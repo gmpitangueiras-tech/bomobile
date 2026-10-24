@@ -111,6 +111,7 @@ let estado = {
   filtros: {
     dataInicio: null,
     dataFim: null,
+    tipoOcorrencia: null,
   },
   mapaInstance: null,
   chartInstances: {},
@@ -127,7 +128,7 @@ let estado = {
 
 function obterPartesDataSP(valor = new Date()) {
   const partes = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   }).formatToParts(valor);
@@ -152,14 +153,14 @@ function formatarData(date) {
   if (somenteData) return `${somenteData[3]}/${somenteData[2]}/${somenteData[1]}`;
   const d = criarDateBanco(date);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo" }).format(d);
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo" }).format(d);
 }
 
 function formatarDataHoraSP(valor) {
   const d = criarDateBanco(valor);
   if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", dateStyle: "short", timeStyle: "short",
   }).format(d);
 }
 
@@ -358,7 +359,7 @@ function dataLocalSPParaISO(valor, fimDoDia = false) {
     if (!ajuste) break;
     candidato += ajuste;
   }
-  return new Date(candidato).toISOString();
+  return globalThis.obterTimestampBrasilSemFuso(new Date(candidato));
 }
 
 
@@ -411,20 +412,37 @@ function limitesPeriodoSP(dataInicio, dataFim) {
   };
 }
 
+function obterEscopoRelatorio() {
+  const perfil = authManager?.user?.perfil;
+  if (perfil === "guarda") return authManager?.user?.id || null;
+  return null; // supervisor e administrador veem o escopo operacional completo
+}
+function obterTipoRelatorioSelecionado() {
+  const tipo = estado.filtros?.tipoOcorrencia;
+  return tipo && TIPOS_OCORRENCIA.some((item) => item.value === tipo) ? tipo : null;
+}
 async function buscarOcorrenciasPeriodo(dataInicio, dataFim) {
   const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
   if (!client) throw new Error("Cliente de dados indisponível; não foi possível consultar ocorrências.");
   const limites = limitesPeriodoSP(dataInicio, dataFim);
   try {
-    const rows = await buscarTodasPaginasRelatorio(() => client
-      .from("ocorrencias")
-      .select("*")
-      .is("deleted_at", null)
-      .gte("criado_em", limites.inicio)
-      .lte("criado_em", limites.fim)
-      .order("criado_em", { ascending: true })
-      .order("id", { ascending: true }), "ocorrências");
-    return rows.filter((o) => o.deleted_at == null && o.esta_ativa !== false);
+    const criarConsulta = () => {
+      let consulta = client
+        .from("ocorrencias")
+        .select("*")
+        .is("deleted_at", null)
+        .gte("criado_em", limites.inicio)
+        .lte("criado_em", limites.fim);
+      const escopo = obterEscopoRelatorio();
+      const tipo = obterTipoRelatorioSelecionado();
+      if (escopo) consulta = consulta.eq("criado_por", escopo);
+      if (tipo) consulta = consulta.eq("tipo_ocorrencia", tipo);
+      return consulta.order("criado_em", { ascending: true }).order("id", { ascending: true });
+    };
+    const rows = await buscarTodasPaginasRelatorio(criarConsulta, "ocorrências");
+    return rows.filter((o) => o.deleted_at == null && o.esta_ativa !== false
+      && (!obterEscopoRelatorio() || o.criado_por === obterEscopoRelatorio())
+      && (!obterTipoRelatorioSelecionado() || o.tipo_ocorrencia === obterTipoRelatorioSelecionado()));
   } catch (error) {
     console.error("Erro ao buscar ocorrências:", error);
     throw error;
@@ -465,17 +483,22 @@ async function buscarRetificacoesPeriodo(dataInicio, dataFim) {
   const limites = limitesPeriodoSP(dataInicio, dataFim);
   const status = ["pending_rectification", "rectified", "rectification_rejected"];
   const camposEvento = ["solicitada_em", "retificado_em", "aprovada_em", "rejeitada_em", "criado_em"];
-  const paginas = await Promise.all(camposEvento.map((campo) => buscarTodasPaginasRelatorio(
-    () => client.from("ocorrencias").select("*").is("deleted_at", null).in("status", status)
-      .gte(campo, limites.inicio).lte(campo, limites.fim)
-      .order(campo, { ascending: true }).order("id", { ascending: true }),
-    `retificações por ${campo}`,
-  )));
+  const paginas = await Promise.all(camposEvento.map((campo) => buscarTodasPaginasRelatorio(() => {
+    let consulta = client.from("ocorrencias").select("*").is("deleted_at", null).in("status", status)
+      .gte(campo, limites.inicio).lte(campo, limites.fim);
+    const escopo = obterEscopoRelatorio();
+    const tipo = obterTipoRelatorioSelecionado();
+    if (escopo) consulta = consulta.eq("criado_por", escopo);
+    if (tipo) consulta = consulta.eq("tipo_ocorrencia", tipo);
+    return consulta.order(campo, { ascending: true }).order("id", { ascending: true });
+  }, `retificações por ${campo}`)));
   const unicos = new Map();
   paginas.flat().forEach((o) => { if (o?.id) unicos.set(o.id, o); });
   return [...unicos.values()]
     .filter((o) => o.deleted_at == null && o.esta_ativa !== false)
     .filter((o) => dentroDoPeriodoBanco(obterDataEventoRetificacao(o), limites))
+    .filter((o) => !obterEscopoRelatorio() || o.criado_por === obterEscopoRelatorio())
+    .filter((o) => !obterTipoRelatorioSelecionado() || o.tipo_ocorrencia === obterTipoRelatorioSelecionado())
     .sort((a, b) => criarDateBanco(obterDataEventoRetificacao(b)) - criarDateBanco(obterDataEventoRetificacao(a)));
 }
 
@@ -483,25 +506,25 @@ async function buscarAbordagensPeriodo(dataInicio, dataFim) {
   const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
   if (!client) throw new Error("Cliente de dados indisponível; não foi possível consultar abordagens.");
   const limites = limitesPeriodoSP(dataInicio, dataFim);
+  const criarConsultaAbordagens = (tabela) => {
+    let consulta = client.from(tabela).select("*, usuarios(nome_completo)")
+      .is("deleted_at", null).gte("criado_em", limites.inicio).lte("criado_em", limites.fim);
+    const escopo = obterEscopoRelatorio();
+    if (escopo) consulta = consulta.eq("criado_por", escopo);
+    return consulta.order("criado_em", { ascending: true }).order("id", { ascending: true });
+  };
   try {
     const [veiculos, pessoas] = await Promise.all([
-      buscarTodasPaginasRelatorio(() => client.from("abordagens_veiculos")
-        .select("*, usuarios(nome_completo)")
-        .gte("criado_em", limites.inicio).lte("criado_em", limites.fim)
-        .order("criado_em", { ascending: true }).order("id", { ascending: true }), "abordagens de veículos"),
-      buscarTodasPaginasRelatorio(() => client.from("abordagens_pessoas")
-        .select("*, usuarios(nome_completo)")
-        .gte("criado_em", limites.inicio).lte("criado_em", limites.fim)
-        .order("criado_em", { ascending: true }).order("id", { ascending: true }), "abordagens de pessoas"),
+      buscarTodasPaginasRelatorio(() => criarConsultaAbordagens("abordagens_veiculos"), "abordagens de veículos"),
+      buscarTodasPaginasRelatorio(() => criarConsultaAbordagens("abordagens_pessoas"), "abordagens de pessoas"),
     ]);
-    const somenteAtivas = (rows) => rows.filter((a) => a.esta_ativa !== false);
+    const somenteAtivas = (rows) => rows.filter((a) => a.esta_ativa !== false && (!obterEscopoRelatorio() || a.criado_por === obterEscopoRelatorio()));
     return { veiculos: somenteAtivas(veiculos), pessoas: somenteAtivas(pessoas) };
   } catch (error) {
     console.error("Erro ao buscar abordagens:", error);
     throw error;
   }
 }
-
 
 async function buscarDadosUsuariosEmLote(ids) {
   if (!ids || ids.length === 0) return {};
@@ -722,7 +745,7 @@ async function renderizarGraficoLinha(canvasId, dados, label) {
 // ============================================
 
 export async function renderRelatorios(container, appInstance) {
-  if (typeof authManager === "undefined" || !authManager.isSupervisor()) {
+  if (typeof authManager === "undefined" || !authManager.podeAcessarRelatorios?.()) {
     container.innerHTML = renderAcessoNegado(appInstance);
     return;
   }
@@ -742,6 +765,11 @@ export async function renderRelatorios(container, appInstance) {
 
   const dataInicio = estado.filtros.dataInicio || (await obterPrimeiroDiaMes());
   const dataFim = estado.filtros.dataFim || (await obterDataAtual());
+  const tipoOcorrencia = obterTipoRelatorioSelecionado() || "";
+  const perfilRelatorio = authManager?.user?.perfil || "usuário";
+  const escopoDescricao = perfilRelatorio === "guarda"
+    ? "Você vê somente registros cadastrados por você."
+    : "Supervisores e administradores veem o escopo operacional completo.";
 
   const relatorios = [
     { id: "executivo", grupo: "visao", nome: "Resumo executivo", descricao: "Volume, situação, média diária e comparação com período equivalente", icon: "fa-chart-pie", cor: "azul", destaque: true },
@@ -797,9 +825,10 @@ export async function renderRelatorios(container, appInstance) {
         <div>
           <p class="report-eyebrow">GUARDA MUNICIPAL · PITANGUEIRAS/PR</p>
           <h2><i class="fas fa-chart-pie" aria-hidden="true"></i> Relatórios</h2>
-          <p class="report-page-subtitle">Consulte registros por período. Os indicadores descrevem dados registrados e não substituem avaliação operacional.</p>
+          <p class="report-page-subtitle">Consulte registros por período e tipo. Os indicadores descrevem dados registrados e não substituem avaliação operacional.</p>
+          <p class="report-data-note"><i class="fas fa-user-shield" aria-hidden="true"></i> ${escopoDescricao}</p>
         </div>
-        <div class="report-period-panel" aria-label="Período do relatório">
+        <div class="report-period-panel" aria-label="Período e tipo do relatório">
           <div class="report-period-field">
             <label for="relatorioDataInicio">De</label>
             <input type="date" id="relatorioDataInicio" value="${dataInicio}">
@@ -808,6 +837,13 @@ export async function renderRelatorios(container, appInstance) {
           <div class="report-period-field">
             <label for="relatorioDataFim">Até</label>
             <input type="date" id="relatorioDataFim" value="${dataFim}">
+          </div>
+          <div class="report-period-field">
+            <label for="relatorioTipoOcorrencia">Tipo de ocorrência</label>
+            <select id="relatorioTipoOcorrencia">
+              <option value="">Todos os tipos</option>
+              ${TIPOS_OCORRENCIA.map((item) => `<option value="${item.value}" ${item.value === tipoOcorrencia ? "selected" : ""}>${escaparHTML(item.label)}</option>`).join("")}
+            </select>
           </div>
           <button type="button" onclick="window._relatoriosAplicarFiltros()" class="btn-primary" aria-label="Aplicar período" title="Aplicar período">
             <i class="fas fa-filter" aria-hidden="true"></i><span>Aplicar</span>
@@ -874,18 +910,20 @@ export async function renderRelatorios(container, appInstance) {
     estado.relatorioAtivo = tipo;
     const dataInicio = document.getElementById("relatorioDataInicio")?.value || await obterPrimeiroDiaMes();
     const dataFim = document.getElementById("relatorioDataFim")?.value || await obterDataAtual();
-    estado.filtros = { dataInicio, dataFim };
+    const tipoOcorrencia = document.getElementById("relatorioTipoOcorrencia")?.value || null;
+    estado.filtros = { dataInicio, dataFim, tipoOcorrencia };
     await renderRelatorios(container, appInstance);
   };
 
   window._relatoriosAplicarFiltros = async () => {
     const dataInicio = document.getElementById("relatorioDataInicio")?.value || await obterPrimeiroDiaMes();
     const dataFim = document.getElementById("relatorioDataFim")?.value || await obterDataAtual();
+    const tipoOcorrencia = document.getElementById("relatorioTipoOcorrencia")?.value || null;
     if (dataFim < dataInicio) {
       appInstance?.showToast?.("Data final deve ser maior ou igual à data inicial", "warning");
       return;
     }
-    estado.filtros = { dataInicio, dataFim };
+    estado.filtros = { dataInicio, dataFim, tipoOcorrencia };
     if (estado.relatorioAtivo) await renderRelatorios(container, appInstance);
     else await carregarResumoRapido(appInstance);
   };
@@ -950,7 +988,7 @@ function renderAcessoNegado(appInstance) {
         <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
           <i class="fas fa-lock"></i>
         </div>
-        <p style="font-weight:500;">Acesso restrito a supervisores</p>
+        <p style="font-weight:500;">Acesso restrito a usuários autenticados</p>
         <button onclick="window.app.navigateTo('dashboard')" class="btn-primary" style="margin-top:16px;max-width:200px;border-radius:12px;">
           Voltar
         </button>

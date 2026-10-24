@@ -12,7 +12,7 @@
  * - Hash pericial na finalização
  * - Etapas do Modo Completo organizadas por tarefa: equipe, envolvidos, relato, evidências e revisão
  * - Assinatura manuscrita opcional capturada no cadastro de cada envolvido
- * - Equipe GM separada das pessoas relacionadas ao fato, com papel de acompanhante editável
+ * - Equipe GM separada das pessoas relacionadas ao fato, com papel de apoio editável
  * - Campos complementares da solicitação recolhidos até serem necessários
  * - Salvamento de rascunho com confirmação de estado e preservação dos vínculos
  * Depende de: authManager (global), supabaseClient (global),
@@ -394,7 +394,7 @@ function equipeTemMinima(equipe) {
 
 function rotuloPapelEquipe(papel) {
   if (papel === "responsavel") return "Responsável pelo registro";
-  if (papel === "acompanhante") return "GM acompanhante";
+  if (papel === "acompanhante") return "GM de apoio";
   return "GM de apoio";
 }
 
@@ -411,10 +411,10 @@ function renderEquipeGuardas(dados, modo = "completo") {
   const listaIntegrantes = integrantes.length
     ? `<div class="bo-team-members" aria-label="GMs selecionados">${integrantes.map((g) => {
         const nome = g.nome_snapshot || g.nome_completo || "GM cadastrado";
-        const papelControle = modo === "completo" ? `<label class="bo-team-role-control"><span>Função</span><select aria-label="Papel operacional de ${escaparHtmlEquipe(nome)}" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" onchange="window._novaOcorrenciaAlterarPapelGuarda(this.dataset.guardaId,this.value)"><option value="acompanhante" ${g.papel === "acompanhante" ? "selected" : ""}>Acompanhante</option><option value="apoio" ${g.papel === "apoio" ? "selected" : ""}>Apoio</option></select></label>` : "";
+        const papelControle = modo === "completo" ? `<label class="bo-team-role-control"><span>Função</span><select aria-label="Papel operacional de ${escaparHtmlEquipe(nome)}" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" onchange="window._novaOcorrenciaAlterarPapelGuarda(this.dataset.guardaId,this.value)"><option value="acompanhante" ${g.papel === "acompanhante" ? "selected" : ""}>GM de apoio</option><option value="apoio" ${g.papel === "apoio" ? "selected" : ""}>Apoio</option></select></label>` : "";
         return `<div class="bo-team-member"><span class="bo-team-avatar" aria-hidden="true"><i class="fas fa-user-shield"></i></span><span class="bo-team-member-copy"><strong>${escaparHtmlEquipe(nome)}</strong><small>${rotuloPapelEquipe(g.papel)}${g.matricula_snapshot || g.matricula ? ` · Mat. ${escaparHtmlEquipe(g.matricula_snapshot || g.matricula)}` : ""}</small></span>${papelControle}<button type="button" class="bo-team-remove" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" aria-label="Remover ${escaparHtmlEquipe(nome)} da equipe" onclick="window._novaOcorrenciaRemoverGuarda(this.dataset.guardaId)"><i class="fas fa-times"></i></button></div>`;
       }).join("")}</div>`
-    : `<div class="bo-team-empty">Ainda falta selecionar o GM que acompanha a ocorrência.</div>`;
+    : `<div class="bo-team-empty">Ainda falta selecionar o GM de apoio da ocorrência.</div>`;
 
   return `
     <section class="bo-team-card ${statusEquipe ? "is-complete" : "is-pending"}" aria-label="Equipe operacional da ocorrência">
@@ -432,9 +432,9 @@ function renderEquipeGuardas(dados, modo = "completo") {
         <label for="buscaGuardaEquipe"><i class="fas fa-search" aria-hidden="true"></i> Adicionar GM cadastrado</label>
         <div class="bo-team-search-control"><input id="buscaGuardaEquipe" type="search" autocomplete="off" placeholder="Digite nome ou matrícula" aria-controls="listaSugestoesGuarda" aria-autocomplete="list" oninput="window._novaOcorrenciaBuscarGuardas(this.value)"><span aria-hidden="true"><i class="fas fa-keyboard"></i></span></div>
         <div id="listaSugestoesGuarda" class="bo-team-suggestions" role="listbox" aria-live="polite">Digite ao menos 2 caracteres para buscar entre ${disponiveis.length} GMs ativos.</div>
-        <p class="bo-team-hint">${modo === "completo" ? "O primeiro GM entra como acompanhante; você pode trocar a função na própria lista. Mantenha pelo menos um acompanhante. Selecione somente quem atuou nesta ocorrência." : "O primeiro GM adicionado será o acompanhante obrigatório; os demais ficam como apoio. Selecione somente quem atuou nesta ocorrência."}</p>
+        <p class="bo-team-hint">${modo === "completo" ? "O primeiro GM entra como GM de apoio; você pode trocar a função na própria lista. Mantenha pelo menos um GM de apoio. Selecione somente quem atuou nesta ocorrência." : "O primeiro GM adicionado será o GM de apoio obrigatório; os demais ficam na equipe. Selecione somente quem atuou nesta ocorrência."}</p>
       </div>
-      <div class="bo-team-status ${statusEquipe ? "is-complete" : "is-pending"}" role="status"><i class="fas ${statusEquipe ? "fa-check-circle" : "fa-exclamation-circle"}" aria-hidden="true"></i><span>${statusEquipe ? `${equipe.filter((g) => g.esta_ativo !== false).length} GMs na equipe. Mínimo atendido.` : "Selecione pelo menos um GM acompanhante além do responsável."}</span></div>
+      <div class="bo-team-status ${statusEquipe ? "is-complete" : "is-pending"}" role="status"><i class="fas ${statusEquipe ? "fa-check-circle" : "fa-exclamation-circle"}" aria-hidden="true"></i><span>${statusEquipe ? `${equipe.filter((g) => g.esta_ativo !== false).length} GMs na equipe. Mínimo atendido.` : "Selecione pelo menos um GM de apoio além do responsável."}</span></div>
     </section>
   `;
 }
@@ -513,7 +513,7 @@ function alterarPapelGuarda(guardaId, papel, container, appInstance) {
   const alvo = equipe.find((g) => g.guarda_id === guardaId && g.papel !== "responsavel" && g.esta_ativo !== false);
   if (!alvo) return;
   if (papel === "apoio" && alvo.papel === "acompanhante" && !equipe.some((g) => g.guarda_id !== guardaId && g.papel === "acompanhante" && g.esta_ativo !== false)) {
-    appInstance.showToast("Mantenha pelo menos um GM como acompanhante", "warning");
+    appInstance.showToast("Mantenha pelo menos um GM de apoio", "warning");
     renderizarFormularioCompleto(container, appInstance);
     return;
   }
@@ -547,7 +547,7 @@ function selecionarGuardaAcompanhante(guardaId, container, appInstance) {
   } else {
     const guarda = (estado.guardasDisponiveis || []).find((g) => g.id === guardaId);
     if (!guarda || guarda.id === responsavel?.guarda_id) {
-      appInstance.showToast("Selecione um guarda acompanhante válido", "warning");
+      appInstance.showToast("Selecione um GM de apoio válido", "warning");
       return;
     }
     dados.guardasParticipantes = equipe
@@ -832,7 +832,7 @@ async function finalizarRapido(container, appInstance) {
 
   salvarDadosEtapa();
   if (!equipeTemMinima(estado.dados.guardasParticipantes)) {
-    appInstance.showToast("Selecione o guarda acompanhante antes de finalizar", "warning");
+    appInstance.showToast("Selecione o GM de apoio antes de finalizar", "warning");
     renderizarFormularioRapido(container, appInstance);
     return;
   }
@@ -1144,7 +1144,7 @@ function getEtapaSubtitulo(etapa) {
   const subtitulos = {
     1: "Informe como a solicitação chegou até você",
     2: "Preencha os dados principais da ocorrência",
-    3: "Registre os GMs que atuaram e defina quem foi o acompanhante",
+    3: "Registre os GMs que atuaram e defina quem será o GM de apoio",
     4: "Cadastre cada pessoa envolvida e, se possível, colete sua assinatura opcional",
     5: "Descreva cronologicamente o que foi observado e realizado",
     6: "Adicione fotos, vídeos ou documentos (ilimitado)",
@@ -1801,7 +1801,7 @@ async function adicionarAssinatura(appInstance) {
     nome: envolvido.nome_completo,
     cpf: envolvido.cpf || null,
     assinatura_data_url: assinaturaDataUrl,
-    assinado_em: new Date().toISOString(),
+    assinado_em: globalThis.obterTimestampBrasilSemFuso(),
     assinado_por: authManager.getUserId(),
     nome_guarda: authManager.getUser()?.nome_completo || "Desconhecido",
   };
@@ -2025,7 +2025,7 @@ function validarEtapa(appInstance) {
       break;
     case 3:
       if (!equipeTemMinima(estado.dados.guardasParticipantes)) {
-        mensagem = "Inclua o GM responsável e pelo menos um acompanhante antes de continuar";
+        mensagem = "Inclua o GM responsável e pelo menos um GM de apoio antes de continuar";
         isValid = false;
       }
       break;
@@ -2167,7 +2167,7 @@ function adicionarEnvolvido(appInstance) {
         nome: envolvido.nome_completo,
         cpf: envolvido.cpf || null,
         assinatura_data_url: canvas.toDataURL("image/png"),
-        assinado_em: new Date().toISOString(),
+        assinado_em: globalThis.obterTimestampBrasilSemFuso(),
         assinado_por: authManager.getUserId(),
         nome_guarda: authManager.getUser()?.nome_completo || "Desconhecido",
         metodo: "captura_manuscrita_em_tela",
@@ -2355,7 +2355,7 @@ async function finalizarOcorrencia(container, appInstance) {
   }
 
   if (!equipeTemMinima(dados.guardasParticipantes)) {
-    appInstance.showToast("A equipe precisa incluir o responsável pelo registro e pelo menos um GM acompanhante na etapa de equipe", "warning");
+    appInstance.showToast("A equipe precisa incluir o responsável pelo registro e pelo menos um GM de apoio na etapa de equipe", "warning");
     estado.etapa = 3;
     renderizarFormularioCompleto(container, appInstance);
     return;
@@ -2576,7 +2576,6 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

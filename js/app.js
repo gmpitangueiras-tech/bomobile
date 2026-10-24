@@ -39,6 +39,7 @@ import * as relatorios from "./modules/relatorios.js";
 import * as usuarios from "./modules/usuarios.js";
 import * as perfil from "./modules/perfil.js";
 import * as logs from "./modules/logs.js";
+import * as adminGovernanca from "./modules/admin-governanca.js";
 // A importação do busca-profunda.js é feita dinamicamente pelo dashboard.js
 
 // ============================================
@@ -128,6 +129,7 @@ class App {
       },
       logs: { element: "page-logs", showHeader: true, showNav: true },
       usuarios: { element: "page-usuarios", showHeader: true, showNav: true },
+      "admin-governanca": { element: "page-admin-governanca", showHeader: true, showNav: true },
       perfil: { element: "page-perfil", showHeader: true, showNav: true },
       consulta: { element: "page-consulta", showHeader: true, showNav: true },
       mural: { element: "page-mural", showHeader: true, showNav: true },
@@ -390,19 +392,17 @@ class App {
     }
 
     // Verificar permissões para páginas restritas
-    if (
-      [
-        "relatorios",
-        "usuarios",
-        "retificacoes",
-        "retificacoes-abordagens",
-        "logs",
-      ].includes(page)
-    ) {
-      if (!authManager.isSupervisor()) {
-        this.showToast("Acesso restrito a supervisores", "warning");
-        page = "dashboard";
-      }
+    if (["usuarios", "logs", "admin-governanca"].includes(page) && !authManager.isAdministrador()) {
+      this.showToast("Acesso restrito ao administrador do sistema", "warning");
+      page = "dashboard";
+    }
+    if (["relatorios"].includes(page) && !authManager.podeAcessarRelatorios()) {
+      this.showToast("Acesso restrito a usuários autenticados", "warning");
+      page = "dashboard";
+    }
+    if (["retificacoes", "retificacoes-abordagens"].includes(page) && !authManager.isSupervisor()) {
+      this.showToast("Acesso restrito ao supervisor operacional", "warning");
+      page = "dashboard";
     }
 
     this.currentPage = page;
@@ -461,6 +461,7 @@ class App {
       relatorios: "more",
       logs: "more",
       usuarios: "more",
+      "admin-governanca": "more",
       perfil: "more",
     };
     const activeSection = sectionByPage[page] || "home";
@@ -518,11 +519,15 @@ class App {
           break;
 
         case "logs":
-          await logs.renderLogs(container, this);
+          await adminGovernanca.renderAdminGovernanca(container, this);
           break;
 
         case "usuarios":
-          await usuarios.renderUsuarios(container, this);
+          await adminGovernanca.renderAdminGovernanca(container, this);
+          break;
+
+        case "admin-governanca":
+          await adminGovernanca.renderAdminGovernanca(container, this);
           break;
 
         case "perfil":
@@ -771,7 +776,7 @@ class App {
       }
       dadosParaSalvar.data_hora_encerramento = await normalizarDataLocal(dadosParaSalvar.data_hora_encerramento);
 
-      const agora = new Date().toISOString();
+      const agora = globalThis.obterTimestampBrasilSemFuso();
       const ocorrencia = {
         ...dadosParaSalvar,
         modo_criacao: dados.modo_criacao || "completo",
@@ -1523,7 +1528,7 @@ class App {
         user_agent: navigator.userAgent,
         latitude: loc?.latitude?.toString(),
         longitude: loc?.longitude?.toString(),
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       };
 
       const { error } = await client.from("logs_periciais").insert([logData]);

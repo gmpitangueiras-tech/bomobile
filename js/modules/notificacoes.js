@@ -260,7 +260,7 @@ class Notificacoes {
         .eq("lida", false)
         .gt(
           "criado_em",
-          this.ultimaVerificacao?.toISOString() || new Date(0).toISOString(),
+          globalThis.obterTimestampBrasilSemFuso(this.ultimaVerificacao) || new Date(0).toISOString(),
         );
 
       if (error) throw error;
@@ -330,7 +330,7 @@ class Notificacoes {
         mensagem: `#${numero} - ${tipo} registrada por ${user.nome_completo}`,
         tipo: TIPOS_NOTIFICACAO.NOVA_OCORRENCIA,
         link: `#detalhe-ocorrencia?id=${ocorrencia.id}`,
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       }));
 
       // Inserir em lote
@@ -383,7 +383,7 @@ class Notificacoes {
         mensagem: `${identificador} (${tipo}) abordado por ${user.nome_completo}`,
         tipo: TIPOS_NOTIFICACAO.NOVA_ABORDAGEM,
         link: "#consulta",
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       }));
 
       // Inserir em lote
@@ -444,7 +444,7 @@ class Notificacoes {
         mensagem: `${aviso.titulo} - Publicado por ${user.nome_completo}`,
         tipo: TIPOS_NOTIFICACAO.NOVO_MURAL,
         link: "#mural",
-        criado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
       }));
 
       // Inserir em lote
@@ -497,7 +497,7 @@ class Notificacoes {
           mensagem: `${identificador} solicitou retificação de ${entidade}. Aguarda sua análise.`,
           tipo: TIPOS_NOTIFICACAO.RETIFICACAO_PENDENTE,
           link: "#retificacoes",
-          criado_em: new Date().toISOString(),
+          criado_em: globalThis.obterTimestampBrasilSemFuso(),
         }));
 
         // Inserir em lote
@@ -538,7 +538,7 @@ class Notificacoes {
               ? TIPOS_NOTIFICACAO.RETIFICACAO_APROVADA
               : TIPOS_NOTIFICACAO.RETIFICACAO_REJEITADA,
           link: "#consulta",
-          criado_em: new Date().toISOString(),
+          criado_em: globalThis.obterTimestampBrasilSemFuso(),
         });
 
         console.log(`✅ Notificação enviada para solicitante (${tipo})`);
@@ -580,7 +580,7 @@ class Notificacoes {
           mensagem: `${identificador} solicitou retificação de abordagem de ${entidade}. Aguarda sua análise.`,
           tipo: TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_PENDENTE,
           link: "#retificacoes-abordagens",
-          criado_em: new Date().toISOString(),
+          criado_em: globalThis.obterTimestampBrasilSemFuso(),
         }));
 
         // Inserir em lote
@@ -621,7 +621,7 @@ class Notificacoes {
               ? TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_APROVADA
               : TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_REJEITADA,
           link: "#consulta",
-          criado_em: new Date().toISOString(),
+          criado_em: globalThis.obterTimestampBrasilSemFuso(),
         });
 
         console.log(`✅ Notificação enviada para solicitante (${tipo})`);
@@ -704,7 +704,7 @@ class Notificacoes {
         .from("notificacoes")
         .update({
           lida: true,
-          lida_em: new Date().toISOString(),
+          lida_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .eq("usuario_id", user.id)
@@ -758,7 +758,7 @@ class Notificacoes {
         .from("notificacoes")
         .update({
           lida: true,
-          lida_em: new Date().toISOString(),
+          lida_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("usuario_id", user.id)
         .eq("lida", false)
@@ -859,7 +859,7 @@ class Notificacoes {
       const porData = {};
       const trintaDias = new Date();
       trintaDias.setDate(trintaDias.getDate() - 30);
-      const dataLimite = trintaDias.toISOString();
+      const dataLimite = globalThis.obterTimestampBrasilSemFuso(trintaDias);
 
       data?.forEach((n) => {
         if (n.criado_em >= dataLimite) {
@@ -968,7 +968,7 @@ class Notificacoes {
         badge: "/assets/icons/icon-192x192.png",
         vibrate: [200, 100, 200],
         data: {
-          date: new Date().toISOString(),
+          date: globalThis.obterTimestampBrasilSemFuso(),
         },
         actions: [
           {

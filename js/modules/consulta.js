@@ -286,6 +286,29 @@ function obterDataHoraLocalInputAbordagem() {
   return `${ano}-${mes}-${dia}T${horas}:${minutos}`;
 }
 
+function formatarDataHoraInputLocal(valor) {
+  if (!valor) return "";
+  const date = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatarTimestampLocalSemFuso(valor) {
+  if (!valor) return null;
+  const date = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function formatarDataLocalISO(valor) {
+  const date = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function comprimirImagemInterna(
   file,
   maxWidth = MAX_IMAGE_WIDTH,
@@ -550,9 +573,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
       const isTextarea = campo.tipo === "textarea";
 
       if (isDateTime) {
-        const valorFormatado = valorAtual
-          ? new Date(valorAtual).toISOString().slice(0, 16)
-          : "";
+        const valorFormatado = valorAtual ? formatarDataHoraInputLocal(valorAtual) : "";
         return `
           <div class="form-group" style="margin-bottom:10px;">
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
@@ -673,11 +694,9 @@ function abrirModalSolicitarRetificacaoAbordagem(
       if (input) {
         const valor = input.value.trim();
         if (campo.tipo === "datetime" && valor) {
-          // Converter para ISO
-          const date = new Date(valor);
-          if (!isNaN(date.getTime())) {
-            dados[campo.campo] = date.toISOString();
-          }
+          // Persistir como horário civil sem fuso, igual ao input datetime-local.
+          const timestampLocal = formatarTimestampLocalSemFuso(valor);
+          if (timestampLocal) dados[campo.campo] = timestampLocal;
         } else if (valor) {
           dados[campo.campo] = valor;
         }
@@ -751,14 +770,14 @@ function abrirModalSolicitarRetificacaoAbordagem(
         id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
         abordagem_original_id: abordagem.id,
         justificativa_retificacao: isSupervisor ? justificativa : null,
-        retificado_em: isSupervisor ? new Date().toISOString() : null,
+        retificado_em: isSupervisor ? globalThis.obterTimestampBrasilSemFuso() : null,
         retificado_por: isSupervisor ? user.id : null,
         solicitacao_retificacao_justificativa: isSupervisor
           ? null
           : justificativa,
-        solicitada_em: isSupervisor ? null : new Date().toISOString(),
+        solicitada_em: isSupervisor ? null : globalThis.obterTimestampBrasilSemFuso(),
         solicitada_por: isSupervisor ? null : user.id,
-        aprovada_em: isSupervisor ? new Date().toISOString() : null,
+        aprovada_em: isSupervisor ? globalThis.obterTimestampBrasilSemFuso() : null,
         aprovada_por: isSupervisor ? user.id : null,
         rejeitada_em: null,
         rejeitada_por: null,
@@ -768,8 +787,8 @@ function abrirModalSolicitarRetificacaoAbordagem(
           : "pending_rectification",
         esta_ativa: isSupervisor ? true : false,
         numero_versao: (abordagem.numero_versao || 1) + 1,
-        criado_em: new Date().toISOString(),
-        atualizado_em: new Date().toISOString(),
+        criado_em: globalThis.obterTimestampBrasilSemFuso(),
+        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         criado_por: abordagem.criado_por,
         campos_alterados: JSON.stringify(camposAlterados),
         versao_original: JSON.stringify(abordagem),
@@ -783,7 +802,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
           .from(tabela)
           .update({
             esta_ativa: false,
-            atualizado_em: new Date().toISOString(),
+            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
           })
           .eq("id", abordagem.id);
 
@@ -903,7 +922,7 @@ async function registrarLogPericialAbordagem(
       user_agent: navigator.userAgent,
       latitude: latitude?.toString(),
       longitude: longitude?.toString(),
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     };
 
     await client.from("logs_periciais").insert([logData]);
@@ -938,7 +957,7 @@ async function notificarSupervisoresRetificacaoAbordagem(abordagem, tipo) {
       mensagem: `${identificador} (${tipo}) solicitou retificação. Aguarda sua análise.`,
       tipo: "retificacao_pendente",
       link: "#retificacoes-abordagens",
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     }));
 
     const batchSize = 50;
@@ -994,7 +1013,7 @@ async function notificarSolicitanteRetificacaoAbordagem(
           ? "retificacao_aprovada"
           : "retificacao_rejeitada",
       link: "#consulta",
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     });
   } catch (error) {
     console.error("Erro ao notificar solicitante:", error);
@@ -2423,7 +2442,7 @@ export async function finalizarAbordagem(id, tipo, appInstance) {
 
     // 🔥 NOVO: Data/hora de finalização
 
-    const dataFinalizacao = new Date().toISOString();
+    const dataFinalizacao = globalThis.obterTimestampBrasilSemFuso();
 
     // Atualizar status e data de finalização
     const { data, error } = await client
@@ -2431,7 +2450,7 @@ export async function finalizarAbordagem(id, tipo, appInstance) {
       .update({
         status_abordagem: "finalizada",
         data_hora_finalizacao: dataFinalizacao,
-        atualizado_em: new Date().toISOString(),
+        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
       })
       .eq("id", id)
       .select()
@@ -2697,7 +2716,7 @@ export async function exportarDetalhePDF(id, tipo, appInstance) {
     const dataReferencia = data.data_hora_inicio || data.criado_em;
     const dataReferenciaDate = dataReferencia ? new Date(dataReferencia) : null;
     const periodoRegistro = dataReferenciaDate && !Number.isNaN(dataReferenciaDate.getTime())
-      ? new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(dataReferenciaDate)
+      ? new Intl.DateTimeFormat("pt-BR", { timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(dataReferenciaDate)
       : "Registro individual";
     const dadosRelatorio = {
       veiculos: isVeiculo ? [data] : [],
@@ -2871,14 +2890,14 @@ function definirPeriodoPadrao() {
   const dozeHoras = new Date(agora);
   dozeHoras.setHours(dozeHoras.getHours() - 12);
   estado.filtros.periodo = "12h";
-  estado.filtros.dataInicio = dozeHoras.toISOString();
-  estado.filtros.dataFim = agora.toISOString();
+  estado.filtros.dataInicio = globalThis.obterTimestampBrasilSemFuso(dozeHoras);
+  estado.filtros.dataFim = globalThis.obterTimestampBrasilSemFuso(agora);
 }
 function consultaPeriodoChange() {
   const periodo = document.getElementById("consultaPeriodo")?.value || "12h";
   const agora = new Date();
   let dataInicio = "";
-  let dataFim = agora.toISOString().slice(0, 10);
+  let dataFim = formatarDataLocalISO(agora);
   if (periodo === "personalizado") {
     const filtrosAvancados = document.getElementById("consultaFiltrosAvancados");
     if (filtrosAvancados) filtrosAvancados.open = true;
@@ -2890,8 +2909,8 @@ function consultaPeriodoChange() {
     case "12h": {
       const limite = new Date(agora);
       limite.setHours(limite.getHours() - 12);
-      dataInicio = limite.toISOString();
-      dataFim = agora.toISOString();
+      dataInicio = globalThis.obterTimestampBrasilSemFuso(limite);
+      dataFim = globalThis.obterTimestampBrasilSemFuso(agora);
       break;
     }
     case "hoje":
@@ -2900,13 +2919,13 @@ function consultaPeriodoChange() {
     case "semana": {
       const limite = new Date(agora);
       limite.setDate(limite.getDate() - 7);
-      dataInicio = limite.toISOString().slice(0, 10);
+      dataInicio = formatarDataLocalISO(limite);
       break;
     }
     case "mes": {
       const limite = new Date(agora);
       limite.setDate(limite.getDate() - 30);
-      dataInicio = limite.toISOString().slice(0, 10);
+      dataInicio = formatarDataLocalISO(limite);
       break;
     }
     default:
@@ -3225,7 +3244,7 @@ function renderAbordagensCards(abordagens, appInstance) {
     .map((ab) => {
       const isVeiculo = ab.tipo_abordagem === "veiculo";
       const data = new Date(ab.criado_em).toLocaleString("pt-BR", {
-        timeZone: "America/Sao_Paulo",
+        timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
@@ -3848,7 +3867,7 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
     const isVeiculo = tipo === "veiculo";
     const guardaNome = data.usuarios?.nome_completo || "Desconhecido";
     const dataFormatada = new Date(data.criado_em).toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
+      timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
       day: "2-digit", month: "2-digit", year: "numeric",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
     });

@@ -18,6 +18,14 @@
  *             ocorrenciaManager (global), pdfExport (global), utils, ui
  */
 
+// Formata timestamp sem fuso para colunas operacionais do banco.
+function formatarTimestampLocalSemFuso(data = new Date()) {
+  const date = data instanceof Date ? data : new Date(data);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 // ============================================
 // CONSTANTES
 // ============================================
@@ -1250,10 +1258,8 @@ export async function finalizarOcorrencia(appInstance) {
   );
   if (!confirmado) return;
 
-  const agora = new Date();
-  const timezoneOffset = agora.getTimezoneOffset();
-  const adjustedDate = new Date(agora.getTime() - timezoneOffset * 60000);
-  const dataEncerramento = adjustedDate.toISOString();
+  // Coluna operacional sem fuso: preservar a hora civil exibida no dispositivo.
+  const dataEncerramento = formatarTimestampLocalSemFuso(new Date());
 
   const result = await ocorrenciaManager.atualizar(id, {
     status: "synced",
@@ -1561,7 +1567,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

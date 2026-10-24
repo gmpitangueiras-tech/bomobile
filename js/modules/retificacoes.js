@@ -961,7 +961,7 @@ export async function aprovarRetificacao(id, tipo, container, appInstance) {
         .update({
           esta_ativa: false,
           status_retificacao: "rectified",
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", original.id);
 
@@ -975,11 +975,11 @@ export async function aprovarRetificacao(id, tipo, container, appInstance) {
           esta_ativa: true,
           justificativa_retificacao:
             retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: new Date().toISOString(),
+          retificado_em: globalThis.obterTimestampBrasilSemFuso(),
           retificado_por: authManager.getUserId(),
-          aprovada_em: new Date().toISOString(),
+          aprovada_em: globalThis.obterTimestampBrasilSemFuso(),
           aprovada_por: authManager.getUserId(),
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -1093,10 +1093,10 @@ export async function rejeitarRetificacao(id, tipo, container, appInstance) {
         .update({
           status_retificacao: "rectification_rejected",
           esta_ativa: false,
-          rejeitada_em: new Date().toISOString(),
+          rejeitada_em: globalThis.obterTimestampBrasilSemFuso(),
           rejeitada_por: authManager.getUserId(),
           motivo_rejeicao: motivo,
-          atualizado_em: new Date().toISOString(),
+          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
         })
         .eq("id", id)
         .select()
@@ -1587,7 +1587,7 @@ async function registrarLogPericialRetificacao(
       user_agent: navigator.userAgent,
       latitude: latitude?.toString(),
       longitude: longitude?.toString(),
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     };
 
     await client.from("logs_periciais").insert([logData]);
@@ -1635,7 +1635,7 @@ async function notificarSolicitanteRetificacaoAbordagem(
           ? "retificacao_aprovada"
           : "retificacao_rejeitada",
       link: "#consulta",
-      criado_em: new Date().toISOString(),
+      criado_em: globalThis.obterTimestampBrasilSemFuso(),
     });
   } catch (error) {
     console.error("Erro ao notificar solicitante:", error);
@@ -1953,7 +1953,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

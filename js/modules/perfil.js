@@ -66,7 +66,7 @@ export async function renderPerfil(container, appInstance) {
     const date = new Date(user.ultimo_login);
     if (!Number.isNaN(date.getTime())) {
       ultimoLogin = date.toLocaleString("pt-BR", {
-        timeZone: "America/Sao_Paulo",
+        timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
         day: "2-digit", month: "short", year: "numeric",
         hour: "2-digit", minute: "2-digit",
       });

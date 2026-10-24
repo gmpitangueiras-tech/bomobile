@@ -24,13 +24,13 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v45";
+const CACHE_NAME = "guarda-pitangueiras-v51";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v2";
 const API_CACHE = "guarda-api-v2";
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v2";
-const CACHE_VERSION = "v45";
+const CACHE_VERSION = "v51";
 
 const STATIC_ASSETS = [
   BASE_PATH,
@@ -38,6 +38,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "css/style.css",
   BASE_PATH + "js/config.js",
   BASE_PATH + "js/supabase.js",
+  BASE_PATH + "js/admin-api.js",
   BASE_PATH + "js/auth.js",
   BASE_PATH + "js/ocorrencia.js",
   BASE_PATH + "js/session.js",
@@ -46,6 +47,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/modules/busca-profunda.js",
   BASE_PATH + "js/modules/consulta.js",
   BASE_PATH + "js/modules/dashboard.js",
+  BASE_PATH + "js/modules/admin-governanca.js",
   BASE_PATH + "js/modules/detalhe-ocorrencia.js",
   BASE_PATH + "js/modules/logs.js",
   BASE_PATH + "js/modules/mural.js",

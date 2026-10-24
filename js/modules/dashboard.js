@@ -471,9 +471,7 @@ async function carregarBriefings() {
       return;
     }
 
-    const dozeHorasAtras = new Date(
-      Date.now() - 12 * 60 * 60 * 1000,
-    ).toISOString();
+    const dozeHorasAtras = globalThis.obterTimestampBrasilSemFuso(new Date(Date.now() - 12 * 60 * 60 * 1000));
 
     const { data: novasOcorrencias, error: occError } = await client
       .from("ocorrencias")
@@ -1790,7 +1788,7 @@ function formatarDataHoraLocal(date) {
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

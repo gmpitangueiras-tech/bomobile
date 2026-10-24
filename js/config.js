@@ -46,7 +46,8 @@ const CONFIG = {
   MUNICIPIO: "Pitangueiras",
   ESTADO: "Paraná",
   GUARDA_NOME: "Guarda Municipal de Pitangueiras",
-  VERSAO: "1.0.0",
+  VERSAO: "1.0.0-v51",
+  BUILD: "v51",
 
   // ============================================
   // SINCERONIZAÇÃO (SYNC)
@@ -498,6 +499,49 @@ const CONFIG = {
     STATUS_FINALIZACAO: ["synced", "finalizada", "rectified"],
   },
 };
+
+// ============================================
+// POLÍTICA TEMPORAL v47 — HORÁRIO CIVIL DO BRASIL
+// ============================================
+// Os campos operacionais do banco são timestamp sem fuso. O valor enviado
+// deve ser a hora civil de America/Sao_Paulo, sem Z e sem offset, mesmo que o
+// aparelho esteja com outro fuso configurado.
+function obterPartesHorarioBrasil(valor = new Date()) {
+  const date = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(date.getTime())) return null;
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const out = {};
+  for (const parte of partes) if (parte.type !== "literal") out[parte.type] = parte.value;
+  return out;
+}
+
+function obterTimestampBrasilSemFuso(valor = new Date(), incluirSegundos = true) {
+  if (valor === null || valor === undefined || valor === "") return null;
+  const texto = typeof valor === "string" ? valor.trim() : "";
+  // datetime-local já representa a hora civil brasileira: não reinterpretar.
+  const local = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (local && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(texto)) {
+    const base = `${local[1]}-${local[2]}-${local[3]}T${local[4]}:${local[5]}`;
+    return incluirSegundos ? `${base}:${local[6] || "00"}` : base;
+  }
+  const partes = obterPartesHorarioBrasil(valor);
+  if (!partes) return null;
+  const base = `${partes.year}-${partes.month}-${partes.day}T${partes.hour}:${partes.minute}`;
+  return incluirSegundos ? `${base}:${partes.second}` : base;
+}
+
+function obterDataHoraInputBrasil() {
+  return obterTimestampBrasilSemFuso(new Date(), false);
+}
+
+globalThis.obterPartesHorarioBrasil = obterPartesHorarioBrasil;
+globalThis.obterTimestampBrasilSemFuso = obterTimestampBrasilSemFuso;
+globalThis.obterDataHoraInputBrasil = obterDataHoraInputBrasil;
 
 // ============================================
 // FREEZE E EXPORTAÇÃO

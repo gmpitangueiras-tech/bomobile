@@ -24,33 +24,23 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v6";
+const CACHE_NAME = "guarda-pitangueiras-v45";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v2";
 const API_CACHE = "guarda-api-v2";
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v2";
-const CACHE_VERSION = "v6";
+const CACHE_VERSION = "v45";
 
 const STATIC_ASSETS = [
   BASE_PATH,
   BASE_PATH + "index.html",
   BASE_PATH + "css/style.css",
-  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
-  "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css",
-  "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js",
   BASE_PATH + "js/config.js",
   BASE_PATH + "js/supabase.js",
   BASE_PATH + "js/auth.js",
   BASE_PATH + "js/ocorrencia.js",
   BASE_PATH + "js/session.js",
-  BASE_PATH + "js/dashboard.js",
-  BASE_PATH + "js/database.js",
-  BASE_PATH + "js/db.js",
-  BASE_PATH + "js/logger.js",
-  BASE_PATH + "js/sync.js",
-  BASE_PATH + "js/supabase-client.js",
   BASE_PATH + "js/app.js",
   BASE_PATH + "js/pdf-export.js",
   BASE_PATH + "js/modules/busca-profunda.js",
@@ -59,7 +49,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/modules/detalhe-ocorrencia.js",
   BASE_PATH + "js/modules/logs.js",
   BASE_PATH + "js/modules/mural.js",
-  BASE_PATH + "js/modules/notificacoes.js",
+  BASE_PATH + "js/modules/notificacoes-lista.js",
   BASE_PATH + "js/modules/nova-ocorrencia.js",
   BASE_PATH + "js/modules/ocorrencias-lista.js",
   BASE_PATH + "js/modules/perfil.js",
@@ -69,19 +59,10 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/modules/usuarios.js",
   BASE_PATH + "js/modules/utils.js",
   BASE_PATH + "manifest.json",
-  BASE_PATH + "assets/icons/favicon-16x16.png",
-  BASE_PATH + "assets/icons/favicon-32x32.png",
-  BASE_PATH + "assets/icons/icon-72x72.png",
-  BASE_PATH + "assets/icons/icon-96x96.png",
-  BASE_PATH + "assets/icons/icon-128x128.png",
-  BASE_PATH + "assets/icons/icon-144x144.png",
-  BASE_PATH + "assets/icons/icon-152x152.png",
   BASE_PATH + "assets/icons/icon-192x192.png",
-  BASE_PATH + "assets/icons/icon-256x256.png",
-  BASE_PATH + "assets/icons/icon-384x384.png",
-  BASE_PATH + "assets/icons/icon-192x192.ico",
   BASE_PATH + "assets/icons/icon-512x512.png",
   BASE_PATH + "assets/logo-guarda.png",
+  BASE_PATH + "assets/images/logo-guarda.png",
   // Leaflet para offline
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
@@ -105,8 +86,25 @@ const API_ROUTES = [
   "/rest/v1/mural_comentarios",
   "/rest/v1/mural_reações",
   "/rest/v1/retificacoes",
-  "/rest/v1/logs_acesso",
 ];
+
+// Logs de acesso não devem persistir no cache offline do dispositivo.
+async function limparCacheLogsAcesso() {
+  try {
+    const cache = await caches.open(API_CACHE);
+    const requests = await cache.keys();
+    const logs = requests.filter((request) => {
+      try {
+        return new URL(request.url).pathname.endsWith("/rest/v1/logs_acesso");
+      } catch {
+        return false;
+      }
+    });
+    await Promise.all(logs.map((request) => cache.delete(request)));
+  } catch (error) {
+    console.warn("⚠️ Não foi possível limpar respostas antigas de logs do cache:", error);
+  }
+}
 
 // ============================================
 // INSTALAÇÃO
@@ -120,13 +118,38 @@ self.addEventListener("install", (event) => {
       // Cache dos assets estáticos
       caches.open(CACHE_NAME).then((cache) => {
         console.log("📦 Cacheando assets estáticos...");
-        return Promise.all(
-          STATIC_ASSETS.map((asset) =>
-            cache.add(asset).catch((err) => {
-              console.warn("⚠️ Asset não entrou no cache:", asset, err);
-            }),
-          ),
-        );
+        return Promise.allSettled(
+          STATIC_ASSETS.map(async (assetUrl) => {
+            try {
+              await cache.add(assetUrl);
+              return { url: assetUrl, cached: true };
+            } catch (error) {
+              return {
+                url: assetUrl,
+                cached: false,
+                message: error?.message || "Falha ao buscar recurso",
+              };
+            }
+          }),
+        ).then((results) => {
+          const failedAssets = results
+            .filter(
+              (result) =>
+                result.status === "fulfilled" && !result.value.cached,
+            )
+            .map((result) => ({
+              url: result.value.url,
+              message: result.value.message,
+            }));
+          if (failedAssets.length > 0) {
+            console.warn(
+              `⚠️ ${failedAssets.length} recurso(s) não entraram no pré-cache; demais assets foram mantidos:`,
+              failedAssets,
+            );
+          } else {
+            console.log("✅ Todos os assets estáticos foram adicionados ao cache");
+          }
+        });
       }),
       // Criar caches separados para diferentes tipos de conteúdo
       caches.open(ASSETS_CACHE),
@@ -156,8 +179,11 @@ self.addEventListener("activate", (event) => {
           cacheNames
             .filter((cacheName) => {
               return (
-                cacheName.startsWith("guarda-pitangueiras-v") &&
-                cacheName !== CACHE_NAME
+                cacheName !== CACHE_NAME &&
+                cacheName !== ASSETS_CACHE &&
+                cacheName !== API_CACHE &&
+                cacheName !== IMAGES_CACHE &&
+                cacheName !== DYNAMIC_CACHE
               );
             })
             .map((cacheName) => {
@@ -166,6 +192,8 @@ self.addEventListener("activate", (event) => {
             }),
         );
       }),
+      // Remover apenas respostas antigas de logs; manter os demais dados offline.
+      limparCacheLogsAcesso(),
       // REIVINDICAR CONTROLE IMEDIATO - FORÇA ATUALIZAÇÃO EM TODAS AS ABAS
       self.clients.claim(),
     ]).then(() => {
@@ -507,33 +535,8 @@ self.addEventListener("fetch", (event) => {
 // NOTIFICAÇÕES PUSH
 // ============================================
 
-function resolveScopedUrl(value, fallback) {
-  if (!value) return fallback;
-  const raw = String(value);
-  if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
-
-  try {
-    const scope = new URL(self.registration.scope);
-    const relativePath = raw.replace(/^\/+/, "");
-    if (relativePath.startsWith(scope.pathname.replace(/^\/+/, ""))) {
-      return new URL(relativePath, scope.origin).href;
-    }
-    return new URL(relativePath, scope).href;
-  } catch (error) {
-    return fallback;
-  }
-}
-
 self.addEventListener("push", (event) => {
   console.log("📨 Notificação push recebida:", event);
-  const defaultIcon = new URL(
-    "assets/icons/icon-192x192.png",
-    self.registration.scope,
-  ).href;
-  const defaultBadge = new URL(
-    "assets/icons/favicon-32x32.png",
-    self.registration.scope,
-  ).href;
 
   let data = {};
   try {
@@ -543,8 +546,8 @@ self.addEventListener("push", (event) => {
     data = {
       title: event.data ? event.data.text() : "Nova notificação",
       body: "",
-      icon: defaultIcon,
-      badge: defaultBadge,
+      icon: "/assets/icons/icon-192x192.ico",
+      badge: "/assets/icons/icon-192x192.ico",
       tag: "notification",
       requireInteraction: true,
       data: {},
@@ -553,8 +556,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body || "Você tem uma nova notificação",
-    icon: resolveScopedUrl(data.icon, defaultIcon),
-    badge: resolveScopedUrl(data.badge, defaultBadge),
+    icon: data.icon || "/assets/icons/icon-192x192.ico",
+    badge: data.badge || "/assets/icons/icon-192x192.ico",
     vibrate: [200, 100, 200],
     tag: data.tag || "notification-" + Date.now(),
     requireInteraction:
@@ -622,7 +625,7 @@ self.addEventListener("notificationclick", (event) => {
       .then((clientList) => {
         // Se já tem uma janela aberta, foca nela
         for (const client of clientList) {
-          if (client.url.startsWith(self.registration.scope) && "focus" in client) {
+          if (client.url.includes("/") && "focus" in client) {
             client.focus();
             // Se tem um link para navegar
             if (notification.data && notification.data.link) {
@@ -637,10 +640,7 @@ self.addEventListener("notificationclick", (event) => {
 
         // Se não tem janela aberta, abre uma nova
         if (clients.openWindow) {
-          const url = resolveScopedUrl(
-            notification.data?.link,
-            self.registration.scope,
-          );
+          const url = notification.data?.link || "/";
           return clients.openWindow(url);
         }
       }),

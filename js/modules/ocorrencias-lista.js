@@ -48,6 +48,7 @@ const TIPOS_OCORRENCIA = [
   { value: "incendio", label: "Incêndio" },
   { value: "desaparecimento", label: "Desaparecimento" },
   { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "flagrante", label: "Flagrante" },
   { value: "outro", label: "Outro" },
 ];
 
@@ -64,6 +65,7 @@ const TIPO_CORES = {
   acidente: "badge-tipo-acidente",
   desaparecimento: "badge-tipo-desaparecimento",
   atendimento_social: "badge-tipo-atendimento_social",
+  flagrante: "badge-tipo-flagrante",
   outro: "badge-tipo-outro",
 };
 
@@ -164,6 +166,15 @@ export async function renderOcorrencias(container, appInstance) {
     window._ocorrenciasExportarSelecionados = () =>
       exportarSelecionados(appInstance);
     window._ocorrenciasExportarTodos = () => exportarTodos(appInstance);
+    window._ocorrenciasFiltroRapido = (status) => {
+      estado.filtros.status = status;
+      estado.paginaAtual = 1;
+      estado.selecionados = new Set();
+      estado.modoSelecao = false;
+      renderOcorrencias(container, appInstance);
+    };
+    window._ocorrenciasToggleModoSelecao = () =>
+      toggleModoSelecao(container, appInstance);
   } catch (error) {
     console.error("❌ Erro ao renderizar ocorrências:", error);
     container.innerHTML = renderErro(error, appInstance);
@@ -273,10 +284,6 @@ async function carregarOcorrencias(pagina = 1) {
           // 🔥 FILTRAR: Remover assinaturas dos anexos (elas são armazenadas separadamente)
           const anexosReais = anexos.filter((a) => a.tipo !== "assinatura");
 
-          // Buscar envolvidos (apenas para contagem)
-          const envResult = await ocorrenciaManager.listarEnvolvidos(occ.id);
-          const envolvidos = envResult.success ? envResult.data : [];
-
           return {
             ...occ,
             criador: dadosUsuarios[occ.criado_por] || {
@@ -287,7 +294,6 @@ async function carregarOcorrencias(pagina = 1) {
             anexos: anexosReais,
             // 🔥 Manter assinaturas separadamente (para uso futuro)
             assinaturas: occ.assinaturas || [],
-            envolvidos: envolvidos,
           };
         }),
       );
@@ -341,189 +347,131 @@ async function buscarDadosUsuariosEmLote(ids) {
 // ============================================
 
 function renderizarLista(container, appInstance) {
-  const { ocorrencias, totalRegistros, totalPaginas, paginaAtual, filtros } =
-    estado;
-
-  const temFiltros =
-    filtros.status ||
-    filtros.tipo ||
-    filtros.dataInicio ||
-    filtros.dataFim ||
-    filtros.guarda ||
-    filtros.search;
-
-  const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA + 1;
-  const fim = Math.min(paginaAtual * ITENS_POR_PAGINA, totalRegistros);
-
+  const { ocorrencias, totalRegistros, totalPaginas, paginaAtual, filtros } = estado;
+  const temFiltros = Boolean(
+    filtros.status || filtros.tipo || filtros.dataInicio || filtros.dataFim || filtros.guarda || filtros.search,
+  );
   const filtrosAbertos = estado.filtrosVisiveis;
   const totalSelecionados = estado.selecionados.size;
-
-  // Verificar se todos os itens da página atual estão selecionados
-  const todosSelecionados =
-    ocorrencias.length > 0 &&
+  const inicio = totalRegistros ? (paginaAtual - 1) * ITENS_POR_PAGINA + 1 : 0;
+  const fim = Math.min(paginaAtual * ITENS_POR_PAGINA, totalRegistros);
+  const todosSelecionados = ocorrencias.length > 0 &&
     ocorrencias.every((occ) => estado.selecionados.has(occ.id));
+  const quantidadeFiltros = [filtros.status, filtros.tipo, filtros.dataInicio, filtros.dataFim, filtros.guarda]
+    .filter(Boolean).length;
+  const isSupervisor = typeof authManager !== "undefined" &&
+    typeof authManager.isSupervisor === "function" && authManager.isSupervisor();
+  const filtrosRapidos = [
+    { value: "", label: "Todas", icon: "fa-layer-group" },
+    { value: "draft", label: "Rascunhos", icon: "fa-file-alt" },
+    { value: "pending_sync", label: "Pendentes", icon: "fa-clock" },
+    { value: "synced", label: "Finalizadas", icon: "fa-check-circle" },
+    ...(isSupervisor ? [{ value: "pending_rectification", label: "Retificação", icon: "fa-sync-alt" }] : []),
+  ];
 
   let html = `
-    <div class="container" style="padding-bottom:100px;" id="ocorrenciasContainer">
-      <!-- Cabeçalho -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-          <div>
-            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;font-weight:700;">
-              <i class="fas fa-list-ul" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Minhas Ocorrências
-            </h2>
-            <p style="color:var(--cinza-medio);font-size:12px;margin:0;">
-              Acompanhe e gerencie todos os seus boletins.
-            </p>
-          </div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button onclick="window._ocorrenciasNova()" class="btn-primary" 
-              style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--gradiente-principal);box-shadow:0 2px 12px rgba(0,63,135,0.25);">
-              <i class="fas fa-plus" style="margin-right:4px;"></i> Nova
-            </button>
-            ${
-              totalSelecionados > 0
-                ? `
-              <button onclick="window._ocorrenciasExportarSelecionados()" class="btn-primary" 
-                style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--verde-bandeira);">
-                <i class="fas fa-file-pdf" style="margin-right:4px;"></i> 
-                Exportar ${totalSelecionados}
-              </button>
-            `
-                : `
-              <button onclick="window._ocorrenciasExportarTodos()" class="btn-secondary" 
-                style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
-                <i class="fas fa-file-pdf" style="margin-right:4px;"></i> Exportar Tudo
-              </button>
-            `
-            }
-          </div>
+    <div class="container minhas-ocorrencias-page" id="ocorrenciasContainer">
+      <header class="minhas-ocorrencias-head">
+        <div class="minhas-ocorrencias-head__copy">
+          <span class="minhas-ocorrencias-eyebrow">GESTÃO OPERACIONAL</span>
+          <h2><i class="fas fa-list-ul" aria-hidden="true"></i> Minhas Ocorrências</h2>
+          <p>Consulte registros, acompanhe pendências e acesse seus boletins.</p>
         </div>
-      </div>
-
-      <!-- Filtros compactos -->
-      <div class="filtros-ocorrencias" style="padding:8px 10px;margin-bottom:10px;">
-        <!-- Linha 1: Filtros principais + toggle -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
-          <div style="flex:1;min-width:80px;">
-            <select id="filtroStatus" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;" onchange="window._ocorrenciasAplicarFiltros()">
-              ${STATUS_OPCOES.map(
-                (op) => `
-                <option value="${op.value}" ${filtros.status === op.value ? "selected" : ""}>
-                  ${op.label}
-                </option>
-              `,
-              ).join("")}
-            </select>
-          </div>
-          <div style="flex:1;min-width:80px;">
-            <select id="filtroTipo" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;" onchange="window._ocorrenciasAplicarFiltros()">
-              ${TIPOS_OCORRENCIA.map(
-                (op) => `
-                <option value="${op.value}" ${filtros.tipo === op.value ? "selected" : ""}>
-                  ${op.label}
-                </option>
-              `,
-              ).join("")}
-            </select>
-          </div>
-          <div style="flex:0 0 auto;display:flex;gap:4px;">
-            <button onclick="window._ocorrenciasToggleFiltros()" 
-              style="padding:4px 10px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:${filtrosAbertos ? "var(--azul-muito-claro)" : "var(--branco)"};color:${filtrosAbertos ? "var(--azul-bandeira)" : "var(--cinza-medio)"};font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">
-              <i class="fas fa-sliders-h" style="margin-right:4px;"></i>
-              ${filtrosAbertos ? "▲ Menos" : "▼ Mais"}
-            </button>
-            ${
-              temFiltros
-                ? `<button onclick="window._ocorrenciasLimparFiltros()" style="padding:4px 8px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:var(--branco);color:var(--azul-bandeira);font-size:11px;font-weight:600;cursor:pointer;"><i class="fas fa-times"></i></button>`
-                : ""
-            }
-          </div>
+        <div class="minhas-ocorrencias-head__actions">
+          <button type="button" class="minhas-ocorrencias-button minhas-ocorrencias-button--primary" onclick="window._ocorrenciasNova()">
+            <i class="fas fa-plus" aria-hidden="true"></i><span>Nova ocorrência</span>
+          </button>
+          <button type="button" class="minhas-ocorrencias-button minhas-ocorrencias-button--secondary" onclick="window._ocorrenciasToggleModoSelecao()" aria-pressed="${estado.modoSelecao}">
+            <i class="fas ${estado.modoSelecao ? "fa-times" : "fa-check-square"}" aria-hidden="true"></i>
+            <span>${estado.modoSelecao ? "Sair da seleção" : "Selecionar"}</span>
+          </button>
+          ${ocorrencias.length > 0 ? `
+            <button type="button" class="minhas-ocorrencias-button minhas-ocorrencias-button--secondary" onclick="window._ocorrenciasExportarTodos()" title="Gerar PDF dos registros desta página">
+              <i class="fas fa-file-pdf" aria-hidden="true"></i><span>PDF da página</span>
+            </button>` : ""}
         </div>
+      </header>
 
-        <!-- Linha 2: Busca -->
-        <div style="position:relative;">
-          <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:12px;z-index:2;"></i>
-          <input type="text" id="ocorrenciasBusca" placeholder="Buscar por número ou local..." 
-            value="${filtros.search || ""}"
-            style="width:100%;padding:6px 10px 6px 32px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;"
+      <nav class="minhas-ocorrencias-status" aria-label="Filtrar ocorrências por status">
+        ${filtrosRapidos.map((item) => `
+          <button type="button" class="minhas-ocorrencias-status__item${filtros.status === item.value ? " is-active" : ""}"
+            onclick="window._ocorrenciasFiltroRapido('${item.value}')" aria-pressed="${filtros.status === item.value}">
+            <i class="fas ${item.icon}" aria-hidden="true"></i><span>${item.label}</span>
+          </button>
+        `).join("")}
+      </nav>
+
+      <section class="minhas-ocorrencias-tools" aria-label="Busca e filtros">
+        <label class="minhas-ocorrencias-search" for="ocorrenciasBusca">
+          <i class="fas fa-search" aria-hidden="true"></i>
+          <input type="search" id="ocorrenciasBusca" placeholder="Buscar por número do BO ou local..."
+            value="${escapeOcorrenciaCardValue(filtros.search || "")}" autocomplete="off"
             oninput="window._ocorrenciasBuscar(this.value)">
-        </div>
+        </label>
+        <button type="button" class="minhas-ocorrencias-filter-toggle${filtrosAbertos ? " is-open" : ""}"
+          onclick="window._ocorrenciasToggleFiltros()" aria-expanded="${filtrosAbertos}" aria-controls="filtrosAvancados">
+          <i class="fas fa-sliders-h" aria-hidden="true"></i>
+          <span>Filtros${quantidadeFiltros ? ` (${quantidadeFiltros})` : ""}</span>
+          <i class="fas ${filtrosAbertos ? "fa-chevron-up" : "fa-chevron-down"}" aria-hidden="true"></i>
+        </button>
+      </section>
 
-        <!-- Filtros avançados (colapsáveis) -->
-        <div id="filtrosAvancados" style="display:${filtrosAbertos ? "block" : "none"};margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <div style="flex:1;min-width:80px;">
-              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Início</label>
-              <input type="date" id="filtroDataInicio" value="${filtros.dataInicio || ""}" 
-                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
-                onchange="window._ocorrenciasAplicarFiltros()">
-            </div>
-            <div style="flex:1;min-width:80px;">
-              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Fim</label>
-              <input type="date" id="filtroDataFim" value="${filtros.dataFim || ""}" 
-                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
-                onchange="window._ocorrenciasAplicarFiltros()">
-            </div>
-            <div style="flex:1;min-width:80px;">
-              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Guarda</label>
-              <select id="filtroGuarda" style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;" onchange="window._ocorrenciasAplicarFiltros()">
-                <option value="">Todos</option>
-                ${estado.listaGuardas
-                  .map(
-                    (g) => `
-                  <option value="${g.id}" ${filtros.guarda === g.id ? "selected" : ""}>
-                    ${g.nome_completo}
-                  </option>
-                `,
-                  )
-                  .join("")}
-              </select>
-            </div>
-          </div>
-          <div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end;">
-            <button onclick="window._ocorrenciasAplicarFiltros()" class="btn-primary" style="padding:4px 12px;font-size:11px;min-height:30px;width:auto;border-radius:6px;">
-              <i class="fas fa-check"></i> Aplicar
-            </button>
-          </div>
+      <section id="filtrosAvancados" class="minhas-ocorrencias-filter-panel${filtrosAbertos ? " is-open" : ""}"
+        aria-label="Filtros avançados" ${filtrosAbertos ? "" : "hidden"}>
+        <div class="minhas-ocorrencias-filter-grid">
+          <label class="minhas-ocorrencias-field">
+            <span>Status</span>
+            <select id="filtroStatus" onchange="window._ocorrenciasAplicarFiltros()">
+              ${STATUS_OPCOES.map((op) => `<option value="${escapeOcorrenciaCardValue(op.value)}" ${filtros.status === op.value ? "selected" : ""}>${escapeOcorrenciaCardValue(op.label)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="minhas-ocorrencias-field">
+            <span>Tipo de ocorrência</span>
+            <select id="filtroTipo" onchange="window._ocorrenciasAplicarFiltros()">
+              ${TIPOS_OCORRENCIA.map((op) => `<option value="${escapeOcorrenciaCardValue(op.value)}" ${filtros.tipo === op.value ? "selected" : ""}>${escapeOcorrenciaCardValue(op.label)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="minhas-ocorrencias-field">
+            <span>Data inicial</span>
+            <input type="date" id="filtroDataInicio" value="${escapeOcorrenciaCardValue(filtros.dataInicio || "")}" onchange="window._ocorrenciasAplicarFiltros()">
+          </label>
+          <label class="minhas-ocorrencias-field">
+            <span>Data final</span>
+            <input type="date" id="filtroDataFim" value="${escapeOcorrenciaCardValue(filtros.dataFim || "")}" onchange="window._ocorrenciasAplicarFiltros()">
+          </label>
+          <label class="minhas-ocorrencias-field">
+            <span>Guarda</span>
+            <select id="filtroGuarda" onchange="window._ocorrenciasAplicarFiltros()">
+              <option value="">Todos</option>
+              ${estado.listaGuardas.map((g) => `<option value="${escapeOcorrenciaCardValue(g.id)}" ${filtros.guarda === g.id ? "selected" : ""}>${escapeOcorrenciaCardValue(g.nome_completo)}</option>`).join("")}
+            </select>
+          </label>
         </div>
-      </div>
-
-      <!-- Contador e ações de seleção -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px;">
-        <span style="font-size:12px;color:var(--cinza-medio);font-weight:500;">
-          <i class="fas fa-file-alt" style="margin-right:4px;"></i>
-          ${
-            totalRegistros > 0
-              ? `Mostrando <strong>${inicio}</strong> a <strong>${fim}</strong> de <strong>${totalRegistros}</strong>`
-              : "Nenhuma ocorrência encontrada"
-          }
-          ${temFiltros ? `<span style="color:var(--azul-bandeira);font-weight:600;">(filtrado)</span>` : ""}
-        </span>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
-          ${
-            totalSelecionados > 0
-              ? `
-            <span style="font-size:11px;color:var(--azul-bandeira);font-weight:600;">
-              ${totalSelecionados} selecionado(s)
-            </span>
-            <button onclick="window._ocorrenciasDesselecionarTodos()" 
-              style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--cinza-claro);color:var(--cinza-escuro);cursor:pointer;">
-              <i class="fas fa-times"></i> Limpar
-            </button>
-          `
-              : ""
-          }
-          <button onclick="window._ocorrenciasSelecionarTodos()" 
-            style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
-            <i class="fas fa-check-double"></i> ${todosSelecionados ? "Desselecionar" : "Selecionar"} Todos
+        <div class="minhas-ocorrencias-filter-actions">
+          ${temFiltros ? `<button type="button" class="minhas-ocorrencias-text-button" onclick="window._ocorrenciasLimparFiltros()"><i class="fas fa-sync-alt-left" aria-hidden="true"></i> Limpar filtros</button>` : ""}
+          <button type="button" class="minhas-ocorrencias-button minhas-ocorrencias-button--primary" onclick="window._ocorrenciasAplicarFiltros()">
+            <i class="fas fa-check" aria-hidden="true"></i><span>Aplicar filtros</span>
           </button>
         </div>
+      </section>
+
+      ${estado.modoSelecao ? `
+        <section class="minhas-ocorrencias-selection" aria-label="Ações em lote">
+          <div><strong>${totalSelecionados}</strong><span>${totalSelecionados === 1 ? "registro selecionado" : "registros selecionados"} nesta página</span></div>
+          <div class="minhas-ocorrencias-selection__actions">
+            <button type="button" class="minhas-ocorrencias-text-button" onclick="window._ocorrenciasSelecionarTodos()" aria-pressed="${todosSelecionados}">
+              <i class="fas ${todosSelecionados ? "fa-minus-square" : "fa-check-double"}" aria-hidden="true"></i>${todosSelecionados ? "Desmarcar página" : "Selecionar página"}
+            </button>
+            ${totalSelecionados ? `<button type="button" class="minhas-ocorrencias-button minhas-ocorrencias-button--primary" onclick="window._ocorrenciasExportarSelecionados()"><i class="fas fa-file-pdf" aria-hidden="true"></i><span>Exportar selecionados</span></button><button type="button" class="minhas-ocorrencias-text-button" onclick="window._ocorrenciasDesselecionarTodos()">Limpar seleção</button>` : ""}
+          </div>
+        </section>` : ""}
+
+      <div class="minhas-ocorrencias-count" aria-live="polite">
+        <span><i class="fas fa-list-ul" aria-hidden="true"></i> ${totalRegistros ? `Mostrando <strong>${inicio}–${fim}</strong> de <strong>${totalRegistros}</strong> ocorrências` : "Nenhuma ocorrência encontrada"}${temFiltros ? `<em>Filtrado</em>` : ""}</span>
+        ${temFiltros && !filtrosAbertos ? `<button type="button" class="minhas-ocorrencias-text-button" onclick="window._ocorrenciasLimparFiltros()">Limpar filtros</button>` : ""}
       </div>
 
-      <!-- Lista de ocorrências -->
-      <div id="listaOcorrencias">
+      <div id="listaOcorrencias" class="minhas-ocorrencias-list" role="list">
   `;
 
   if (estado.carregando) {
@@ -531,46 +479,33 @@ function renderizarLista(container, appInstance) {
   } else if (ocorrencias.length === 0) {
     html += renderVazio(temFiltros);
   } else {
-    ocorrencias.forEach((occ) => {
-      html += renderOcorrenciaCard(occ, appInstance);
-    });
+    ocorrencias.forEach((occ) => { html += renderOcorrenciaCard(occ, appInstance); });
   }
 
   html += `
       </div>
-
-      <!-- Paginação -->
       ${totalPaginas > 1 ? renderPaginacao(paginaAtual, totalPaginas) : ""}
-
-      <!-- Rodapé -->
-      <div style="text-align:center;padding:8px 0;color:var(--cinza-medio);font-size:11px;">
-        <i class="fas fa-database" style="margin-right:4px;"></i>
-        ${
-          totalRegistros > 0
-            ? `Exibindo ${ocorrencias.length} de ${totalRegistros} ocorrências`
-            : "Nenhuma ocorrência cadastrada"
-        }
+      <div class="minhas-ocorrencias-footer">
+        <i class="fas fa-database" aria-hidden="true"></i>
+        ${totalRegistros ? `${ocorrencias.length} registros nesta página · ${totalRegistros} no total` : "Nenhuma ocorrência cadastrada"}
       </div>
     </div>
   `;
 
   container.innerHTML = html;
 
-  // Registrar função de busca com debounce
   window._ocorrenciasBuscar = (termo) => {
     clearTimeout(estado._timeoutBusca);
     estado._timeoutBusca = setTimeout(() => {
       estado.filtros.search = termo.trim();
       estado.paginaAtual = 1;
       estado.selecionados = new Set();
+      estado.modoSelecao = false;
       renderOcorrencias(container, appInstance);
     }, 400);
   };
 
-  // Ajustar scroll ao trocar de página
-  if (paginaAtual > 1) {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
+  if (paginaAtual > 1) window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 // ============================================
@@ -586,206 +521,109 @@ function toggleFiltros(container, appInstance) {
 // RENDERIZAÇÃO: CARD DE OCORRÊNCIA
 // ============================================
 
+function escapeOcorrenciaCardValue(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]);
+}
+
+function safeOcorrenciaImageUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value), window.location.href);
+    return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function renderOcorrenciaCard(occ, appInstance) {
-  const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
+  const id = escapeOcorrenciaCardValue(occ.id);
+  const numero = escapeOcorrenciaCardValue(occ.numero_ocorrencia || occ.numero_temporario || "Rascunho");
   const statusClass = getStatusClass(occ.status);
-  const statusLabel = getStatusLabel(occ.status);
-  const data = formatarDataHoraLocal(occ.criado_em);
-  const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
+  const statusLabel = escapeOcorrenciaCardValue(getStatusLabel(occ.status));
+  const tipoLabel = escapeOcorrenciaCardValue(getTipoLabel(occ.tipo_ocorrencia));
   const tipoClass = TIPO_CORES[occ.tipo_ocorrencia] || "badge-tipo-outro";
-  const local = occ.local_ocorrencia || "Local não informado";
-  const guardaNome = occ.criador?.nome_completo || "Desconhecido";
-  const cpfGuarda = occ.criador?.cpf || "";
-  const cpfExibido = formatarCPFSeguro(cpfGuarda);
-
+  const local = escapeOcorrenciaCardValue(occ.local_ocorrencia || "Local não informado");
+  const guardaNome = escapeOcorrenciaCardValue(occ.criador?.nome_completo || "Guarda não identificado");
+  const dataFato = formatarDataHoraLocal(occ.data_hora_inicio || occ.criado_em) || "Data não informada";
+  const rotuloData = occ.data_hora_inicio ? "Fato" : "Cadastro";
   const isSelecionado = estado.selecionados.has(occ.id);
-
-  // Verificar se é BO Rápido e se pode ser completado
+  const imagens = Array.isArray(occ.anexos) ? occ.anexos.filter((a) =>
+    (a.tipo_arquivo === "image" || a.tipo === "image") && a.tipo !== "assinatura",
+  ) : [];
+  const primeiraImagem = imagens.length ? safeOcorrenciaImageUrl(imagens[0].url_thumb || imagens[0].url) : "";
+  const totalAnexos = Array.isArray(occ.anexos) ? occ.anexos.length : 0;
+  const observacoes = String(occ.observacoes || "").trim();
+  const observacoesPreview = escapeOcorrenciaCardValue(observacoes.length > 150 ? `${observacoes.slice(0, 150).trim()}…` : observacoes);
   const isRapido = occ.modo_criacao === "rapido";
   const isCompletado = !!occ.completado_em;
   const podeCompletar = isRapido && !isCompletado && occ.status !== "cancelled";
-
-  // 🔥 Buscar primeira imagem dos anexos (IGNORANDO assinaturas)
-  let primeiraImagem = null;
-  let totalImagens = 0;
-  let imagens = [];
-
-  // 🔥 Usar anexos já filtrados (sem assinaturas)
-  if (occ.anexos && Array.isArray(occ.anexos) && occ.anexos.length > 0) {
-    // 🔥 FILTRAR: Apenas imagens que não são assinaturas
-    imagens = occ.anexos.filter(
-      (a) =>
-        (a.tipo_arquivo === "image" || a.tipo === "image") &&
-        a.tipo !== "assinatura",
-    );
-    totalImagens = imagens.length;
-    if (totalImagens > 0) {
-      primeiraImagem = imagens[0].url_thumb || imagens[0].url;
-    }
-  }
-
-  // Observações (primeiros 100 caracteres)
-  let observacoesPreview = "";
-  let observacoesCompleta = "";
-  let temObservacoes = false;
-
-  if (occ.observacoes && occ.observacoes.trim() !== "") {
-    observacoesCompleta = occ.observacoes.trim();
-    temObservacoes = true;
-    if (observacoesCompleta.length > 100) {
-      observacoesPreview = observacoesCompleta.substring(0, 100) + "...";
-    } else {
-      observacoesPreview = observacoesCompleta;
-    }
-  }
-
-  // Verificar permissões para os botões
   const podeRetificar = authManager.podeSolicitarRetificacao(occ);
   const podeCancelar = authManager.podeCancelar(occ);
   const podeEditar = authManager.podeEditar(occ);
   const isDraft = occ.status === "draft";
   const isSynced = occ.status === "synced";
+  const statusAttr = escapeOcorrenciaCardValue(occ.status || "draft");
+  const idCall = `this.closest('.minhas-ocorrencias-card').dataset.occurrenceId`;
 
-  // Status color para borda
-  const statusColor =
-    occ.status === "synced"
-      ? "var(--verde-bandeira)"
-      : occ.status === "pending_sync"
-        ? "var(--aviso)"
-        : occ.status === "cancelled"
-          ? "var(--erro)"
-          : occ.status === "rectified"
-            ? "var(--azul-bandeira)"
-            : occ.status === "draft"
-              ? "var(--cinza-medio)"
-              : "var(--cinza-medio)";
+  let actionPrimary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--primary" onclick="window._ocorrenciasVer(${idCall})"><i class="fas fa-eye" aria-hidden="true"></i><span>Ver detalhes</span></button>`;
+  let actionSecondary = "";
+  if (podeCompletar) {
+    actionPrimary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--primary" onclick="window._ocorrenciasCompletar(${idCall})"><i class="fas fa-edit" aria-hidden="true"></i><span>Completar BO</span></button>`;
+    actionSecondary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--secondary" onclick="window._ocorrenciasVer(${idCall})"><i class="fas fa-eye" aria-hidden="true"></i><span>Ver detalhes</span></button>`;
+  } else if (isDraft && podeEditar) {
+    actionPrimary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--primary" onclick="window._ocorrenciasEditar(${idCall})"><i class="fas fa-edit" aria-hidden="true"></i><span>Continuar rascunho</span></button>`;
+    actionSecondary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--secondary" onclick="window._ocorrenciasVer(${idCall})"><i class="fas fa-eye" aria-hidden="true"></i><span>Ver detalhes</span></button>`;
+  } else if (isSynced && podeRetificar) {
+    actionSecondary = `<button type="button" class="minhas-ocorrencias-card__action minhas-ocorrencias-card__action--secondary" onclick="window._ocorrenciasRetificar(${idCall})"><i class="fas fa-sync-alt" aria-hidden="true"></i><span>Solicitar retificação</span></button>`;
+  }
 
   return `
-    <div class="ocorrencia-card" style="border-left-color:${statusColor};padding:12px;margin-bottom:10px;">
-      <!-- Cabeçalho do card com checkbox -->
-      <div style="display:flex;gap:10px;align-items:flex-start;">
-        <!-- Checkbox de seleção -->
-        <div style="flex-shrink:0;padding-top:2px;">
-          <input type="checkbox" 
-            ${isSelecionado ? "checked" : ""}
-            onchange="window._ocorrenciasToggleSelecao('${occ.id}')"
-            style="width:18px;height:18px;accent-color:var(--azul-bandeira);cursor:pointer;">
+    <article class="ocorrencia-card minhas-ocorrencias-card" role="listitem" data-status="${statusAttr}" data-occurrence-id="${id}">
+      <div class="minhas-ocorrencias-card__top">
+        <div class="minhas-ocorrencias-card__photo" aria-label="${imagens.length ? `Ocorrência com ${imagens.length} foto(s)` : "Ocorrência sem fotos"}">
+          ${primeiraImagem ? `
+            <img src="${escapeOcorrenciaCardValue(primeiraImagem)}" alt="Foto da ocorrência ${numero}" loading="lazy" decoding="async" width="180" height="150"
+              onerror="this.hidden=true;this.nextElementSibling.hidden=false">
+            <span class="minhas-ocorrencias-card__photo-placeholder" hidden><i class="fas fa-image" aria-hidden="true"></i></span>
+            ${imagens.length > 1 ? `<span class="minhas-ocorrencias-card__photo-count">+${imagens.length - 1}</span>` : ""}
+          ` : `<span class="minhas-ocorrencias-card__photo-placeholder"><i class="fas fa-file-alt" aria-hidden="true"></i></span>`}
         </div>
-        
-        <!-- Miniatura -->
-        <div style="width:50px;height:50px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--cinza-claro);position:relative;">
-          ${
-            primeiraImagem
-              ? `
-            <img src="${primeiraImagem}" alt="Anexo" loading="lazy" 
-              style="width:100%;height:100%;object-fit:cover;"
-              onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:18px;">
-              <i class="fas fa-file-alt"></i>
-            </div>
-            ${totalImagens > 1 ? `<span style="position:absolute;bottom:2px;right:4px;background:rgba(0,0,0,0.75);color:white;font-size:8px;font-weight:700;padding:0 5px;border-radius:3px;line-height:16px;">+${totalImagens - 1}</span>` : ""}
-          `
-              : `
-            <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:18px;">
-              <i class="fas fa-file-alt"></i>
-            </div>
-          `
-          }
-        </div>
-
-        <!-- Informações -->
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:1px;">
-            <span style="font-weight:700;font-size:13px;color:var(--azul-bandeira);">#${numero}</span>
-            <span class="badge ${tipoClass}" style="font-size:8px;padding:1px 8px;">${tipoLabel}</span>
-            <span class="badge badge-${statusClass}" style="font-size:8px;padding:1px 8px;">${statusLabel}</span>
-            ${isRapido ? `<span class="badge" style="font-size:8px;padding:1px 8px;background:#fef3c7;color:#92400e;font-weight:700;">⚡ RÁPIDO</span>` : ""}
+        <div class="minhas-ocorrencias-card__content">
+          <div class="minhas-ocorrencias-card__heading">
+            ${estado.modoSelecao ? `<label class="minhas-ocorrencias-card__select"><input type="checkbox" ${isSelecionado ? "checked" : ""} aria-label="Selecionar BO ${numero}" onchange="window._ocorrenciasToggleSelecao(this.closest('.minhas-ocorrencias-card').dataset.occurrenceId)"><span>Selecionar</span></label>` : ""}
+            <strong class="minhas-ocorrencias-card__number">BO #${numero}</strong>
+            <span class="badge badge-${escapeOcorrenciaCardValue(statusClass)} minhas-ocorrencias-card__status">${statusLabel}</span>
           </div>
-          <div style="font-size:12px;color:var(--cinza-escuro);display:flex;align-items:center;gap:4px;margin:1px 0;">
-            <i class="fas fa-map-marker-alt" style="color:var(--cinza-medio);font-size:10px;"></i>
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${local}</span>
+          <div class="minhas-ocorrencias-card__type-row">
+            <span class="badge ${escapeOcorrenciaCardValue(tipoClass)} minhas-ocorrencias-card__type">${tipoLabel}</span>
+            ${isRapido ? `<span class="minhas-ocorrencias-card__quick"><i class="fas fa-bolt" aria-hidden="true"></i> Modo rápido</span>` : ""}
           </div>
-          <div style="font-size:11px;color:var(--cinza-medio);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <span><i class="fas fa-user" style="font-size:10px;"></i> ${guardaNome}</span>
-            <span style="font-size:9px;">${cpfExibido}</span>
-            <span style="font-size:10px;"><i class="fas fa-calendar" style="font-size:10px;"></i> ${data}</span>
+          <div class="minhas-ocorrencias-card__location"><i class="fas fa-map-marker-alt" aria-hidden="true"></i><span>${local}</span></div>
+          <div class="minhas-ocorrencias-card__meta">
+            <span><i class="fas fa-user-shield" aria-hidden="true"></i>${guardaNome}</span>
+            <span><i class="fas fa-clock" aria-hidden="true"></i>${rotuloData}: ${escapeOcorrenciaCardValue(dataFato)}</span>
+            <span><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos ? `${totalAnexos} ${totalAnexos === 1 ? "anexo" : "anexos"}` : "Sem anexos"}</span>
           </div>
         </div>
       </div>
-
-      <!-- Observações -->
-      ${
-        temObservacoes
-          ? `
-        <div style="font-size:12px;color:var(--cinza-escuro);padding:6px 0 4px 0;border-top:1px solid var(--cinza-claro);margin-top:4px;display:flex;align-items:flex-start;gap:4px;">
-          <i class="fas fa-pencil-alt" style="color:var(--cinza-medio);font-size:10px;margin-top:1px;flex-shrink:0;"></i>
-          <span style="flex:1;word-break:break-word;">
-            ${observacoesPreview}
-          </span>
-          ${
-            observacoesCompleta.length > 100
-              ? `
-            <button onclick="event.stopPropagation(); window._ocorrenciasVerMaisObservacoes('${occ.id}')" 
-              style="background:none;border:none;color:var(--azul-bandeira);font-weight:600;font-size:11px;cursor:pointer;padding:0 2px;white-space:nowrap;flex-shrink:0;">
-              Ver mais
-            </button>
-          `
-              : ""
-          }
-        </div>
-      `
-          : ""
-      }
-
-      <!-- Ações -->
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
-        <button onclick="event.stopPropagation(); window._ocorrenciasVer('${occ.id}')" 
-          style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:28px;">
-          <i class="fas fa-eye"></i> Ver
-        </button>
-        
-        ${
-          podeCompletar
-            ? `
-          <button onclick="event.stopPropagation(); window._ocorrenciasCompletar('${occ.id}')" 
-            style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--verde-muito-claro);color:var(--verde-escuro);min-height:28px;">
-            <i class="fas fa-edit"></i> Completar
-          </button>
-        `
-            : isDraft && podeEditar
-              ? `
-          <button onclick="event.stopPropagation(); window._ocorrenciasEditar('${occ.id}')" 
-            style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--verde-muito-claro);color:var(--verde-escuro);min-height:28px;">
-            <i class="fas fa-edit"></i> Editar
-          </button>
-        `
-              : isSynced && podeRetificar
-                ? `
-          <button onclick="event.stopPropagation(); window._ocorrenciasRetificar('${occ.id}')" 
-            style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--verde-muito-claro);color:var(--verde-escuro);min-height:28px;">
-            <i class="fas fa-sync-alt"></i> Retificar
-          </button>
-        `
-                : ""
-        }
-
-        ${
-          podeCancelar && occ.status !== "cancelled"
-            ? `
-          <button onclick="event.stopPropagation(); window._ocorrenciasCancelar('${occ.id}')" 
-            style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--erro-claro);color:var(--erro);min-height:28px;">
-            <i class="fas fa-times"></i> Cancelar
-          </button>
-        `
-            : ""
-        }
-
-        <button onclick="event.stopPropagation(); window._ocorrenciasGerarPDF('${occ.id}')" 
-          style="flex:1;min-width:40px;padding:4px 6px;border:none;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:28px;">
-          <i class="fas fa-file-pdf"></i> PDF
-        </button>
+      ${observacoes ? `
+        <div class="minhas-ocorrencias-card__summary">
+          <i class="fas fa-align-left" aria-hidden="true"></i><p>${observacoesPreview}</p>
+          ${observacoes.length > 150 ? `<button type="button" onclick="window._ocorrenciasVerMaisObservacoes(${idCall})">Ver mais</button>` : ""}
+        </div>` : ""}
+      <div class="minhas-ocorrencias-card__actions">
+        ${actionPrimary}${actionSecondary}
+        <details class="minhas-ocorrencias-card__more">
+          <summary aria-label="Mais ações"><i class="fas fa-ellipsis-v" aria-hidden="true"></i><span>Mais</span></summary>
+          <div class="minhas-ocorrencias-card__menu">
+            <button type="button" onclick="window._ocorrenciasGerarPDF(${idCall})"><i class="fas fa-file-pdf" aria-hidden="true"></i> Gerar PDF</button>
+            ${podeCancelar && occ.status !== "cancelled" ? `<button type="button" class="is-danger" onclick="window._ocorrenciasCancelar(${idCall})"><i class="fas fa-ban" aria-hidden="true"></i> Cancelar ocorrência</button>` : ""}
+          </div>
+        </details>
       </div>
-    </div>
+    </article>
   `;
 }
 
@@ -1051,6 +889,12 @@ function irParaPagina(pagina, container, appInstance) {
 // ============================================
 // SELEÇÃO EM LOTE
 // ============================================
+
+function toggleModoSelecao(container, appInstance) {
+  estado.modoSelecao = !estado.modoSelecao;
+  if (!estado.modoSelecao) estado.selecionados = new Set();
+  renderizarLista(container, appInstance);
+}
 
 function toggleSelecao(id, container, appInstance) {
   if (estado.selecionados.has(id)) {

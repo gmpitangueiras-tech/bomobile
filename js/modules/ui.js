@@ -155,6 +155,9 @@ function criarBottomSheet() {
 
   bottomSheet = document.createElement("div");
   bottomSheet.id = "bottomSheet";
+  bottomSheet.setAttribute("role", "dialog");
+  bottomSheet.setAttribute("aria-modal", "true");
+  bottomSheet.setAttribute("aria-label", "Mais opções");
   bottomSheet.style.cssText = `
     position: fixed;
     bottom: 0;
@@ -165,7 +168,8 @@ function criarBottomSheet() {
     z-index: 1000000;
     transform: translateY(100%);
     transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
-    max-height: 70vh;
+    max-height: 82vh;
+    max-height: 82dvh;
     overflow-y: auto;
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.3);
@@ -241,6 +245,17 @@ export function openBottomSheet() {
   renderBottomSheetItems();
 
   bottomSheetOverlay.style.display = "block";
+  bottomSheetOverlay.setAttribute("aria-hidden", "false");
+  const navMais = document.getElementById("navMais");
+  document.querySelectorAll(".nav-item[data-nav-section]").forEach((item) => {
+    item.classList.remove("active");
+    item.removeAttribute("aria-current");
+  });
+  if (navMais) {
+    navMais.classList.add("active");
+    navMais.setAttribute("aria-current", "page");
+    navMais.setAttribute("aria-expanded", "true");
+  }
   void bottomSheetOverlay.offsetHeight;
   bottomSheet.style.transform = "translateY(0)";
 
@@ -280,8 +295,14 @@ export function closeBottomSheet() {
 
   setTimeout(() => {
     bottomSheetOverlay.style.display = "none";
+    bottomSheetOverlay.setAttribute("aria-hidden", "true");
     isBottomSheetOpen = false;
     isAnimating = false;
+    const navMais = document.getElementById("navMais");
+    if (navMais) navMais.setAttribute("aria-expanded", "false");
+    if (typeof window.app !== "undefined" && window.app.updateBottomNav && window.app.currentPage) {
+      window.app.updateBottomNav(window.app.currentPage);
+    }
   }, 350);
 
   document.body.style.overflow = "";
@@ -454,72 +475,69 @@ export function renderBottomSheetItems() {
   atualizarBadgeNotificacoes();
 
   let html = `
-    <div style="width:40px;height:4px;background:#e0e4ea;border-radius:4px;margin:10px auto 8px;flex-shrink:0;"></div>
-    <div style="font-size:14px;font-weight:700;color:#94a3b8;text-align:center;padding:4px 16px 12px;border-bottom:1px solid #e0e4ea;margin-bottom:8px;">Menu</div>
-  `;
+    <div class="bottom-sheet-handle" aria-hidden="true"></div>
+    <div class="bottom-sheet-header">
+      <div><h2 class="bottom-sheet-title">Mais opções</h2><p class="bottom-sheet-subtitle">Acesso às demais áreas do app</p></div>
+      <button type="button" class="bottom-sheet-close" id="btnCloseMoreSheet" aria-label="Fechar menu"><i class="fas fa-times" aria-hidden="true"></i></button>
+    </div>
 
-  // 🔥 MINHAS OCORRÊNCIAS (agora no "Mais")
-  html += `
-    <button data-page="ocorrencias" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-      <i class="fas fa-list-ul" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-      <span style="flex:1;">Minhas Ocorrências</span>
-    </button>
-  `;
-
-  html += `
-    <button data-page="consulta" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-      <i class="fas fa-search" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-      <span style="flex:1;">Consulta Operacional</span>
-    </button>
-  `;
-
-  if (isSupervisor) {
-    html += `
-      <button data-page="retificacoes" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-        <i class="fas fa-sync-alt" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Retificações de BO</span>
-        <span id="sheetBadgeRetificacoes" style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:9999px;display:none;">0</span>
+    <section class="bottom-sheet-group" aria-labelledby="moreCommunicationTitle">
+      <h3 class="bottom-sheet-section-title" id="moreCommunicationTitle">Comunicação</h3>
+      <button class="bottom-sheet-menu-button" data-page="mural">
+        <i class="fas fa-bullhorn" aria-hidden="true"></i><span>Mural de avisos</span>
+        <span id="badge-mural" class="badge-count bottom-sheet-badge" style="display:none">0</span>
       </button>
-    `;
+      <button class="bottom-sheet-menu-button" data-page="notificacoes">
+        <i class="fas fa-bell" aria-hidden="true"></i><span>Notificações</span>
+        <span id="sheetBadgeNotificacoes" class="bottom-sheet-badge" style="display:none">0</span>
+      </button>
+    </section>
 
-    // 🔥 Retificações de Abordagens
-    html += `
-      <button data-page="retificacoes-abordagens" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-        <i class="fas fa-car" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Retificações de Abordagens</span>
-        <span id="sheetBadgeRetificacoesAbordagens" style="background:#dc2626;color:white;font-size:11px;font-weight:700;padding:2px 10px;border-radius:9999px;display:none;">0</span>
-      </button>
-    `;
+    <section class="bottom-sheet-group" aria-labelledby="moreManagementTitle">
+      <h3 class="bottom-sheet-section-title" id="moreManagementTitle">Gestão</h3>
+      ${isSupervisor ? `
+        <button class="bottom-sheet-menu-button" data-page="retificacoes">
+          <i class="fas fa-file-pen" aria-hidden="true"></i><span>Retificações de BO</span>
+          <span id="sheetBadgeRetificacoes" class="bottom-sheet-badge" style="display:none">0</span>
+        </button>
+        <button class="bottom-sheet-menu-button" data-page="retificacoes-abordagens">
+          <i class="fas fa-rotate" aria-hidden="true"></i><span>Retificações de abordagens</span>
+          <span id="sheetBadgeRetificacoesAbordagens" class="bottom-sheet-badge" style="display:none">0</span>
+        </button>
+        <button class="bottom-sheet-menu-button" data-page="relatorios">
+          <i class="fas fa-chart-column" aria-hidden="true"></i><span>Relatórios</span>
+        </button>
+      ` : `<p class="bottom-sheet-note">As opções de gestão são exibidas conforme o perfil de acesso.</p>`}
+    </section>
 
-    html += `
-      <button data-page="relatorios" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-        <i class="fas fa-chart-bar" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Relatórios</span>
-      </button>
-      <button data-page="logs" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-        <i class="fas fa-history" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Logs do Sistema</span>
-      </button>
-      <button data-page="usuarios" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-        <i class="fas fa-users" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-        <span style="flex:1;">Gerenciar Usuários</span>
-      </button>
-    `;
-  }
+    ${isSupervisor ? `
+      <section class="bottom-sheet-group" aria-labelledby="moreAdminTitle">
+        <h3 class="bottom-sheet-section-title" id="moreAdminTitle">Administração</h3>
+        <button class="bottom-sheet-menu-button" data-page="usuarios">
+          <i class="fas fa-users" aria-hidden="true"></i><span>Usuários</span>
+        </button>
+        <button class="bottom-sheet-menu-button" data-page="logs">
+          <i class="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Logs do sistema</span>
+        </button>
+      </section>
+    ` : ""}
 
-  html += `
-    <button data-page="perfil" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#1e293b;cursor:pointer;text-align:left;border-bottom:1px solid #e0e4ea;font-family:inherit;transition:background 0.15s ease;">
-      <i class="fas fa-user" style="width:24px;text-align:center;font-size:18px;color:#003f87;"></i>
-      <span style="flex:1;">Meu Perfil</span>
-    </button>
-    <button id="btnLogoutSheet" style="display:flex;align-items:center;gap:14px;padding:14px 20px;width:100%;border:none;background:none;font-size:15px;color:#dc2626;cursor:pointer;text-align:left;font-family:inherit;transition:background 0.15s ease;">
-      <i class="fas fa-sign-out-alt" style="width:24px;text-align:center;font-size:18px;color:#dc2626;"></i>
-      <span style="flex:1;">Sair</span>
-    </button>
+    <section class="bottom-sheet-group bottom-sheet-account" aria-labelledby="moreAccountTitle">
+      <h3 class="bottom-sheet-section-title" id="moreAccountTitle">Conta</h3>
+      <button class="bottom-sheet-menu-button" data-page="perfil">
+        <i class="fas fa-user" aria-hidden="true"></i><span>Meu perfil</span>
+      </button>
+      <button class="bottom-sheet-menu-button bottom-sheet-logout" id="btnLogoutSheet">
+        <i class="fas fa-right-from-bracket" aria-hidden="true"></i><span>Sair</span>
+      </button>
+    </section>
   `;
 
   bottomSheetItemsContainer.innerHTML = html;
   console.log("✅ Bottom sheet items renderizados");
+
+  const closeButton = bottomSheetItemsContainer.querySelector("#btnCloseMoreSheet");
+  if (closeButton) closeButton.addEventListener("click", closeBottomSheet);
 
   bottomSheetItemsContainer
     .querySelectorAll("button[data-page]")

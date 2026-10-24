@@ -67,7 +67,7 @@
       rel="icon"
       type="image/png"
       sizes="192x192"
-      href="assets/icons/icon-192x192.ico"
+      href="assets/icons/icon-192x192.png"
     />
     <link
       rel="icon"
@@ -78,7 +78,7 @@
     <link
       rel="apple-touch-icon"
       sizes="180x180"
-      href="assets/icons/icon-192x192.ico"
+      href="assets/icons/icon-192x192.png"
     />
     <link
       rel="icon"
@@ -109,14 +109,9 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
           navigator.serviceWorker
-            .register("sw.js", { updateViaCache: "none" })
+            .register("sw.js")
             .then(function (registration) {
               console.log("✅ Service Worker registrado com sucesso");
-
-              // Forçar a verificação do script novo a cada abertura do app.
-              registration.update().catch(function (error) {
-                console.warn("⚠️ Erro ao verificar atualização do app:", error);
-              });
 
               // Verificar se há suporte para notificações push
               if (
@@ -192,21 +187,14 @@
       <header id="app-header" style="display: none">
         <div class="header-content">
           <div class="logo-area">
-            <div
-              style="
-                width: 36px;
-                height: 36px;
-                border-radius: 50%;
-                background: rgba(255, 255, 255, 0.2);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-              "
-            >
-              <i
-                class="fas fa-shield-alt"
-                style="font-size: 18px; color: var(--branco)"
-              ></i>
+            <div class="gm-brand-mark">
+              <img
+                class="gm-brand-logo"
+                src="assets/images/logo-guarda.png"
+                alt="Brasão da Guarda Municipal de Pitangueiras"
+                width="40"
+                height="40"
+              />
             </div>
             <div class="logo-text">
               <span class="title">Guarda Municipal</span>
@@ -231,51 +219,38 @@
       <main id="main-content">
         <!-- Login Screen -->
         <div id="page-login" class="page">
-          <div class="login-screen">
+          <section class="login-screen" aria-labelledby="loginTitle">
             <div class="login-card">
-              <div class="logo-container">
-                <div class="logo-wrapper">
-                  <div
-                    style="
-                      width: 80px;
-                      height: 80px;
-                      border-radius: 50%;
-                      background: var(--gradiente-principal);
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      margin: 0 auto;
-                    "
-                  >
-                    <i
-                      class="fas fa-shield-alt"
-                      style="font-size: 40px; color: var(--branco)"
-                    ></i>
-                  </div>
-                  <div class="logo-ring"></div>
+              <div class="login-brand">
+                <div class="login-crest">
+                  <img
+                    src="assets/images/logo-guarda.png"
+                    alt="Brasão da Guarda Municipal de Pitangueiras"
+                    width="68"
+                    height="68"
+                  />
                 </div>
-                <h1>Guarda Municipal</h1>
-                <h2>Pitangueiras - PR</h2>
-                <p class="subtitle">
-                  <i
-                    class="fas fa-clipboard-list"
-                    style="margin-right: 6px"
-                  ></i>
-                  Sistema de Registro de Ocorrências
-                </p>
+                <div class="login-brand-copy">
+                  <span class="login-eyebrow">GUARDA MUNICIPAL · PARANÁ</span>
+                  <h1 id="loginTitle">Guarda Municipal</h1>
+                  <p>Pitangueiras · PR</p>
+                </div>
+              </div>
+
+              <div class="login-intro">
+                <span class="login-intro-label">
+                  <i class="fas fa-lock" aria-hidden="true"></i>
+                  Acesso institucional
+                </span>
+                <h2>Acesse o sistema</h2>
+                <p>Sistema de Registro de Ocorrências</p>
               </div>
 
               <form id="loginForm">
-                <div class="form-group">
-                  <label for="loginCpf">
-                    <i
-                      class="fas fa-id-card"
-                      style="margin-right: 6px; color: var(--azul-bandeira)"
-                    ></i>
-                    CPF
-                  </label>
-                  <div class="input-wrapper">
-                    <i class="fas fa-user input-icon-left"></i>
+                <div class="form-group login-form-group">
+                  <label for="loginCpf">CPF</label>
+                  <div class="input-wrapper login-input-wrapper">
+                    <i class="far fa-id-card input-icon-left" aria-hidden="true"></i>
                     <input
                       type="text"
                       id="loginCpf"
@@ -286,16 +261,10 @@
                     />
                   </div>
                 </div>
-                <div class="form-group">
-                  <label for="loginSenha">
-                    <i
-                      class="fas fa-lock"
-                      style="margin-right: 6px; color: var(--azul-bandeira)"
-                    ></i>
-                    Senha
-                  </label>
-                  <div class="input-wrapper">
-                    <i class="fas fa-lock input-icon-left"></i>
+                <div class="form-group login-form-group">
+                  <label for="loginSenha">Senha</label>
+                  <div class="input-wrapper login-input-wrapper">
+                    <i class="fas fa-lock input-icon-left" aria-hidden="true"></i>
                     <input
                       type="password"
                       id="loginSenha"
@@ -306,29 +275,27 @@
                       type="button"
                       class="toggle-password"
                       aria-label="Mostrar senha"
+                      aria-controls="loginSenha"
                     >
-                      <i class="fas fa-eye"></i>
+                      <i class="fas fa-eye" aria-hidden="true"></i>
                     </button>
                   </div>
                 </div>
 
-                <div class="options-row">
+                <div class="options-row login-options-row">
                   <label class="checkbox-container">
                     <input type="checkbox" id="rememberMe" />
                     <span>Lembrar-me</span>
                   </label>
                   <a href="#" class="forgot-link">
-                    <i
-                      class="fas fa-question-circle"
-                      style="margin-right: 4px"
-                    ></i>
                     Esqueci minha senha
+                    <i class="fas fa-circle-question" aria-hidden="true"></i>
                   </a>
                 </div>
 
-                <button type="submit" class="btn-primary" id="loginBtn">
-                  <i class="fas fa-sign-in-alt" style="margin-right: 8px"></i>
-                  <span class="btn-text">ENTRAR</span>
+                <button type="submit" class="btn-primary login-submit" id="loginBtn">
+                  <i class="fas fa-arrow-right-to-bracket" aria-hidden="true"></i>
+                  <span class="btn-text">Entrar</span>
                   <span class="spinner-small"></span>
                 </button>
 
@@ -336,30 +303,27 @@
                   id="loginError"
                   class="login-error"
                   style="display: none"
+                  role="alert"
+                  aria-live="polite"
                 ></div>
               </form>
 
-              <div class="login-footer">
+              <footer class="login-footer">
                 <span class="version">
-                  <i
-                    class="fas fa-code"
-                    style="margin-right: 4px; font-size: 11px"
-                  ></i>
+                  <i class="fas fa-code" aria-hidden="true"></i>
                   v1.0.0
                 </span>
-                <span class="separator">•</span>
-                <span>
-                  <i
-                    class="fas fa-building"
-                    style="margin-right: 4px; font-size: 11px"
-                  ></i>
-                  Guarda Municipal de Pitangueiras
-                </span>
-              </div>
+                <span class="separator" aria-hidden="true">•</span>
+                <span>Guarda Municipal de Pitangueiras</span>
+              </footer>
+              <p class="login-security-note">
+                <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                Acesso destinado ao efetivo autorizado
+              </p>
             </div>
-          </div>
+          </section>
         </div>
-
+        
         <!-- Dashboard -->
         <div id="page-dashboard" class="page" style="display: none">
           <div class="container" id="dashboardContent">
@@ -445,65 +409,22 @@
         </div>
       </main>
 
-      <!-- ============================================
-      BOTTOM NAVIGATION - CORRIGIDO
-      ============================================ -->
-      <nav id="bottom-nav" class="bottom-nav" style="display: none">
-        <!-- Início -->
-        <button
-          class="nav-item active"
-          data-page="dashboard"
-          aria-label="Início"
-        >
-          <i class="fas fa-th-large"></i>
-          <span>Início</span>
+      <!-- Navegação principal mobile: quatro áreas e a ação BO existente -->
+      <nav id="bottom-nav" class="bottom-nav" aria-label="Navegação principal" style="display: none">
+        <button type="button" class="nav-item" data-page="dashboard" data-nav-section="home" aria-label="Início">
+          <i class="fas fa-house" aria-hidden="true"></i><span>Início</span>
         </button>
-
-        <!-- Mural -->
-        <button class="nav-item" data-page="mural" aria-label="Mural">
-          <div class="icon-wrapper">
-            <i class="fas fa-bullhorn"></i>
-            <span id="badge-mural" class="badge-count" style="display: none"
-              >0</span
-            >
-          </div>
-          <span>Mural</span>
+        <button type="button" class="nav-item" data-page="ocorrencias" data-nav-section="occurrences" aria-label="Ocorrências">
+          <i class="fas fa-clipboard-list" aria-hidden="true"></i><span>Ocorrências</span>
         </button>
-
-        <!-- Novo BO (central com destaque) -->
-        <button
-          class="nav-item"
-          data-page="nova-ocorrencia"
-          aria-label="Nova Ocorrência"
-        >
-          <div class="nav-fab">
-            <i class="fas fa-plus"></i>
-          </div>
-          <span>Novo BO</span>
+        <button type="button" class="nav-item nav-item-primary" data-page="nova-ocorrencia" aria-label="Registrar novo boletim de ocorrência">
+          <span class="nav-fab"><i class="fas fa-plus" aria-hidden="true"></i></span><span>Novo BO</span>
         </button>
-
-        <!-- 🔥 NOTIFICAÇÕES (agora no NAV - substituiu Ocorrências) -->
-        <button
-          class="nav-item"
-          data-page="notificacoes"
-          aria-label="Notificações"
-        >
-          <div class="icon-wrapper">
-            <i class="fas fa-bell"></i>
-            <span
-              id="badge-notificacoes"
-              class="badge-count"
-              style="display: none"
-              >0</span
-            >
-          </div>
-          <span>Notificações</span>
+        <button type="button" class="nav-item" data-page="consulta" data-nav-section="approaches" aria-label="Abordagens">
+          <i class="fas fa-user-shield" aria-hidden="true"></i><span>Abordagens</span>
         </button>
-
-        <!-- Mais (abre bottom sheet com todas as opções, incluindo Ocorrências) -->
-        <button class="nav-item" id="navMais" aria-label="Mais opções">
-          <i class="fas fa-ellipsis-h"></i>
-          <span>Mais</span>
+        <button type="button" class="nav-item" id="navMais" data-nav-section="more" aria-label="Mais opções" aria-haspopup="dialog" aria-controls="bottomSheetOverlay" aria-expanded="false">
+          <i class="fas fa-ellipsis" aria-hidden="true"></i><span>Mais</span>
         </button>
       </nav>
 

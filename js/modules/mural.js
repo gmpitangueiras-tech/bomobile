@@ -109,7 +109,24 @@ let estado = {
   carregando: false,
   filtrosVisiveis: false,
   isRefreshing: false,
+  erro: null,
 };
+
+// Escape all database/user content before inserting it in HTML.
+function escapeMuralHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]);
+}
+function muralJsArg(value) {
+  return escapeMuralHtml(JSON.stringify(String(value ?? "")));
+}
+function muralSafeUrl(value) {
+  try {
+    const url = new URL(String(value || ""), window.location.href);
+    return url.protocol === "https:" || url.protocol === "http:" ? escapeMuralHtml(url.href) : "";
+  } catch (_) { return ""; }
+}
 
 // ============================================
 // FUNÇÃO PRINCIPAL
@@ -174,6 +191,7 @@ export async function renderMural(container, appInstance) {
 
 export async function carregarAvisosMural(pagina = 1) {
   estado.carregando = true;
+  estado.erro = null;
   estado.paginaAtual = pagina;
 
   try {
@@ -183,6 +201,7 @@ export async function carregarAvisosMural(pagina = 1) {
       estado.avisos = [];
       estado.totalRegistros = 0;
       estado.totalPaginas = 1;
+      estado.erro = new Error("Não foi possível conectar ao serviço de avisos.");
       estado.carregando = false;
       return;
     }
@@ -284,6 +303,7 @@ export async function carregarAvisosMural(pagina = 1) {
     );
   } catch (error) {
     console.error("Erro ao carregar avisos:", error);
+    estado.erro = error;
     estado.avisos = [];
     estado.totalRegistros = 0;
     estado.totalPaginas = 1;
@@ -322,455 +342,109 @@ async function buscarDadosUsuariosEmLote(ids) {
 
 async function renderizarLista(container, appInstance, isSupervisor) {
   const { avisos, totalRegistros, totalPaginas, paginaAtual, filtros } = estado;
-
-  const temFiltros =
-    filtros.busca ||
-    filtros.tipo !== "todos" ||
-    filtros.dataInicio ||
-    filtros.dataFim;
-
-  const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA + 1;
+  const temFiltros = Boolean(filtros.busca || filtros.tipo !== "todos" || filtros.dataInicio || filtros.dataFim);
+  const inicio = totalRegistros ? (paginaAtual - 1) * ITENS_POR_PAGINA + 1 : 0;
   const fim = Math.min(paginaAtual * ITENS_POR_PAGINA, totalRegistros);
-
   const filtrosAbertos = estado.filtrosVisiveis;
+  const categoriaAtual = TIPOS_AVISO_LISTA.find((item) => item.value === filtros.tipo)?.label || "Todos";
 
   let html = `
-    <div class="container" style="padding-bottom:100px;" id="muralContainer">
-      <!-- Cabeçalho -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-          <div>
-            <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;font-weight:700;">
-              <i class="fas fa-bullhorn" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Mural de Avisos
-            </h2>
-            <p style="color:var(--cinza-medio);font-size:12px;margin:0;">
-              Fique por dentro das comunicações da corporação.
-            </p>
-          </div>
-          ${
-            isSupervisor
-              ? `
-            <button onclick="window._muralNovoAviso()" class="btn-primary" 
-              style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--gradiente-principal);box-shadow:0 2px 12px rgba(0,63,135,0.25);">
-              <i class="fas fa-plus" style="margin-right:4px;"></i> Novo
-            </button>
-          `
-              : ""
-          }
-        </div>
-      </div>
-
-      <!-- Filtros compactos -->
-      <div class="filtros-mural" style="background:var(--branco);border-radius:var(--border-radius);padding:8px 10px;margin-bottom:10px;box-shadow:var(--sombra-suave);">
-        <!-- Linha 1: Busca + Toggle -->
-        <div style="display:flex;gap:6px;margin-bottom:4px;">
-          <div style="flex:1;position:relative;">
-            <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:12px;z-index:2;"></i>
-            <input type="text" id="muralBusca" placeholder="Buscar aviso..." 
-              value="${filtros.busca || ""}"
-              style="width:100%;padding:6px 10px 6px 32px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;"
-              oninput="window._muralBuscar(this.value)">
-          </div>
-          <div style="display:flex;gap:4px;flex-shrink:0;">
-            <button onclick="window._muralToggleFiltros()" 
-              style="padding:4px 10px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:${filtrosAbertos ? "var(--azul-muito-claro)" : "var(--branco)"};color:${filtrosAbertos ? "var(--azul-bandeira)" : "var(--cinza-medio)"};font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">
-              <i class="fas fa-sliders-h" style="margin-right:4px;"></i>
-              ${filtrosAbertos ? "▲" : "▼"}
-            </button>
-            ${temFiltros ? `<button onclick="window._muralLimparFiltros()" style="padding:4px 8px;min-height:32px;border:2px solid var(--cinza-claro);border-radius:8px;background:var(--branco);color:var(--azul-bandeira);font-size:11px;font-weight:600;cursor:pointer;"><i class="fas fa-times"></i></button>` : ""}
+    <main class="container mural-page" id="muralContainer">
+      <header class="mural-page-header">
+        <div class="mural-page-title">
+          <span class="mural-title-icon" aria-hidden="true"><i class="fas fa-bullhorn"></i></span>
+          <div><p class="mural-eyebrow">GUARDA MUNICIPAL · PITANGUEIRAS/PR</p>
+            <h1>Mural de avisos</h1>
+            <p>Comunicados e informações da corporação.</p>
           </div>
         </div>
-
-        <!-- Linha 2: Categorias (abas) - Compactas -->
-        <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-start;">
-          ${TIPOS_AVISO_LISTA.map(
-            (cat) => `
-            <button 
-              onclick="window._muralFiltrarCategoria('${cat.value}')" 
-              class="categoria-aba-mural"
-              style="
-                flex:1 1 auto;
-                min-width:0;
-                padding:4px 6px;
-                border:2px solid ${filtros.tipo === cat.value ? "var(--azul-bandeira)" : "var(--cinza-claro)"};
-                border-radius:20px;
-                font-size:10px;
-                font-weight:${filtros.tipo === cat.value ? "700" : "500"};
-                background:${filtros.tipo === cat.value ? "var(--azul-bandeira)" : "var(--branco)"};
-                color:${filtros.tipo === cat.value ? "var(--branco)" : "var(--cinza-escuro)"};
-                cursor:pointer;
-                transition:all 0.2s ease;
-                white-space:nowrap;
-                min-height:26px;
-                text-align:center;
-                max-width:100%;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              "
-            >
-              ${cat.label}
-            </button>
-          `,
-          ).join("")}
+        <div class="mural-header-actions">
+          <button type="button" class="mural-icon-button" onclick="window._muralRecarregar()" aria-label="Atualizar avisos" title="Atualizar">
+            <i class="fas fa-sync-alt" aria-hidden="true"></i><span>Atualizar</span>
+          </button>
+          ${isSupervisor ? `<button type="button" class="mural-primary-button" onclick="window._muralNovoAviso()"><i class="fas fa-plus" aria-hidden="true"></i><span>Publicar aviso</span></button>` : ""}
         </div>
+      </header>
 
-        <!-- Linha 3: Filtros avançados (colapsáveis) -->
-        <div id="filtrosAvancadosMural" style="display:${filtrosAbertos ? "block" : "none"};margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <div style="flex:1;min-width:80px;">
-              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Início</label>
-              <input type="date" id="muralDataInicio" value="${filtros.dataInicio || ""}" 
-                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
-                onchange="window._muralAplicarFiltros()">
-            </div>
-            <div style="flex:1;min-width:80px;">
-              <label style="display:block;font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.2px;margin-bottom:1px;">Fim</label>
-              <input type="date" id="muralDataFim" value="${filtros.dataFim || ""}" 
-                style="width:100%;padding:4px 6px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:11px;background:var(--branco);color:var(--cinza-escuro);min-height:30px;"
-                onchange="window._muralAplicarFiltros()">
-            </div>
-          </div>
+      <section class="mural-filter-panel" aria-label="Busca e filtros do mural">
+        <div class="mural-search-row">
+          <label class="mural-search-box" for="muralBusca">
+            <i class="fas fa-search" aria-hidden="true"></i>
+            <input type="search" id="muralBusca" placeholder="Buscar por título ou conteúdo" value="${escapeMuralHtml(filtros.busca)}" oninput="window._muralBuscar(this.value)" autocomplete="off">
+          </label>
+          <button type="button" class="mural-filter-toggle" onclick="window._muralToggleFiltros()" aria-expanded="${filtrosAbertos}" aria-controls="filtrosAvancadosMural">
+            <i class="fas fa-sliders-h" aria-hidden="true"></i><span>Período</span><i class="fas fa-chevron-${filtrosAbertos ? "up" : "down"} mural-toggle-chevron" aria-hidden="true"></i>
+          </button>
+          ${temFiltros ? `<button type="button" class="mural-clear-button" onclick="window._muralLimparFiltros()">Limpar</button>` : ""}
         </div>
+        <div class="mural-category-row" role="group" aria-label="Filtrar por categoria">
+          ${TIPOS_AVISO_LISTA.map((cat) => `<button type="button" class="mural-category-chip ${filtros.tipo === cat.value ? "is-active" : ""}" onclick="window._muralFiltrarCategoria('${escapeMuralHtml(cat.value)}')" aria-pressed="${filtros.tipo === cat.value}">${escapeMuralHtml(cat.label)}</button>`).join("")}
+        </div>
+        <div id="filtrosAvancadosMural" class="mural-date-filters" ${filtrosAbertos ? "" : "hidden"}>
+          <label class="mural-date-field"><span>De</span><input type="date" id="muralDataInicio" value="${escapeMuralHtml(filtros.dataInicio)}" onchange="window._muralAplicarFiltros()"></label>
+          <label class="mural-date-field"><span>Até</span><input type="date" id="muralDataFim" value="${escapeMuralHtml(filtros.dataFim)}" onchange="window._muralAplicarFiltros()"></label>
+        </div>
+      </section>
+
+      <div class="mural-results-heading" aria-live="polite">
+        <div><h2>${escapeMuralHtml(categoriaAtual)}</h2><span>${totalRegistros ? `Avisos ${inicio}–${fim} de ${totalRegistros}` : "Nenhum aviso nesta visualização"}${temFiltros ? " · filtros aplicados" : ""}</span></div>
+        <span class="mural-page-indicator">Página ${paginaAtual} de ${Math.max(1, totalPaginas)}</span>
       </div>
-
-      <!-- Contador -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px;">
-        <span style="font-size:12px;color:var(--cinza-medio);font-weight:500;">
-          <i class="fas fa-bullhorn" style="margin-right:4px;"></i>
-          ${
-            totalRegistros > 0
-              ? `Mostrando <strong>${inicio}</strong> a <strong>${fim}</strong> de <strong>${totalRegistros}</strong> avisos`
-              : "Nenhum aviso encontrado"
-          }
-          ${temFiltros ? `<span style="color:var(--azul-bandeira);font-weight:600;">(filtrado)</span>` : ""}
-        </span>
-      </div>
-
-      <!-- Lista de avisos -->
-      <div id="muralListaAvisos">
-  `;
-
-  if (estado.carregando) {
-    html += renderLoaderCards();
-  } else if (avisos.length === 0) {
-    html += renderVazio(temFiltros, isSupervisor);
-  } else {
-    avisos.forEach((aviso) => {
-      html += renderAvisoCard(aviso, isSupervisor, appInstance);
-    });
-  }
-
-  html += `
-      </div>
-
-      <!-- Paginação -->
-      ${totalPaginas > 1 ? renderPaginacao(paginaAtual, totalPaginas) : ""}
-
-      <!-- Rodapé -->
-      <div style="text-align:center;padding:8px 0;color:var(--cinza-medio);font-size:11px;">
-        <i class="fas fa-database" style="margin-right:4px;"></i>
-        ${
-          totalRegistros > 0
-            ? `Exibindo ${avisos.length} de ${totalRegistros} avisos`
-            : "Nenhum aviso cadastrado"
-        }
-      </div>
-    </div>
-  `;
+      <section id="muralListaAvisos" class="mural-list" aria-label="Avisos">
+        ${estado.carregando ? renderLoaderCards() : estado.erro ? renderErro(estado.erro, appInstance) : avisos.length === 0 ? renderVazio(temFiltros, isSupervisor) : avisos.map((aviso) => renderAvisoCard(aviso, isSupervisor, appInstance)).join("")}
+      </section>
+      ${totalPaginas > 1 ? `<nav class="mural-pagination" aria-label="Paginação do mural">${renderPaginacao(paginaAtual, totalPaginas)}</nav>` : ""}
+      <p class="mural-feed-note"><i class="fas fa-info-circle" aria-hidden="true"></i> A lista mostra os avisos publicados conforme os filtros selecionados.</p>
+    </main>`;
 
   container.innerHTML = html;
-
-  // Registrar função de busca com debounce
   window._muralBuscar = (termo) => {
     clearTimeout(estado._timeoutBusca);
     estado._timeoutBusca = setTimeout(() => {
-      estado.filtros.busca = termo.trim();
+      estado.filtros.busca = String(termo || "").trim();
       estado.paginaAtual = 1;
       renderMural(container, appInstance);
-    }, 400);
+    }, 350);
   };
-
-  // Atualizar badge
   await atualizarBadgeMural();
 }
 
-// ============================================
-// RENDERIZAÇÃO: CARD DE AVISO
-// ============================================
-
 function renderAvisoCard(aviso, isSupervisor, appInstance) {
+  const id = muralJsArg(aviso.id);
+  const idAttr = escapeMuralHtml(aviso.id);
   const tipoInfo = TIPOS_AVISO[aviso.tipo] || TIPOS_AVISO.noticia;
-  const corBadge = tipoInfo.corBg || "var(--cinza-medio)";
-  const badgeClass = tipoInfo.badge || "badge-noticia";
-
-  const autorNome = aviso.criador?.nome_completo || "Desconhecido";
-  const isSupervisorAutor = aviso.criador?.perfil === "supervisor";
-  const dataFormatada = formatarDataHoraLocal(aviso.criado_em);
-
-  // Processar anexos/imagens
-  const imagens =
-    aviso.anexos?.filter(
-      (a) => a.tipo === "image" || a.tipo_arquivo === "image",
-    ) || [];
-  const primeiraImagem = imagens.length > 0 ? imagens[0] : null;
-  const totalImagens = imagens.length;
-
-  // Conteúdo - prévia de 150 caracteres
-  const conteudoLongo = aviso.conteudo && aviso.conteudo.length > 150;
-  const conteudoPreview = conteudoLongo
-    ? aviso.conteudo.substring(0, 150) + "..."
-    : aviso.conteudo;
-
-  // Reações
-  const reacoes = aviso.reacoes || [];
-  const reacaoUsuario = aviso.reacao_usuario;
-  const totalReacoes = reacoes.length;
-
-  // Comentários - últimos 2
-  const comentarios = aviso.comentarios || [];
-  const ultimosComentarios = comentarios.slice(-2);
-  const totalComentarios = comentarios.length;
-
-  // Verificar se é urgente
-  const isUrgente = aviso.prioridade === true;
-
-  // Extrair localização e tag do conteúdo
-  let localizacao = "";
-  let tag = "";
-  if (aviso.conteudo) {
-    const linhas = aviso.conteudo.split("\n");
-    for (const linha of linhas) {
-      const trimmed = linha.trim();
-      if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
-        const texto = trimmed.replace(/^[-•]\s*/, "").trim();
-        if (
-          texto.includes("PR") ||
-          texto.includes("Rodovia") ||
-          texto.includes("km")
-        ) {
-          if (!localizacao) localizacao = texto;
-        } else if (!tag) {
-          tag = texto;
-        }
-      }
-    }
-  }
-
-  // Usar campos específicos se existirem
-  if (aviso.localizacao) localizacao = aviso.localizacao;
-  if (aviso.tag) tag = aviso.tag;
-
-  // Gerar ID para o card
-  const cardId = `aviso-card-${aviso.id}`;
-
-  // Calcular contagem de reações
-  const reacoesCount = {};
-  Object.keys(REACOES_EMOJIS).forEach((key) => {
-    reacoesCount[key] = reacoes.filter((r) => r.tipo === key).length;
-  });
-
+  const titulo = escapeMuralHtml(aviso.titulo || "Aviso sem título");
+  const conteudo = String(aviso.conteudo || "");
+  const limiteResumo = 180;
+  const conteudoLongo = conteudo.length > limiteResumo;
+  const preview = conteudoLongo ? `${conteudo.slice(0, limiteResumo).trimEnd()}…` : conteudo;
+  const autorNomeOriginal = aviso.criador?.nome_completo || "Usuário";
+  const autor = escapeMuralHtml(autorNomeOriginal);
+  const supervisorAutor = aviso.criador?.perfil === "supervisor";
+  const data = escapeMuralHtml(formatarDataHoraLocal(aviso.criado_em));
+  const prioridade = aviso.prioridade === true;
+  const anexos = Array.isArray(aviso.anexos) ? aviso.anexos : [];
+  const imagens = anexos.filter((item) => item && (item.tipo === "image" || item.tipo_arquivo === "image"));
+  const primeiraImagem = imagens[0];
+  const imagemUrl = primeiraImagem ? muralSafeUrl(primeiraImagem.url_thumb || primeiraImagem.url) : "";
+  const comentarios = Array.isArray(aviso.comentarios) ? aviso.comentarios : [];
+  const reacoes = Array.isArray(aviso.reacoes) ? aviso.reacoes : [];
+  const contagens = Object.fromEntries(Object.keys(REACOES_EMOJIS).map((key) => [key, reacoes.filter((item) => item.tipo === key).length]));
+  const autorInicial = escapeMuralHtml(autorNomeOriginal.trim().charAt(0).toUpperCase() || "U");
+  const resumoComentarios = comentarios.slice(-2);
+  const resumoInteracoes = `${reacoes.length} ${reacoes.length === 1 ? "reação" : "reações"} · ${comentarios.length} ${comentarios.length === 1 ? "comentário" : "comentários"}`;
   return `
-    <div class="mural-card-modern" id="${cardId}" style="
-      background:var(--branco);
-      border-radius:var(--border-radius);
-      overflow:hidden;
-      margin-bottom:14px;
-      box-shadow:var(--sombra-suave);
-      border: ${isUrgente ? "2px solid var(--erro)" : "1px solid var(--cinza-claro)"};
-      position:relative;
-    ">
-      ${isUrgente ? `<div style="position:absolute;top:10px;right:10px;background:var(--erro);color:white;font-size:9px;font-weight:700;padding:2px 12px;border-radius:20px;text-transform:uppercase;z-index:2;box-shadow:0 2px 8px rgba(220,38,38,0.3);animation:pulse-urgent 2s ease-in-out infinite;">🚨 Urgente</div>` : ""}
-
-      <!-- Imagem de capa -->
-      <div style="width:100%;height:180px;background:var(--cinza-claro);position:relative;overflow:hidden;">
-        ${
-          primeiraImagem
-            ? `
-          <img src="${primeiraImagem.url_thumb || primeiraImagem.url}" alt="${aviso.titulo}" 
-            style="width:100%;height:100%;object-fit:cover;"
-            loading="lazy"
-            onclick="event.stopPropagation(); window._muralVerImagens('${aviso.id}')">
-          ${totalImagens > 1 ? `<span style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.7);color:white;font-size:10px;font-weight:700;padding:2px 10px;border-radius:12px;backdrop-filter:blur(4px);">+${totalImagens - 1}</span>` : ""}
-          <button onclick="event.stopPropagation(); window._muralVerImagens('${aviso.id}')" 
-            style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.5);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;">
-            <i class="fas fa-expand"></i>
-          </button>
-        `
-            : `
-          <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg, ${tipoInfo.cor}15, var(--cinza-claro));">
-            <i class="fas fa-bullhorn" style="font-size:48px;color:var(--cinza-medio);opacity:0.3;"></i>
-          </div>
-        `
-        }
+    <article class="mural-notice-card ${prioridade ? "has-priority" : ""}" id="aviso-card-${idAttr}">
+      ${imagemUrl ? `<button type="button" class="mural-notice-media" onclick="window._muralVerImagens(${id})" aria-label="Ver ${imagens.length} imagem(ns) do aviso"><img src="${imagemUrl}" alt="Imagem anexada ao aviso: ${titulo}" loading="lazy" decoding="async">${imagens.length > 1 ? `<span class="mural-media-count">+${imagens.length - 1} fotos</span>` : ""}<span class="mural-media-open"><i class="fas fa-expand" aria-hidden="true"></i> Ver imagem</span></button>` : ""}
+      <div class="mural-notice-body">
+        <div class="mural-notice-meta"><span class="mural-type-badge ${escapeMuralHtml(tipoInfo.badge || "badge-noticia")}">${escapeMuralHtml(tipoInfo.label)}</span>${prioridade ? `<span class="mural-priority-label"><i class="fas fa-exclamation-circle" aria-hidden="true"></i> Prioridade registrada</span>` : ""}</div>
+        <h3 class="mural-notice-title">${titulo}</h3>
+        <div class="mural-notice-content"><span id="conteudo-${idAttr}" class="mural-notice-excerpt ${conteudoLongo ? "is-collapsed" : ""}" data-expanded="false">${escapeMuralHtml(preview)}</span>${conteudoLongo ? `<button type="button" class="mural-read-more" onclick="window._muralVerMais(${id})"><span id="verMaisBtn-${idAttr}">Ler aviso completo</span></button>` : ""}</div>
+        <div class="mural-notice-byline"><span class="mural-author-avatar" aria-hidden="true">${autorInicial}</span><span class="mural-byline-name"><strong>${autor}</strong>${supervisorAutor ? `<span class="mural-author-role">Supervisão</span>` : ""}</span><span class="mural-byline-separator" aria-hidden="true">·</span><time datetime="${escapeMuralHtml(aviso.criado_em || "")}">${data}</time><span class="mural-byline-spacer"></span>${anexos.length ? `<span class="mural-attachment-count"><i class="fas fa-paperclip" aria-hidden="true"></i> ${anexos.length} anexo(s)</span>` : ""}</div>
+        <div class="mural-notice-actions"><button type="button" class="mural-open-button" onclick="window._muralVerDetalhes(${id})"><i class="far fa-file-alt" aria-hidden="true"></i> Ver detalhes</button><div class="mural-management-actions">${isSupervisor ? `<button type="button" class="mural-small-action" onclick="window._muralEditar(${id})" aria-label="Editar aviso" title="Editar"><i class="fas fa-pen" aria-hidden="true"></i></button><button type="button" class="mural-small-action is-danger" onclick="window._muralDeletar(${id})" aria-label="Excluir aviso" title="Excluir"><i class="fas fa-trash" aria-hidden="true"></i></button>` : `<button type="button" class="mural-small-action" onclick="window._muralCompartilhar(${id})" aria-label="Compartilhar aviso" title="Compartilhar"><i class="fas fa-share-alt" aria-hidden="true"></i></button>`}</div></div>
+        <details class="mural-engagement"><summary><span><i class="far fa-comments" aria-hidden="true"></i> Interações</span><span class="mural-engagement-count">${resumoInteracoes}</span></summary><div class="mural-engagement-content"><div class="mural-reaction-list" aria-label="Reações">${Object.entries(REACOES_EMOJIS).map(([key, emoji]) => { const active = aviso.reacao_usuario?.tipo === key; return `<button type="button" class="mural-reaction ${active ? "is-active" : ""}" onclick="window._muralReagir(${id}, '${key}')" aria-label="${escapeMuralHtml(REACOES_LABELS[key])}: ${contagens[key]}" aria-pressed="${active}"><span aria-hidden="true">${emoji}</span><span>${contagens[key]}</span></button>`; }).join("")}</div><div class="mural-comment-preview">${resumoComentarios.map((item) => `<p><strong>${escapeMuralHtml(item.usuarios?.nome_completo || "Usuário")}:</strong> ${escapeMuralHtml(item.comentario || "")}</p>`).join("")}${comentarios.length > 2 ? `<button type="button" class="mural-comments-more" onclick="window._muralVerComentarios(${id})">Ver todos os ${comentarios.length} comentários</button>` : ""}</div><form class="mural-comment-form" onsubmit="event.preventDefault(); window._muralComentar(${id})"><label class="sr-only" for="comentarioInput-${idAttr}">Escreva um comentário</label><input type="text" id="comentarioInput-${idAttr}" placeholder="Escreva um comentário" maxlength="1000"><button type="submit" aria-label="Enviar comentário"><i class="fas fa-paper-plane" aria-hidden="true"></i></button></form></div></details>
       </div>
-
-      <!-- Conteúdo -->
-      <div style="padding:12px 14px;">
-        <!-- Badge e Data -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:4px;">
-          <span class="badge ${badgeClass}" style="font-size:9px;padding:2px 12px;font-weight:700;background:${corBadge};color:white;border:none;text-transform:uppercase;letter-spacing:0.5px;">
-            ${tipoInfo.label}
-          </span>
-          <span style="font-size:10px;color:var(--cinza-medio);display:flex;align-items:center;gap:4px;">
-            <i class="fas fa-clock" style="font-size:10px;"></i>
-            ${dataFormatada}
-          </span>
-        </div>
-
-        <!-- Título -->
-        <h3 style="font-size:15px;font-weight:700;color:var(--azul-bandeira);margin:0 0 6px 0;line-height:1.3;">
-          ${aviso.titulo}
-        </h3>
-
-        <!-- Conteúdo -->
-        <div style="font-size:13px;color:var(--cinza-escuro);line-height:1.5;margin-bottom:4px;">
-          <span id="conteudo-${aviso.id}">
-            ${conteudoPreview}
-          </span>
-          ${
-            conteudoLongo
-              ? `
-            <button onclick="event.stopPropagation(); window._muralVerMais('${aviso.id}')" 
-              style="background:none;border:none;color:var(--azul-bandeira);font-weight:600;font-size:12px;cursor:pointer;padding:0 2px;">
-              <span id="verMaisBtn-${aviso.id}">Ver mais</span>
-            </button>
-          `
-              : ""
-          }
-        </div>
-
-        <!-- Tags (Localização e Tag) -->
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid var(--cinza-claro);">
-          ${
-            localizacao
-              ? `
-            <span style="font-size:10px;color:var(--cinza-medio);background:var(--branco-fumaca);padding:2px 10px;border-radius:12px;">
-              <i class="fas fa-map-marker-alt" style="margin-right:4px;font-size:9px;"></i>
-              ${localizacao}
-            </span>
-          `
-              : ""
-          }
-          ${
-            tag
-              ? `
-            <span style="font-size:10px;color:var(--cinza-medio);background:var(--branco-fumaca);padding:2px 10px;border-radius:12px;">
-              <i class="fas fa-tag" style="margin-right:4px;font-size:9px;"></i>
-              ${tag}
-            </span>
-          `
-              : ""
-          }
-        </div>
-
-        <!-- Autor -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--cinza-claro);">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="width:28px;height:28px;border-radius:50%;background:var(--gradiente-principal);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;">
-              ${autorNome.charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <span style="font-size:12px;font-weight:600;color:var(--cinza-escuro);">${autorNome}</span>
-              ${isSupervisorAutor ? `<span style="font-size:8px;font-weight:700;color:var(--azul-bandeira);background:var(--azul-muito-claro);padding:1px 8px;border-radius:10px;margin-left:4px;">SUPERVISOR</span>` : ""}
-            </div>
-          </div>
-          ${
-            isSupervisor
-              ? `
-            <div style="display:flex;gap:4px;">
-              <button onclick="event.stopPropagation(); window._muralEditar('${aviso.id}')" 
-                style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:none;cursor:pointer;">
-                <i class="fas fa-edit"></i>
-              </button>
-              <button onclick="event.stopPropagation(); window._muralDeletar('${aviso.id}')" 
-                style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--erro-claro);color:var(--erro);border:none;cursor:pointer;">
-                <i class="fas fa-trash"></i>
-              </button>
-            </div>
-          `
-              : `
-            <button onclick="event.stopPropagation(); window._muralCompartilhar('${aviso.id}')" 
-              style="padding:2px 8px;font-size:10px;min-height:auto;width:auto;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:none;cursor:pointer;">
-              <i class="fas fa-share-alt"></i>
-            </button>
-          `
-          }
-        </div>
-
-        <!-- Reações -->
-        <div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 0 0 0;margin-top:6px;border-top:1px solid var(--cinza-claro);">
-          ${Object.entries(REACOES_EMOJIS)
-            .map(([key, emoji]) => {
-              const count = reacoesCount[key] || 0;
-              const isUserReacted = reacaoUsuario?.tipo === key;
-              return `
-              <button onclick="event.stopPropagation(); window._muralReagir('${aviso.id}', '${key}')" 
-                class="reacao-btn-mural ${isUserReacted ? "ativo" : ""}" 
-                style="background:${isUserReacted ? "var(--azul-muito-claro)" : "var(--branco-fumaca)"};border:2px solid ${isUserReacted ? "var(--azul-bandeira)" : "transparent"};border-radius:30px;padding:2px 8px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;transition:all 0.2s ease;min-height:28px;">
-                ${emoji}
-                <span class="count" style="font-size:10px;font-weight:600;color:${isUserReacted ? "var(--azul-bandeira)" : "var(--cinza-medio)"};">${count}</span>
-              </button>
-            `;
-            })
-            .join("")}
-          <span style="font-size:10px;color:var(--cinza-medio);display:flex;align-items:center;margin-left:auto;">
-            ${totalReacoes > 0 ? `${totalReacoes} reações` : ""}
-          </span>
-        </div>
-
-        <!-- Comentários -->
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cinza-claro);">
-          ${
-            ultimosComentarios.length > 0
-              ? `
-            <div style="margin-bottom:4px;">
-              ${ultimosComentarios
-                .map(
-                  (c) => `
-                <div style="display:flex;gap:6px;padding:3px 0;font-size:12px;">
-                  <span style="font-weight:600;color:var(--azul-bandeira);font-size:11px;">${c.usuarios?.nome_completo || "Usuário"}:</span>
-                  <span style="color:var(--cinza-escuro);word-break:break-word;">${c.comentario}</span>
-                </div>
-              `,
-                )
-                .join("")}
-            </div>
-          `
-              : ""
-          }
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-            <div style="flex:1;min-width:100px;position:relative;">
-              <input type="text" id="comentarioInput-${aviso.id}" 
-                placeholder="Escreva um comentário..." 
-                style="width:100%;padding:4px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:11px;background:var(--branco-fumaca);min-height:28px;"
-                onkeydown="if(event.key==='Enter') window._muralComentar('${aviso.id}')">
-            </div>
-            <button onclick="window._muralComentar('${aviso.id}')" class="btn-primary" 
-              style="padding:4px 10px;font-size:11px;min-height:28px;width:auto;border-radius:8px;">
-              <i class="fas fa-paper-plane"></i>
-            </button>
-            ${
-              totalComentarios > 2
-                ? `
-              <button onclick="window._muralVerComentarios('${aviso.id}')" 
-                style="background:none;border:none;color:var(--azul-bandeira);font-size:10px;font-weight:600;cursor:pointer;padding:2px 6px;">
-                Ver todos (${totalComentarios})
-              </button>
-            `
-                : totalComentarios > 0 && totalComentarios <= 2
-                  ? `
-              <span style="font-size:10px;color:var(--cinza-medio);">
-                ${totalComentarios} comentário(s)
-              </span>
-            `
-                  : ""
-            }
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
+    </article>`;
 }
 
 // ============================================
@@ -870,7 +544,7 @@ function renderLoaderCards() {
   let html = "";
   for (let i = 0; i < 3; i++) {
     html += `
-      <div style="background:var(--branco);border-radius:var(--border-radius);overflow:hidden;margin-bottom:14px;box-shadow:var(--sombra-suave);opacity:0.6;">
+      <div class="mural-skeleton" aria-hidden="true">
         <div style="width:100%;height:160px;background:var(--cinza-claro);"></div>
         <div style="padding:12px;">
           <div style="background:var(--cinza-claro);height:14px;width:40%;border-radius:4px;margin-bottom:6px;"></div>
@@ -889,7 +563,7 @@ function renderLoaderCards() {
 
 function renderVazio(temFiltros, isSupervisor) {
   return `
-    <div style="text-align:center;padding:40px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
+    <div class="mural-empty-state">
       <div style="font-size:48px;color:var(--cinza-claro);margin-bottom:12px;">
         <i class="fas fa-bullhorn"></i>
       </div>
@@ -918,7 +592,7 @@ function renderErro(error, appInstance) {
         <i class="fas fa-exclamation-triangle"></i>
       </div>
       <h3>Erro ao carregar avisos</h3>
-      <p style="color:var(--cinza-medio);">${error.message}</p>
+      <p style="color:var(--cinza-medio);">${escapeMuralHtml(error?.message || "Verifique sua conexão e tente novamente.")}</p>
       <button onclick="window._muralRecarregar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
         Tentar novamente
       </button>
@@ -1244,17 +918,19 @@ export function verMaisConteudo(id, appInstance) {
   if (!conteudoEl || !btnEl) return;
 
   const isExpanded = conteudoEl.dataset.expanded === "true";
+  const limiteResumo = 180;
 
   if (isExpanded) {
-    // Colapsar
-    const preview = aviso.conteudo.substring(0, 150) + "...";
-    conteudoEl.textContent = preview;
-    btnEl.textContent = "Ver mais";
+    conteudoEl.textContent = aviso.conteudo.length > limiteResumo
+      ? `${aviso.conteudo.slice(0, limiteResumo).trimEnd()}…`
+      : aviso.conteudo;
+    conteudoEl.classList.add("is-collapsed");
+    btnEl.textContent = "Ler aviso completo";
     conteudoEl.dataset.expanded = "false";
   } else {
-    // Expandir
     conteudoEl.textContent = aviso.conteudo;
-    btnEl.textContent = "Ver menos";
+    conteudoEl.classList.remove("is-collapsed");
+    btnEl.textContent = "Recolher resumo";
     conteudoEl.dataset.expanded = "true";
   }
 }

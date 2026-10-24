@@ -38,6 +38,7 @@ const TIPOS_OCORRENCIA = [
   { value: "incendio", label: "Incêndio" },
   { value: "desaparecimento", label: "Desaparecimento" },
   { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "flagrante", label: "Flagrante" },
   { value: "outro", label: "Outro" },
 ];
 

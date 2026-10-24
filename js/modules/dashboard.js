@@ -37,8 +37,9 @@
 // ============================================
 
 const CACHE_KEY_STATS = "dashboard_stats";
-const CACHE_KEY_OCORRENCIAS = "dashboard_ocorrencias";
+const CACHE_KEY_OCORRENCIAS = "dashboard_ocorrencias_com_fotos_v2";
 const CACHE_KEY_ABORDAGENS = "dashboard_abordagens";
+const CACHE_KEY_ABORDAGENS_HOJE = "dashboard_abordagens_hoje";
 const CACHE_EXPIRY = 30000; // 30 segundos de cache
 const PULL_REFRESH_THRESHOLD = 80;
 
@@ -51,6 +52,7 @@ let estado = {
   statsData: null,
   ocorrenciasData: [],
   abordagensData: [],
+  abordagensHoje: null,
   briefingsData: null,
   pendentesRetificacoes: [],
   isRefreshing: false,
@@ -102,6 +104,7 @@ export async function renderDashboard(container, appInstance) {
     await carregarBriefings();
     await carregarOcorrencias();
     await carregarAbordagens();
+    await carregarAbordagensHoje();
 
     renderizarDashboard(container, appInstance);
 
@@ -293,11 +296,13 @@ async function refreshDashboard(container, appInstance) {
     localStorage.removeItem(CACHE_KEY_STATS);
     localStorage.removeItem(CACHE_KEY_OCORRENCIAS);
     localStorage.removeItem(CACHE_KEY_ABORDAGENS);
+    localStorage.removeItem(CACHE_KEY_ABORDAGENS_HOJE);
 
     await carregarStats();
     await carregarBriefings();
     await carregarOcorrencias();
     await carregarAbordagens();
+    await carregarAbordagensHoje();
 
     renderizarDashboard(container, appInstance);
 
@@ -514,11 +519,52 @@ async function carregarBriefings() {
   }
 }
 
+async function associarAnexosOcorrenciasDashboard(ocorrencias) {
+  const lista = Array.isArray(ocorrencias) ? ocorrencias : [];
+  const ids = lista.map((ocorrencia) => ocorrencia?.id).filter(Boolean);
+  if (ids.length === 0) return;
+
+  const client =
+    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) {
+    lista.forEach((ocorrencia) => { ocorrencia.anexos = []; });
+    return;
+  }
+
+  const { data, error } = await client
+    .from("anexos")
+    .select("id,ocorrencia_id,tipo_arquivo,url,mime_type,criado_em")
+    .in("ocorrencia_id", ids)
+    .order("criado_em", { ascending: false });
+
+  if (error) throw error;
+
+  const anexosPorOcorrencia = new Map(ids.map((id) => [String(id), []]));
+  (data || []).forEach((anexo) => {
+    const chave = String(anexo.ocorrencia_id || "");
+    if (!anexosPorOcorrencia.has(chave)) anexosPorOcorrencia.set(chave, []);
+    anexosPorOcorrencia.get(chave).push(anexo);
+  });
+
+  lista.forEach((ocorrencia) => {
+    ocorrencia.anexos = anexosPorOcorrencia.get(String(ocorrencia.id)) || [];
+  });
+}
+
+function isDashboardImageAttachment(anexo) {
+  if (!anexo || typeof anexo !== "object") return false;
+  const tipo = String(anexo.tipo_arquivo || anexo.tipo || "").trim().toLowerCase();
+  const mime = String(anexo.mime_type || anexo.mimeType || "").trim().toLowerCase();
+  if (tipo === "image" || tipo.startsWith("image/") || mime.startsWith("image/")) return true;
+  const url = String(anexo.url || anexo.url_thumb || "").split(/[?#]/, 1)[0].toLowerCase();
+  return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(url);
+}
+
 async function carregarOcorrencias() {
   const cachedOcorrencias = getCachedData(CACHE_KEY_OCORRENCIAS);
   if (cachedOcorrencias) {
     estado.ocorrenciasData = cachedOcorrencias;
-    console.log("📋 Ocorrências carregadas do cache");
+    console.log("📋 Ocorrências e fotos carregadas do cache");
     return;
   }
 
@@ -530,8 +576,15 @@ async function carregarOcorrencias() {
 
     const result = await ocorrenciaManager.listar(filtros);
     if (result.success) {
-      estado.ocorrenciasData = result.data || [];
-      setCachedData(CACHE_KEY_OCORRENCIAS, result.data);
+      const ocorrencias = result.data || [];
+      try {
+        await associarAnexosOcorrenciasDashboard(ocorrencias);
+      } catch (anexoError) {
+        console.warn("Não foi possível carregar miniaturas das ocorrências:", anexoError);
+        ocorrencias.forEach((ocorrencia) => { ocorrencia.anexos = []; });
+      }
+      estado.ocorrenciasData = ocorrencias;
+      setCachedData(CACHE_KEY_OCORRENCIAS, ocorrencias);
     } else {
       estado.ocorrenciasData = [];
     }
@@ -590,6 +643,64 @@ async function carregarAbordagens() {
   }
 }
 
+async function carregarAbordagensHoje() {
+  const cachedCount = getCachedData(CACHE_KEY_ABORDAGENS_HOJE);
+  if (cachedCount !== null && cachedCount !== undefined && Number.isFinite(Number(cachedCount))) {
+    estado.abordagensHoje = Number(cachedCount);
+    return;
+  }
+
+  try {
+    const client =
+      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client) {
+      estado.abordagensHoje = null;
+      return;
+    }
+
+    // As colunas criado_em são timestamp sem fuso; use limites no horário local
+    // e intervalo semiaberto para contar o dia civil sem deslocar a meia-noite.
+    const agora = new Date();
+    const inicioHoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+    const inicioAmanha = new Date(
+      agora.getFullYear(),
+      agora.getMonth(),
+      agora.getDate() + 1,
+    );
+    const formatarTimestampLocal = (data) => {
+      const pad = (valor) => String(valor).padStart(2, "0");
+      return `${data.getFullYear()}-${pad(data.getMonth() + 1)}-${pad(data.getDate())}T${pad(data.getHours())}:${pad(data.getMinutes())}:${pad(data.getSeconds())}`;
+    };
+    const inicio = formatarTimestampLocal(inicioHoje);
+    const fim = formatarTimestampLocal(inicioAmanha);
+
+    const [veiculos, pessoas] = await Promise.all([
+      client
+        .from("abordagens_veiculos")
+        .select("id", { count: "exact", head: true })
+        .eq("esta_ativa", true)
+        .gte("criado_em", inicio)
+        .lt("criado_em", fim),
+      client
+        .from("abordagens_pessoas")
+        .select("id", { count: "exact", head: true })
+        .eq("esta_ativa", true)
+        .gte("criado_em", inicio)
+        .lt("criado_em", fim),
+    ]);
+
+    if (veiculos.error) throw veiculos.error;
+    if (pessoas.error) throw pessoas.error;
+
+    estado.abordagensHoje = (veiculos.count || 0) + (pessoas.count || 0);
+    setCachedData(CACHE_KEY_ABORDAGENS_HOJE, estado.abordagensHoje);
+  } catch (error) {
+    console.warn("Erro ao contar abordagens de hoje:", error);
+    // Não exibir zero quando a consulta falhar: o travessão sinaliza indisponibilidade.
+    estado.abordagensHoje = null;
+  }
+}
+
 // ============================================
 // CACHE DE DADOS
 // ============================================
@@ -641,132 +752,234 @@ function renderizarDashboard(container, appInstance) {
   const isSupervisor =
     typeof authManager !== "undefined" && authManager.isSupervisor();
   const filtroAtivo = estado.filtroStatusAtual;
-
   const temNovidades =
     briefings?.ocorrencias?.length > 0 || briefings?.avisos?.length > 0;
   const tituloFiltro = filtroAtivo ? getStatusLabel(filtroAtivo) : "Todas";
+  const dataHoje = new Date().toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+  const perfilLabel = isSupervisor ? "PAINEL DA SUPERVISÃO" : "PAINEL OPERACIONAL";
+  const mensagemInicial = isSupervisor
+    ? "Acompanhe a movimentação recente e as solicitações que aguardam análise."
+    : "Acesse os registros, as novidades e os atalhos do atendimento.";
 
-  let html = `
-    <div class="container" style="padding-bottom:100px;" id="dashboardContainer">
+  container.innerHTML = `
+    <div class="container dashboard-shell" id="dashboardContainer">
+      <header class="dashboard-welcome" aria-labelledby="dashboardTitle">
+        <div class="dashboard-welcome__copy">
+          <span class="dashboard-eyebrow">${perfilLabel}</span>
+          <h1 id="dashboardTitle">Bem-vindo, ${user?.nome_completo || "Guarda"}</h1>
+          <p>${mensagemInicial}</p>
+        </div>
+        <div class="dashboard-date-card">
+          <span>HOJE</span>
+          <strong>${dataHoje}</strong>
+        </div>
+      </header>
+
+      ${renderPrioridades(stats, pendentesCount, isSupervisor)}
+      ${renderResumoHoje(stats, estado.abordagensHoje)}
       ${temNovidades ? renderBriefing(briefings) : ""}
 
-      <!-- Saudação -->
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:2px;">
-        <h2 style="margin:0;color:var(--azul-bandeira);font-size:18px;display:flex;align-items:center;gap:8px;">
-          Olá, ${user?.nome_completo || "Guarda"}! 🎉
-        </h2>
-        <span style="font-size:11px;color:var(--cinza-medio);">
-          ${new Date().toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "long",
-            year: "numeric",
-          })}
-        </span>
-      </div>
-      <p style="color:var(--cinza-medio);margin-bottom:14px;font-size:13px;">
-        Resumo das últimas 12 horas
-      </p>
-
-      <!-- Cards de Estatísticas em linha -->
-      ${renderStatsCards(stats)}
-
-      <!-- Cards de Acesso Rápido -->
-      ${renderAcessoRapido(appInstance)}
-
-      ${isSupervisor ? renderRetificacoesPendentes(pendentesCount, appInstance) : ""}
-
-      <!-- Estatísticas adicionais para supervisor -->
-      ${isSupervisor ? renderStatsAdicionais(stats) : ""}
-
-      <!-- Lista de Ocorrências -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;margin-bottom:8px;">
-        <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--cinza-escuro);">
-          <i class="fas fa-list-ul" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-          ${filtroAtivo ? `Ocorrências - ${tituloFiltro}` : "Últimas Ocorrências"}
-        </h3>
-        <button onclick="window.app.navigateTo('ocorrencias')" class="btn-secondary" style="padding:4px 12px;font-size:11px;min-height:auto;width:auto;border-radius:8px;background:transparent;color:var(--azul-bandeira);border:none;font-weight:600;cursor:pointer;">
-          Ver todas <i class="fas fa-arrow-right" style="margin-left:4px;font-size:10px;"></i>
-        </button>
-      </div>
-
-      <div id="listaOcorrenciasContainer">
-        ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance)}
-      </div>
-
-      <!-- Últimas Abordagens -->
-      <div style="margin-top:20px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--cinza-escuro);">
-            <i class="fas fa-search" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            Últimas Abordagens
-          </h3>
-          <button onclick="window.app.navigateTo('consulta')" class="btn-secondary" style="padding:4px 12px;font-size:11px;min-height:auto;width:auto;border-radius:8px;background:transparent;color:var(--azul-bandeira);border:none;font-weight:600;cursor:pointer;">
-            Ver todas <i class="fas fa-arrow-right" style="margin-left:4px;font-size:10px;"></i>
-          </button>
+      <section class="dashboard-section dashboard-actions-section" aria-labelledby="dashboardActionsTitle">
+        <div class="dashboard-section-heading">
+          <div>
+            <span class="dashboard-eyebrow">ATENDIMENTO</span>
+            <h2 id="dashboardActionsTitle">O que você precisa fazer agora?</h2>
+          </div>
         </div>
-        <div id="listaAbordagensContainer">
-          ${renderAbordagensLista(abordagens, appInstance)}
+        ${renderAcessoRapido(appInstance)}
+      </section>
+
+      <section class="dashboard-section dashboard-status-section" aria-labelledby="dashboardStatusTitle">
+        <div class="dashboard-section-heading">
+          <div>
+            <span class="dashboard-eyebrow">ACOMPANHAMENTO</span>
+            <h2 id="dashboardStatusTitle">Situação dos registros</h2>
+            <p>Indicadores dos registros ativos. Toque em um cartão para filtrar.</p>
+          </div>
         </div>
+        ${renderStatsCards(stats, isSupervisor)}
+        ${isSupervisor ? renderStatsAdicionais(stats) : ""}
+      </section>
+
+      <div class="dashboard-activity-grid">
+        <section class="dashboard-section dashboard-activity-section" aria-labelledby="dashboardOccurrencesTitle">
+          <div class="dashboard-section-heading dashboard-section-heading--compact">
+            <div>
+              <span class="dashboard-eyebrow">BOLETINS</span>
+              <h2 id="dashboardOccurrencesTitle">${filtroAtivo ? `Ocorrências — ${tituloFiltro}` : "Ocorrências recentes"}</h2>
+            </div>
+            <button onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">
+              Ver todas <i class="fas fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div id="listaOcorrenciasContainer" class="dashboard-record-list">
+            ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance)}
+          </div>
+        </section>
+
+        <section class="dashboard-section dashboard-activity-section" aria-labelledby="dashboardApproachesTitle">
+          <div class="dashboard-section-heading dashboard-section-heading--compact">
+            <div>
+              <span class="dashboard-eyebrow">ABORDAGENS</span>
+              <h2 id="dashboardApproachesTitle">Abordagens recentes</h2>
+            </div>
+            <button onclick="window.app.navigateTo('consulta')" class="dashboard-text-action">
+              Ver todas <i class="fas fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div id="listaAbordagensContainer" class="dashboard-record-list">
+            ${renderAbordagensLista(abordagens, appInstance)}
+          </div>
+        </section>
       </div>
     </div>
   `;
 
-  container.innerHTML = html;
-
   const indicator = container.querySelector(".pull-refresh-indicator");
   if (indicator) {
     setTimeout(() => {
-      if (indicator.parentNode) {
-        indicator.remove();
-      }
+      if (indicator.parentNode) indicator.remove();
     }, 500);
   }
 }
+
 
 // ============================================
 // RENDERIZAÇÃO: CARDS DE ESTATÍSTICAS
 // ============================================
 
-function renderStatsCards(stats) {
+function renderResumoHoje(stats, abordagensHoje) {
+  const quantidadeAbordagens =
+    abordagensHoje === null || abordagensHoje === undefined
+      ? "—"
+      : Number(abordagensHoje) || 0;
+  const cards = [
+    {
+      key: "started",
+      value: stats?.hoje ?? 0,
+      label: "BOs iniciados",
+      icon: "fa-file-circle-plus",
+    },
+    {
+      key: "finalized",
+      value: stats?.finalizados_hoje ?? 0,
+      label: "BOs finalizados",
+      icon: "fa-circle-check",
+    },
+    {
+      key: "approaches",
+      value: quantidadeAbordagens,
+      label: "Abordagens",
+      icon: "fa-user-shield",
+    },
+  ];
+
   return `
-    <div class="stats-container" style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding:2px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none;">
-      <style>
-        .stats-container::-webkit-scrollbar { height: 2px; }
-        .stats-container::-webkit-scrollbar-thumb { background: var(--cinza-claro); border-radius: 10px; }
-      </style>
-      
-      <!-- Total - Destaque -->
-      <div class="stat-card-destaque" style="flex:1;min-width:70px;background:var(--gradiente-principal);border-radius:var(--border-radius);padding:10px 6px;text-align:center;color:white;box-shadow:0 2px 12px rgba(0,63,135,0.3);cursor:pointer;transition:transform 0.2s ease;" onclick="window._dashboardFiltrarStatus(null)">
-        <div style="font-size:20px;font-weight:800;">${stats?.total || 0}</div>
-        <div style="font-size:8px;opacity:0.9;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Total</div>
+    <section class="dashboard-section dashboard-today-summary" aria-labelledby="dashboardTodayTitle">
+      <div class="dashboard-section-heading">
+        <div>
+          <span class="dashboard-eyebrow">MOVIMENTO OPERACIONAL</span>
+          <h2 id="dashboardTodayTitle">Resumo de hoje</h2>
+        </div>
       </div>
-      
-      <!-- Pendentes -->
-      <div class="stat-card-mini" style="flex:1;min-width:60px;background:var(--branco);border-radius:var(--border-radius);padding:10px 6px;text-align:center;border-top:3px solid var(--aviso);box-shadow:var(--sombra-suave);cursor:pointer;transition:transform 0.2s ease;" onclick="window._dashboardFiltrarStatus('pending_sync')">
-        <div style="font-size:18px;font-weight:800;color:var(--aviso);">${stats?.pending || 0}</div>
-        <div style="font-size:7px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Pendentes</div>
+      <div class="dashboard-today-grid" aria-label="Resumo de hoje">
+        ${cards
+          .map(
+            (card) => `
+          <div class="dashboard-today-card dashboard-today-card--${card.key}">
+            <span class="dashboard-today-card__icon"><i class="fas ${card.icon}" aria-hidden="true"></i></span>
+            <span class="dashboard-today-card__copy">
+              <strong class="dashboard-today-card__value">${card.value}</strong>
+              <span class="dashboard-today-card__label">${card.label}</span>
+            </span>
+          </div>
+        `,
+          )
+          .join("")}
       </div>
-      
-      <!-- Finalizadas -->
-      <div class="stat-card-mini" style="flex:1;min-width:60px;background:var(--branco);border-radius:var(--border-radius);padding:10px 6px;text-align:center;border-top:3px solid var(--verde-bandeira);box-shadow:var(--sombra-suave);cursor:pointer;transition:transform 0.2s ease;" onclick="window._dashboardFiltrarStatus('synced')">
-        <div style="font-size:18px;font-weight:800;color:var(--verde-bandeira);">${stats?.synced || 0}</div>
-        <div style="font-size:7px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Finalizadas</div>
-      </div>
-      
-      <!-- Retificação Pendente -->
-      <div class="stat-card-mini" style="flex:1;min-width:60px;background:var(--branco);border-radius:var(--border-radius);padding:10px 6px;text-align:center;border-top:3px solid #92400e;box-shadow:var(--sombra-suave);cursor:pointer;transition:transform 0.2s ease;" onclick="window._dashboardFiltrarStatus('pending_rectification')">
-        <div style="font-size:18px;font-weight:800;color:#92400e;">${stats?.pending_rectification || 0}</div>
-        <div style="font-size:7px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Retif. Pend.</div>
-      </div>
-      
-      <!-- Canceladas -->
-      <div class="stat-card-mini" style="flex:1;min-width:60px;background:var(--branco);border-radius:var(--border-radius);padding:10px 6px;text-align:center;border-top:3px solid var(--erro);box-shadow:var(--sombra-suave);cursor:pointer;transition:transform 0.2s ease;" onclick="window._dashboardFiltrarStatus('cancelled')">
-        <div style="font-size:18px;font-weight:800;color:var(--erro);">${stats?.cancelled || 0}</div>
-        <div style="font-size:7px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Canceladas</div>
-      </div>
+    </section>
+  `;
+}
+
+function renderStatsCards(stats, isSupervisor) {
+  const cards = [
+    {
+      key: "total",
+      value: stats?.total || 0,
+      label: "Total ativo",
+      icon: "fa-file-alt",
+      aria: "Filtrar todas as ocorrências",
+      status: "null",
+    },
+    {
+      key: "pending",
+      value: stats?.pending || 0,
+      label: "Aguardando sincronização",
+      icon: "fa-cloud-arrow-up",
+      aria: "Filtrar ocorrências aguardando sincronização",
+      status: "'pending_sync'",
+    },
+    {
+      key: "synced",
+      value: stats?.synced || 0,
+      label: "Finalizadas",
+      icon: "fa-check-circle",
+      aria: "Filtrar ocorrências finalizadas",
+      status: "'synced'",
+    },
+  ];
+
+  if (!isSupervisor) {
+    cards.push({
+      key: "draft",
+      value: stats?.draft || 0,
+      label: "Rascunhos",
+      icon: "fa-file-pen",
+      aria: "Filtrar rascunhos",
+      status: "'draft'",
+    });
+  }
+
+  cards.push(
+    {
+      key: "rectification",
+      value: stats?.pending_rectification || 0,
+      label: "Retificações pendentes",
+      icon: "fa-rotate",
+      aria: "Filtrar retificações pendentes",
+      status: "'pending_rectification'",
+    },
+    {
+      key: "cancelled",
+      value: stats?.cancelled || 0,
+      label: "Canceladas",
+      icon: "fa-ban",
+      aria: "Filtrar ocorrências canceladas",
+      status: "'cancelled'",
+    },
+  );
+
+  return `
+    <div class="dashboard-metrics" aria-label="Indicadores de ocorrências">
+      ${cards
+        .map(
+          (card) => `
+        <button type="button" class="dashboard-metric dashboard-metric--${card.key}" onclick="window._dashboardFiltrarStatus(${card.status})" aria-label="${card.aria}">
+          <span class="dashboard-metric__icon"><i class="fas ${card.icon}" aria-hidden="true"></i></span>
+          <span class="dashboard-metric__value">${card.value}</span>
+          <span class="dashboard-metric__label">${card.label}</span>
+        </button>
+      `,
+        )
+        .join("")}
     </div>
   `;
 }
+
 
 // ============================================
 // RENDERIZAÇÃO: ACESSO RÁPIDO (COM ÍCONES)
@@ -774,55 +987,44 @@ function renderStatsCards(stats) {
 
 function renderAcessoRapido(appInstance) {
   return `
-    <div class="acesso-rapido" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding:2px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none;">
-      <style>
-        .acesso-rapido::-webkit-scrollbar { height: 2px; }
-        .acesso-rapido::-webkit-scrollbar-thumb { background: var(--cinza-claro); border-radius: 10px; }
-        .card-rapido { transition: all 0.2s ease; border-radius: var(--border-radius); padding:12px 8px; text-align:center; border:2px solid transparent; cursor:pointer; box-shadow: var(--sombra-suave); flex:1; min-width:70px; }
-        .card-rapido:active { transform: scale(0.95); }
-        .card-rapido:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
-        .card-rapido .icon { font-size:22px; display:block; margin-bottom:4px; }
-        .card-rapido .label { font-size:9px; font-weight:600; color:var(--cinza-escuro); line-height:1.2; }
-        .card-rapido.azul { background:var(--azul-muito-claro); }
-        .card-rapido.azul .icon { color:var(--azul-bandeira); }
-        .card-rapido.verde { background:var(--verde-muito-claro); }
-        .card-rapido.verde .icon { color:var(--verde-bandeira); }
-        .card-rapido.roxo { background:#ede9fe; }
-        .card-rapido.roxo .icon { color:#8b5cf6; }
-        .card-rapido.laranja { background:#fef3c7; }
-        .card-rapido.laranja .icon { color:#d97706; }
-      </style>
-      
-      <!-- Nova Ocorrência -->
-      <button onclick="window._dashboardNovaOcorrencia()" 
-        class="card-rapido azul">
-        <span class="icon"><i class="fas fa-file-alt"></i></span>
-        <span class="label">Nova Ocorrência</span>
-      </button>
-      
-      <!-- Nova Abordagem -->
-      <button onclick="window._dashboardNovaAbordagem()" 
-        class="card-rapido verde">
-        <span class="icon"><i class="fas fa-search"></i></span>
-        <span class="label">Nova Abordagem</span>
-      </button>
-      
-      <!-- Buscar BO -->
-      <button onclick="window._dashboardBuscarBO()" 
-        class="card-rapido roxo">
-        <span class="icon"><i class="fas fa-file-invoice"></i></span>
-        <span class="label">Buscar BO</span>
-      </button>
-      
-      <!-- Busca Profunda -->
-      <button onclick="window._dashboardBuscaProfunda()" 
-        class="card-rapido laranja">
-        <span class="icon"><i class="fas fa-search"></i></span>
-        <span class="label">Busca Profunda</span>
-      </button>
+    <div class="dashboard-actions-layout">
+      <div class="dashboard-primary-actions" aria-label="Ações principais">
+        <button type="button" onclick="window._dashboardNovaOcorrencia()" class="dashboard-action dashboard-action--primary">
+          <span class="dashboard-action__icon"><i class="fas fa-file-circle-plus" aria-hidden="true"></i></span>
+          <span class="dashboard-action__title">Nova ocorrência</span>
+          <span class="dashboard-action__description">Registrar um novo atendimento.</span>
+          <span class="dashboard-action__link">Iniciar registro <i class="fas fa-arrow-right" aria-hidden="true"></i></span>
+        </button>
+        <button type="button" onclick="window._dashboardNovaAbordagem()" class="dashboard-action dashboard-action--primary">
+          <span class="dashboard-action__icon"><i class="fas fa-user-shield" aria-hidden="true"></i></span>
+          <span class="dashboard-action__title">Nova abordagem</span>
+          <span class="dashboard-action__description">Registrar abordagem de pessoa ou veículo.</span>
+          <span class="dashboard-action__link">Iniciar registro <i class="fas fa-arrow-right" aria-hidden="true"></i></span>
+        </button>
+      </div>
+
+      <section class="dashboard-consultations" aria-labelledby="dashboardConsultationsTitle">
+        <div class="dashboard-consultations__heading">
+          <span class="dashboard-eyebrow">CONSULTAS</span>
+          <h3 id="dashboardConsultationsTitle">Localizar um registro</h3>
+        </div>
+        <div class="dashboard-consultation-links">
+          <button type="button" onclick="window._dashboardBuscarBO()" class="dashboard-consultation-button">
+            <span class="dashboard-consultation-button__icon"><i class="fas fa-file-invoice" aria-hidden="true"></i></span>
+            <span><strong>Buscar BO</strong><small>Consulta direta</small></span>
+            <i class="fas fa-arrow-right" aria-hidden="true"></i>
+          </button>
+          <button type="button" onclick="window._dashboardBuscaProfunda()" class="dashboard-consultation-button">
+            <span class="dashboard-consultation-button__icon"><i class="fas fa-magnifying-glass-plus" aria-hidden="true"></i></span>
+            <span><strong>Busca profunda</strong><small>Mais critérios</small></span>
+            <i class="fas fa-arrow-right" aria-hidden="true"></i>
+          </button>
+        </div>
+      </section>
     </div>
   `;
 }
+
 
 // ============================================
 // RENDERIZAÇÃO: ESTATÍSTICAS ADICIONAIS
@@ -834,22 +1036,19 @@ function renderStatsAdicionais(stats) {
   const taxa = ((finalizadas / total) * 100).toFixed(1);
 
   return `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--verde-bandeira);">${taxa}%</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Resolutividade</div>
+    <section class="dashboard-supervisor-metrics" aria-label="Indicadores complementares">
+      <div class="dashboard-supervisor-metric">
+        <span class="dashboard-supervisor-metric__value dashboard-value--green">${taxa}%</span>
+        <span class="dashboard-supervisor-metric__label">Resolutividade</span>
       </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--azul-bandeira);">${stats?.hoje || 0}</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Hoje</div>
+      <div class="dashboard-supervisor-metric">
+        <span class="dashboard-supervisor-metric__value">${stats?.draft || 0}</span>
+        <span class="dashboard-supervisor-metric__label">Rascunhos</span>
       </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:6px;text-align:center;box-shadow:var(--sombra-suave);">
-        <div style="font-size:14px;font-weight:700;color:var(--roxo);">${stats?.draft || 0}</div>
-        <div style="font-size:8px;color:var(--cinza-medio);text-transform:uppercase;font-weight:600;">Rascunhos</div>
-      </div>
-    </div>
+    </section>
   `;
 }
+
 
 // ============================================
 // RENDERIZAÇÃO: BRIEFING
@@ -862,89 +1061,123 @@ function renderBriefing(briefings) {
   if (ocorrencias.length === 0 && avisos.length === 0) return "";
 
   return `
-    <div id="briefing-container" style="background:var(--gradiente-principal); border-radius:var(--border-radius); padding:14px 16px; margin-bottom:16px; color:white; box-shadow:var(--sombra-media); animation: slideUp 0.5s ease-out;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <h3 style="margin:0; font-size:14px; font-weight:700;">
-          <i class="fas fa-bolt" style="margin-right:6px;"></i>
-          Briefing do Turno
-        </h3>
-        <button onclick="this.parentElement.parentElement.remove()" style="background:none; border:none; color:white; opacity:0.7; font-size:16px; cursor:pointer; padding:4px 8px;">
-          <i class="fas fa-times"></i>
+    <section id="briefing-container" class="dashboard-briefing" aria-labelledby="dashboardBriefingTitle">
+      <div class="dashboard-briefing__header">
+        <div class="dashboard-briefing__heading">
+          <span class="dashboard-briefing__icon"><i class="fas fa-bell" aria-hidden="true"></i></span>
+          <div>
+            <span class="dashboard-eyebrow">INFORMAÇÃO RECENTE</span>
+            <h2 id="dashboardBriefingTitle">Novidades recentes</h2>
+          </div>
+        </div>
+        <button type="button" class="dashboard-briefing__close" aria-label="Dispensar novidades" onclick="this.closest('#briefing-container').remove()">
+          <i class="fas fa-times" aria-hidden="true"></i>
         </button>
       </div>
-      <p style="font-size:11px; opacity:0.9; margin-bottom:8px;">
-        Veja o que aconteceu nas últimas 12 horas:
-      </p>
-      <div style="display:flex; flex-direction:column; gap:4px;">
+      <p class="dashboard-briefing__description">Ocorrências e comunicados registrados nas últimas 12 horas.</p>
+      <div class="dashboard-briefing__items">
         ${ocorrencias
           .map(
             (o) => `
-          <div style="background:rgba(255,255,255,0.12); padding:6px 10px; border-radius:6px; display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px;" onclick="window._dashboardVerDetalhes('${o.id}')">
-            <i class="fas fa-file-alt" style="font-size:12px; flex-shrink:0;"></i>
-            <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              <b>${o.tipo_ocorrencia || "Ocorrência"}</b>
-              ${o.local_ocorrencia ? ` - ${o.local_ocorrencia}` : ""}
-            </span>
-            <span style="font-size:9px; opacity:0.7; flex-shrink:0;">
-              ${o.criado_em ? new Date(o.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}
-            </span>
-          </div>
+          <button type="button" class="dashboard-briefing__item" onclick="window._dashboardVerDetalhes('${o.id}')">
+            <i class="fas fa-file-alt" aria-hidden="true"></i>
+            <span><strong>${o.tipo_ocorrencia || "Ocorrência"}</strong>${o.local_ocorrencia ? ` — ${o.local_ocorrencia}` : ""}</span>
+            <time>${o.criado_em ? new Date(o.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
+          </button>
         `,
           )
           .join("")}
         ${avisos
           .map(
             (a) => `
-          <div style="background:rgba(255,255,255,0.12); padding:6px 10px; border-radius:6px; display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px;" onclick="window.app.navigateTo('mural')">
-            <i class="fas fa-bullhorn" style="font-size:12px; flex-shrink:0;"></i>
-            <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              <b>${a.titulo}</b>
-            </span>
-            <span style="font-size:9px; opacity:0.7; flex-shrink:0;">
-              ${a.criado_em ? new Date(a.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}
-            </span>
-          </div>
+          <button type="button" class="dashboard-briefing__item" onclick="window.app.navigateTo('mural')">
+            <i class="fas fa-bullhorn" aria-hidden="true"></i>
+            <span><strong>${a.titulo}</strong></span>
+            <time>${a.criado_em ? new Date(a.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
+          </button>
         `,
           )
           .join("")}
       </div>
-      <button onclick="window.app.navigateTo('mural')" style="width:100%; margin-top:8px; background:white; color:var(--azul-bandeira); border:none; padding:6px; border-radius:6px; font-weight:700; font-size:11px; cursor:pointer;">
-        VER TUDO
-      </button>
-    </div>
+      ${avisos.length ? '<button type="button" onclick="window.app.navigateTo(\'mural\')" class="dashboard-briefing__link">Ver comunicados <i class="fas fa-arrow-right" aria-hidden="true"></i></button>' : ""}
+    </section>
   `;
 }
 
-// ============================================
-// RENDERIZAÇÃO: RETIFICAÇÕES PENDENTES
-// ============================================
+function renderPrioridades(stats, pendingReviewCount, isSupervisor) {
+  const cards = [];
+  const pendingSyncCount = stats?.pending || 0;
+  const draftCount = stats?.draft || 0;
 
-function renderRetificacoesPendentes(count, appInstance) {
-  if (count === 0) return "";
+  if (isSupervisor && pendingReviewCount > 0) {
+    cards.push(`
+      <button type="button" class="dashboard-priority-item dashboard-priority-item--review" onclick="window.app.navigateTo('retificacoes')">
+        <span class="dashboard-priority-item__icon"><i class="fas fa-clipboard-check" aria-hidden="true"></i></span>
+        <span class="dashboard-priority-item__copy"><strong>Retificações para analisar</strong><small>Solicitações aguardando a supervisão</small></span>
+        <span class="dashboard-priority-item__count">${pendingReviewCount}</span>
+        <i class="fas fa-arrow-right dashboard-priority-item__arrow" aria-hidden="true"></i>
+      </button>
+    `);
+  }
+
+  if (pendingSyncCount > 0) {
+    cards.push(`
+      <button type="button" class="dashboard-priority-item dashboard-priority-item--sync" onclick="window._dashboardFiltrarStatus('pending_sync')">
+        <span class="dashboard-priority-item__icon"><i class="fas fa-cloud-arrow-up" aria-hidden="true"></i></span>
+        <span class="dashboard-priority-item__copy"><strong>Aguardando sincronização</strong><small>Registros que ainda não foram enviados</small></span>
+        <span class="dashboard-priority-item__count">${pendingSyncCount}</span>
+        <i class="fas fa-arrow-right dashboard-priority-item__arrow" aria-hidden="true"></i>
+      </button>
+    `);
+  }
+
+  if (!isSupervisor && draftCount > 0) {
+    cards.push(`
+      <button type="button" class="dashboard-priority-item dashboard-priority-item--draft" onclick="window._dashboardFiltrarStatus('draft')">
+        <span class="dashboard-priority-item__icon"><i class="fas fa-file-pen" aria-hidden="true"></i></span>
+        <span class="dashboard-priority-item__copy"><strong>Rascunhos em aberto</strong><small>Registros salvos como rascunho</small></span>
+        <span class="dashboard-priority-item__count">${draftCount}</span>
+        <i class="fas fa-arrow-right dashboard-priority-item__arrow" aria-hidden="true"></i>
+      </button>
+    `);
+  }
+
+  if (cards.length === 0) return "";
 
   return `
-    <div style="margin-bottom:12px;background:var(--branco);border-radius:var(--border-radius);padding:10px 14px;box-shadow:var(--sombra-suave);border-left:4px solid var(--aviso);display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="window.app.navigateTo('retificacoes')">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <i class="fas fa-sync-alt" style="color:var(--aviso);font-size:18px;"></i>
-        <div>
-          <span style="font-weight:600;font-size:13px;color:var(--cinza-escuro);">
-            Solicitações de Retificação
-          </span>
-          <span style="font-size:11px;color:var(--cinza-medio);margin-left:6px;">
-            Aguardando sua análise
-          </span>
-        </div>
+    <section class="dashboard-priorities" aria-labelledby="dashboardPrioritiesTitle">
+      <div class="dashboard-priorities__heading">
+        <span class="dashboard-eyebrow">PENDÊNCIAS</span>
+        <h2 id="dashboardPrioritiesTitle">Atenção necessária</h2>
       </div>
-      <span class="badge badge-pending" style="font-size:13px;padding:4px 14px;font-weight:700;">
-        ${count}
-      </span>
-    </div>
+      <div class="dashboard-priority-grid">${cards.join("")}</div>
+    </section>
   `;
 }
+
 
 // ============================================
 // RENDERIZAÇÃO: LISTA DE OCORRÊNCIAS (COM MINIATURAS)
 // ============================================
+
+function renderRecordThumbnail(src, alt, fallbackIcon, tone, extraPhotos) {
+  const safeSrc = safeDashboardMediaUrl(src);
+  const safeAlt = escapeDashboardHtml(alt);
+  if (safeSrc) {
+    return `
+      <div class="dashboard-record-thumb dashboard-record-thumb--photo">
+        <img src="${escapeDashboardHtml(safeSrc)}" alt="${safeAlt}" loading="lazy" decoding="async" fetchpriority="low" width="160" height="120" onerror="this.parentElement.classList.add('is-broken')">
+        <span class="dashboard-record-thumb__fallback" aria-hidden="true"><i class="fas ${fallbackIcon}"></i></span>
+        ${extraPhotos > 0 ? `<span class="dashboard-record-photo-count" aria-label="Mais ${extraPhotos} fotos"><i class="fas fa-images" aria-hidden="true"></i>+${extraPhotos}</span>` : ""}
+      </div>
+    `;
+  }
+  return `
+    <div class="dashboard-record-thumb dashboard-record-thumb--empty dashboard-record-thumb--${tone}" aria-hidden="true">
+      <i class="fas ${fallbackIcon}"></i>
+    </div>
+  `;
+}
 
 function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
   if (!ocorrencias || ocorrencias.length === 0) {
@@ -953,8 +1186,8 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
       : "Nenhuma ocorrência encontrada";
 
     return `
-      <div style="text-align:center;padding:30px 20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-        <div style="font-size:40px;color:var(--cinza-claro);margin-bottom:8px;">
+      <div class="dashboard-empty-state">
+        <div class="dashboard-empty-state__icon">
           <i class="fas fa-inbox"></i>
         </div>
         <p style="font-weight:500;font-size:14px;">${mensagem}</p>
@@ -984,76 +1217,42 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
     const guardaNome = occ.criador?.nome_completo || "Desconhecido";
     const local = occ.local_ocorrencia || "Local não informado";
 
-    // Resumo do relato (primeiras 12 palavras)
     let resumo = "";
     if (occ.observacoes) {
-      const palavras = occ.observacoes.split(" ");
-      resumo = palavras.slice(0, 12).join(" ");
-      if (palavras.length > 12) resumo += "...";
+      const palavras = occ.observacoes.split(/\s+/).filter(Boolean);
+      resumo = palavras.slice(0, 18).join(" ");
+      if (palavras.length > 18) resumo += "…";
     }
 
-    // Buscar miniaturas dos anexos
-    let primeiroAnexo = null;
-    let totalAnexos = 0;
-    let anexosInfo = "";
-
-    if (occ.anexos && Array.isArray(occ.anexos) && occ.anexos.length > 0) {
-      totalAnexos = occ.anexos.length;
-      const imagens = occ.anexos.filter(
-        (a) => a.tipo_arquivo === "image" || a.tipo === "image",
-      );
-      if (imagens.length > 0) {
-        primeiroAnexo = imagens[0].url_thumb || imagens[0].url;
-        if (imagens.length > 1) {
-          anexosInfo = `+${imagens.length - 1}`;
-        }
-      }
-    }
+    const anexos = Array.isArray(occ.anexos) ? occ.anexos : [];
+    const imagens = anexos.filter(isDashboardImageAttachment);
+    const primeiroAnexo = imagens[0]?.url_thumb || imagens[0]?.url || null;
+    const totalAnexos = anexos.length;
+    const extraPhotos = Math.max(0, imagens.length - 1);
+    const attachmentLabel = totalAnexos === 1 ? "anexo" : "anexos";
 
     html += `
-      <div class="ocorrencia-item status-${occ.status}" onclick="window._dashboardVerBORapido('${occ.id}')" style="cursor:pointer;transition:transform 0.15s ease;padding:10px 12px;margin-bottom:8px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${occ.status === "synced" ? "var(--verde-bandeira)" : occ.status === "pending_sync" ? "var(--aviso)" : "var(--azul-bandeira)"};display:flex;gap:12px;align-items:center;">
-        <!-- Miniatura -->
-        <div style="flex-shrink:0;width:55px;height:55px;border-radius:8px;overflow:hidden;background:var(--cinza-claro);position:relative;">
-          ${
-            primeiroAnexo
-              ? `
-            <img src="${primeiroAnexo}" alt="Anexo" style="width:100%;height:100%;object-fit:cover;">
-            ${anexosInfo ? `<span style="position:absolute;bottom:2px;right:4px;background:rgba(0,0,0,0.7);color:white;font-size:9px;font-weight:700;padding:0 6px;border-radius:4px;">${anexosInfo}</span>` : ""}
-          `
-              : `
-            <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:20px;">
-              <i class="fas fa-file-alt"></i>
+      <div class="ocorrencia-item dashboard-record-card dashboard-record-card--occurrence status-${occ.status}" onclick="window._dashboardVerBORapido('${occ.id}')">
+        ${renderRecordThumbnail(primeiroAnexo, `Foto da ocorrência ${numero}`, "fa-file-lines", "occurrence", extraPhotos)}
+        <div class="dashboard-record-content">
+          <div class="dashboard-record-heading">
+            <div class="dashboard-record-heading__lead">
+              <span class="dashboard-record-number">#${numero}</span>
+              <span class="dashboard-record-type">${tipoLabel}</span>
+              ${occ.status === "rectified" && occ.numero_versao > 1 ? `<span class="dashboard-record-version">v${occ.numero_versao}</span>` : ""}
             </div>
-          `
-          }
-        </div>
-        
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:2px;">
-            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
-              <span style="font-weight:700;font-size:14px;color:var(--azul-bandeira);">#${numero}</span>
-              <span class="badge badge-tipo badge-tipo-${occ.tipo_ocorrencia || "outro"}" style="font-size:9px;padding:2px 10px;font-weight:700;">${tipoLabel}</span>
-              ${occ.status === "rectified" && occ.numero_versao > 1 ? `<span class="badge badge-rectified" style="font-size:8px;padding:1px 6px;">v${occ.numero_versao}</span>` : ""}
-            </div>
-            <span style="font-size:11px;color:var(--cinza-medio);"><i class="fas fa-calendar" style="margin-right:4px;"></i>${data}</span>
+            <span class="badge badge-${statusClass} dashboard-record-status">${statusLabel}</span>
           </div>
-          <div style="font-size:13px;color:var(--cinza-escuro);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-            <i class="fas fa-map-marker-alt" style="margin-right:4px;color:var(--cinza-medio);font-size:11px;"></i>
-            ${local}
+          <div class="dashboard-record-location">
+            <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+            <span>${local}</span>
           </div>
-          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;font-size:11px;color:var(--cinza-medio);">
-            <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
-            <span class="badge badge-${statusClass}" style="font-size:9px;padding:1px 10px;">${statusLabel}</span>
+          ${resumo ? `<div class="dashboard-record-summary">${resumo}</div>` : ""}
+          <div class="dashboard-record-meta">
+            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${guardaNome}</span>
+            <span class="dashboard-record-meta__item"><i class="fas fa-clock" aria-hidden="true"></i>${data}</span>
+            ${totalAnexos > 0 ? `<span class="dashboard-record-meta__item dashboard-record-meta__attachments"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${attachmentLabel}</span>` : ""}
           </div>
-          ${
-            resumo
-              ? `
-            <div style="font-size:12px;color:var(--cinza-escuro);margin-top:4px;padding-top:4px;border-top:1px solid var(--cinza-claro);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
-              ${resumo}
-            </div>
-          `
-              : ""
-          }
         </div>
       </div>
     `;
@@ -1061,7 +1260,7 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
 
   if (!filtroAtivo) {
     html += `
-      <button class="btn-secondary" style="width:100%;padding:10px;border:none;border-radius:var(--border-radius);font-weight:600;cursor:pointer;background:var(--cinza-claro);color:var(--cinza-escuro);font-size:13px;margin-top:4px;" onclick="window.app.navigateTo('ocorrencias')">
+      <button class="dashboard-list-more" onclick="window.app.navigateTo('ocorrencias')">
         <i class="fas fa-arrow-right" style="margin-right:6px;"></i>
         Ver todas as ocorrências
       </button>
@@ -1085,8 +1284,8 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
 function renderAbordagensLista(abordagens, appInstance) {
   if (!abordagens || abordagens.length === 0) {
     return `
-      <div style="text-align:center;padding:20px;color:var(--cinza-medio);background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-        <div style="font-size:32px;color:var(--cinza-claro);margin-bottom:8px;">
+      <div class="dashboard-empty-state dashboard-empty-state--compact">
+        <div class="dashboard-empty-state__icon dashboard-empty-state__icon--small">
           <i class="fas fa-search"></i>
         </div>
         <p style="font-size:13px;">Nenhuma abordagem recente</p>
@@ -1103,90 +1302,61 @@ function renderAbordagensLista(abordagens, appInstance) {
     const isVeiculo = ab.tipo_abordagem === "veiculo";
     const data = formatarDataHoraLocal(ab.criado_em);
     const guardaNome = ab.usuarios?.nome_completo || "Desconhecido";
-    const faseLabel = ab.fase === "multa" ? "💰 Multa" : "⚠️ Advertência";
-    const faseClass = ab.fase === "multa" ? "badge-cancelled" : "badge-pending";
+    const faseLabel = ab.fase === "multa" ? "Multa" : "Advertência";
+    const faseClass = ab.fase === "multa" ? "dashboard-record-phase--fine" : "dashboard-record-phase--warning";
 
     let identificador = "";
     let detalhes = "";
     if (isVeiculo) {
       identificador = ab.placa || "Placa não informada";
       detalhes = ab.marca_modelo || "";
-      if (ab.cor) detalhes += ` (${ab.cor})`;
+      if (ab.cor) detalhes += `${detalhes ? " · " : ""}${ab.cor}`;
     } else {
       identificador = ab.nome || "Nome não informado";
-      detalhes = ab.alcunha ? `(${ab.alcunha})` : "";
+      detalhes = ab.alcunha ? `Alcunha: ${ab.alcunha}` : "";
     }
 
-    // Buscar miniaturas dos anexos
-    let primeiroAnexo = null;
-    let totalAnexos = 0;
-    let anexosInfo = "";
+    const anexos = Array.isArray(ab.anexos) ? ab.anexos : [];
+    const imagens = anexos.filter(
+      isDashboardImageAttachment,
+    );
+    const primeiroAnexo = imagens[0]?.url_thumb || imagens[0]?.url || null;
+    const totalAnexos = anexos.length;
+    const extraPhotos = Math.max(0, imagens.length - 1);
+    const attachmentLabel = totalAnexos === 1 ? "anexo" : "anexos";
 
-    if (ab.anexos && Array.isArray(ab.anexos) && ab.anexos.length > 0) {
-      totalAnexos = ab.anexos.length;
-      const imagens = ab.anexos.filter(
-        (a) => a.tipo === "image" || a.tipo_arquivo === "image",
-      );
-      if (imagens.length > 0) {
-        primeiroAnexo = imagens[0].url_thumb || imagens[0].url;
-        if (imagens.length > 1) {
-          anexosInfo = `+${imagens.length - 1}`;
-        }
-      }
-    }
-
-    // Resumo do motivo
     let resumoMotivo = "";
     if (ab.motivo) {
-      const palavras = ab.motivo.split(" ");
-      resumoMotivo = palavras.slice(0, 15).join(" ");
-      if (palavras.length > 15) resumoMotivo += "...";
+      const palavras = ab.motivo.split(/\s+/).filter(Boolean);
+      resumoMotivo = palavras.slice(0, 18).join(" ");
+      if (palavras.length > 18) resumoMotivo += "…";
     }
 
     html += `
-      <div class="abordagem-item" onclick="window._dashboardVerAbordagem('${ab.id}', '${ab.tipo_abordagem}')" style="cursor:pointer;transition:transform 0.15s ease;padding:10px 12px;margin-bottom:8px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};display:flex;gap:12px;align-items:center;">
-        <!-- Miniatura -->
-        <div style="flex-shrink:0;width:55px;height:55px;border-radius:8px;overflow:hidden;background:var(--cinza-claro);position:relative;">
-          ${
-            primeiroAnexo
-              ? `
-            <img src="${primeiroAnexo}" alt="Anexo" style="width:100%;height:100%;object-fit:cover;">
-            ${anexosInfo ? `<span style="position:absolute;bottom:2px;right:4px;background:rgba(0,0,0,0.7);color:white;font-size:9px;font-weight:700;padding:0 6px;border-radius:4px;">${anexosInfo}</span>` : ""}
-          `
-              : `
-            <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${isVeiculo ? "var(--azul-muito-claro)" : "var(--verde-muito-claro)"};color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};font-size:20px;">
-              <i class="fas ${isVeiculo ? "fa-motorcycle" : "fa-user"}"></i>
-            </div>
-          `
-          }
-        </div>
-        
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:2px;">
-            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
-              <span class="badge ${isVeiculo ? "badge-azul" : "badge-verde"}" style="font-size:9px;padding:2px 10px;font-weight:700;">${isVeiculo ? "VEÍCULO" : "PESSOA"}</span>
-              <span style="font-weight:700;font-size:14px;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">${identificador}</span>
-              ${detalhes ? `<span style="font-size:12px;color:var(--cinza-medio);">${detalhes}</span>` : ""}
-            </div>
-            <span style="font-size:11px;color:var(--cinza-medio);"><i class="fas fa-calendar" style="margin-right:4px;"></i>${data}</span>
+      <div class="abordagem-item dashboard-record-card dashboard-record-card--approach ${isVeiculo ? "dashboard-approach--vehicle" : "dashboard-approach--person"}" onclick="window._dashboardVerAbordagem('${ab.id}', '${ab.tipo_abordagem}')">
+        ${renderRecordThumbnail(primeiroAnexo, `Foto da abordagem de ${isVeiculo ? "veículo" : "pessoa"} ${identificador}`, isVeiculo ? "fa-car" : "fa-user", isVeiculo ? "vehicle" : "person", extraPhotos)}
+        <div class="dashboard-record-content">
+          <div class="dashboard-record-heading dashboard-record-heading--approach">
+            <span class="dashboard-approach-kind ${isVeiculo ? "dashboard-approach-kind--vehicle" : "dashboard-approach-kind--person"}">
+              <i class="fas ${isVeiculo ? "fa-car" : "fa-user"}" aria-hidden="true"></i>${isVeiculo ? "Veículo" : "Pessoa"}
+            </span>
+            <span class="dashboard-record-date"><i class="fas fa-clock" aria-hidden="true"></i>${data}</span>
           </div>
-          <div style="font-size:13px;color:var(--cinza-escuro);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-            <i class="fas fa-user" style="margin-right:4px;color:var(--cinza-medio);font-size:11px;"></i>
-            ${guardaNome}
-          </div>
-          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;font-size:11px;color:var(--cinza-medio);">
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;"><i class="fas fa-info-circle" style="margin-right:4px;"></i>${resumoMotivo || "Motivo não informado"}</span>
-            <span class="badge ${faseClass}" style="font-size:9px;padding:1px 10px;">${faseLabel}</span>
-          </div>
-          ${
-            totalAnexos > 0
-              ? `
-            <div style="font-size:11px;color:var(--cinza-medio);margin-top:4px;padding-top:4px;border-top:1px solid var(--cinza-claro);">
-              <i class="fas fa-paperclip" style="margin-right:4px;"></i> ${totalAnexos} anexo(s)
+          <div class="dashboard-record-approach-title">
+            <div class="dashboard-record-identifier-wrap">
+              <strong class="dashboard-record-identifier ${isVeiculo ? "dashboard-record-identifier--plate" : "dashboard-record-identifier--person"}">${identificador}</strong>
+              ${detalhes ? `<span class="dashboard-record-identifier-detail">${detalhes}</span>` : ""}
             </div>
-          `
-              : ""
-          }
+            <span class="dashboard-record-phase ${faseClass}">${faseLabel}</span>
+          </div>
+          <div class="dashboard-record-summary dashboard-record-summary--reason">
+            <i class="fas fa-circle-info" aria-hidden="true"></i>
+            <span>${resumoMotivo || "Motivo não informado"}</span>
+          </div>
+          <div class="dashboard-record-meta">
+            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${guardaNome}</span>
+            ${totalAnexos > 0 ? `<span class="dashboard-record-meta__item dashboard-record-meta__attachments"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${attachmentLabel}</span>` : ""}
+          </div>
         </div>
       </div>
     `;
@@ -1199,6 +1369,118 @@ function renderAbordagensLista(abordagens, appInstance) {
 // MODAL: VER DETALHES DA ABORDAGEM
 // ============================================
 
+function escapeDashboardHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char]);
+}
+
+function safeDashboardMediaUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value), window.location.href);
+    return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function renderDashboardDetailField(label, value, icon, wide = false) {
+  const text = value === null || value === undefined || value === "" ? "Não informado" : value;
+  return `
+    <div class="dashboard-detail-info${wide ? " dashboard-detail-info--wide" : ""}">
+      <span class="dashboard-detail-info__label"><i class="fas ${icon}" aria-hidden="true"></i>${escapeDashboardHtml(label)}</span>
+      <strong class="dashboard-detail-info__value">${escapeDashboardHtml(text)}</strong>
+    </div>
+  `;
+}
+
+function renderDashboardDetailGallery(anexos) {
+  const fotos = (Array.isArray(anexos) ? anexos : [])
+    .filter(isDashboardImageAttachment)
+    .map((anexo, index) => {
+      const original = safeDashboardMediaUrl(anexo.url || anexo.url_thumb);
+      const thumb = safeDashboardMediaUrl(anexo.url_thumb || anexo.url);
+      return { original, thumb, label: anexo.nome_arquivo || anexo.nome || `Foto ${index + 1}` };
+    })
+    .filter((foto) => foto.original && foto.thumb);
+
+  if (fotos.length === 0) return "";
+  return `
+    <section class="dashboard-detail-section" aria-label="Fotos anexadas">
+      <div class="dashboard-detail-section__heading">
+        <div><span class="dashboard-detail-eyebrow">REGISTRO VISUAL</span><h3>Fotos</h3></div>
+        <span class="dashboard-detail-count">${fotos.length}</span>
+      </div>
+      <div class="dashboard-detail-gallery">
+        ${fotos.map((foto, index) => `
+          <button type="button" class="dashboard-detail-photo" data-photo-index="${index}" data-photo-url="${escapeDashboardHtml(foto.original)}" data-photo-thumb="${escapeDashboardHtml(foto.thumb)}" data-photo-name="${escapeDashboardHtml(foto.label)}" aria-label="Ver foto ${index + 1} de ${fotos.length}: ${escapeDashboardHtml(foto.label)}">
+            <img src="${escapeDashboardHtml(foto.thumb)}" data-fallback="${escapeDashboardHtml(foto.original)}" alt="${escapeDashboardHtml(foto.label)}" loading="lazy" decoding="async" fetchpriority="low" width="240" height="180">
+            <span class="dashboard-detail-photo__zoom" aria-hidden="true"><i class="fas fa-expand-alt"></i></span>
+            <span class="dashboard-detail-photo__index">${index + 1}</span>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function mountDashboardDetailModal(overlay, appInstance) {
+  const close = () => {
+    document.removeEventListener("keydown", onKeyDown);
+    overlay.remove();
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape" && document.querySelector(".carrossel-modal-overlay")) return;
+    if (event.key === "Escape") close();
+  };
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelectorAll("[data-detail-close]").forEach((button) => {
+    button.addEventListener("click", close);
+  });
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKeyDown);
+
+  const photoButtons = Array.from(overlay.querySelectorAll(".dashboard-detail-photo[data-photo-index]"));
+  const carouselPhotos = photoButtons.map((button, index) => ({
+    url: button.dataset.photoUrl || "",
+    url_thumb: button.dataset.photoThumb || "",
+    nome: button.dataset.photoName || `Foto ${index + 1}`,
+  }));
+  photoButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.photoIndex) || 0;
+      if (typeof window._consultaAbrirCarrossel === "function") {
+        window._consultaAbrirCarrossel(carouselPhotos, index, appInstance);
+      } else if (appInstance && appInstance.showToast) {
+        appInstance.showToast("Visualizador de fotos indisponível. Recarregue o app.", "error");
+      }
+    });
+  });
+
+  overlay.querySelectorAll(".dashboard-detail-photo img").forEach((image) => {
+    image.addEventListener("error", () => {
+      const fallback = image.dataset.fallback;
+      if (fallback && image.src !== fallback) {
+        image.dataset.fallback = "";
+        image.src = fallback;
+      } else {
+        image.closest(".dashboard-detail-photo")?.classList.add("is-broken");
+      }
+    });
+  });
+
+  overlay.querySelector(".dashboard-detail-close")?.focus({ preventScroll: true });
+  return close;
+}
+
 export async function verAbordagemDetalhe(id, tipo, appInstance) {
   try {
     const client =
@@ -1208,8 +1490,7 @@ export async function verAbordagemDetalhe(id, tipo, appInstance) {
       return;
     }
 
-    const tabela =
-      tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+    const tabela = tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
     const { data, error } = await client
       .from(tabela)
       .select("*, usuarios(nome_completo)")
@@ -1222,143 +1503,88 @@ export async function verAbordagemDetalhe(id, tipo, appInstance) {
       return;
     }
 
-    // Criar modal
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
-
     const isVeiculo = tipo === "veiculo";
     const guardaNome = data.usuarios?.nome_completo || "Desconhecido";
     const dataFormatada = formatarDataHoraLocal(data.criado_em);
-    const faseLabel = data.fase === "multa" ? "💰 Multa" : "⚠️ Advertência";
-    const faseClass =
-      data.fase === "multa" ? "badge-cancelled" : "badge-pending";
+    const faseLabel = data.fase === "multa" ? "Multa" : "Advertência";
+    const faseTone = data.fase === "multa" ? "danger" : "warning";
+    const identificador = isVeiculo
+      ? data.placa || "Placa não informada"
+      : data.nome || "Nome não informado";
+    const detalhes = isVeiculo
+      ? `${data.marca_modelo || ""}${data.cor ? ` · ${data.cor}` : ""}`.trim()
+      : [data.alcunha ? `Alcunha: ${data.alcunha}` : "", data.cpf ? `CPF: ${data.cpf}` : "", data.rg ? `RG: ${data.rg}` : ""]
+          .filter(Boolean)
+          .join(" · ");
+    const local = data.local_abordagem || "Não informado";
+    const prazo = data.prazo ? new Date(data.prazo).toLocaleDateString("pt-BR") : "";
+    const prazoStatus = data.status_regularizacao || "";
 
-    let identificador = "";
-    let detalhes = "";
-    if (isVeiculo) {
-      identificador = data.placa || "Placa não informada";
-      detalhes =
-        `${data.marca_modelo || ""} ${data.cor ? `(${data.cor})` : ""}`.trim();
-    } else {
-      identificador = data.nome || "Nome não informado";
-      detalhes =
-        `${data.alcunha ? `(${data.alcunha})` : ""} ${data.cpf ? `CPF: ${data.cpf}` : ""} ${data.rg ? `RG: ${data.rg}` : ""}`.trim();
-    }
-
-    // Anexos
-    let anexosHTML = "";
-    if (data.anexos && Array.isArray(data.anexos) && data.anexos.length > 0) {
-      const imagens = data.anexos.filter(
-        (a) => a.tipo === "image" || a.tipo_arquivo === "image",
-      );
-      if (imagens.length > 0) {
-        anexosHTML = `
-          <div style="margin-top:12px;">
-            <p style="font-weight:600;margin:0 0 8px 0;font-size:13px;color:var(--cinza-escuro);">
-              <i class="fas fa-camera"></i> Fotos (${imagens.length})
-            </p>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-              ${imagens
-                .map(
-                  (img) => `
-                <img src="${img.url_thumb || img.url}" alt="Anexo" style="width:80px;height:80px;object-fit:cover;border-radius:8px;cursor:pointer;border:2px solid var(--cinza-claro);" onclick="window.open('${img.url}', '_blank')">
-              `,
-                )
-                .join("")}
-            </div>
-          </div>
-        `;
-      }
-    }
-
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay dashboard-detail-overlay dashboard-detail-overlay--approach";
     overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;width:100%;max-height:95vh;overflow-y:auto;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px 12px 20px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
-          <div class="title" style="font-size:17px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas ${isVeiculo ? "fa-motorcycle" : "fa-user"}" style="margin-right:8px;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};"></i>
-            ${isVeiculo ? "Abordagem de Veículo" : "Abordagem de Pessoa"}
+      <section class="dashboard-detail-modal" role="dialog" aria-modal="true" aria-labelledby="dashboardApproachDetailTitle">
+        <header class="dashboard-detail-modal__header">
+          <div class="dashboard-detail-modal__title-group">
+            <span class="dashboard-detail-eyebrow">DETALHES DA ABORDAGEM</span>
+            <h2 id="dashboardApproachDetailTitle">${escapeDashboardHtml(identificador)}</h2>
+            ${detalhes ? `<p class="dashboard-detail-modal__subtitle">${escapeDashboardHtml(detalhes)}</p>` : ""}
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
-            style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-            <i class="fas fa-times"></i>
-          </button>
+          <div class="dashboard-detail-modal__header-actions">
+            <span class="dashboard-detail-badge dashboard-detail-badge--${isVeiculo ? "info" : "success"}"><i class="fas ${isVeiculo ? "fa-car-side" : "fa-user"}" aria-hidden="true"></i>${isVeiculo ? "Veículo" : "Pessoa"}</span>
+            <span class="dashboard-detail-badge dashboard-detail-badge--${faseTone}">${escapeDashboardHtml(faseLabel)}</span>
+            <button type="button" class="dashboard-detail-close" data-detail-close aria-label="Fechar detalhes"><i class="fas fa-times" aria-hidden="true"></i></button>
+          </div>
+        </header>
+        <div class="dashboard-detail-modal__body">
+          <section class="dashboard-detail-hero dashboard-detail-hero--${isVeiculo ? "vehicle" : "person"}">
+            <span class="dashboard-detail-hero__icon"><i class="fas ${isVeiculo ? "fa-car-side" : "fa-user-shield"}" aria-hidden="true"></i></span>
+            <div class="dashboard-detail-hero__copy">
+              <span class="dashboard-detail-eyebrow">${isVeiculo ? "IDENTIFICAÇÃO DO VEÍCULO" : "IDENTIFICAÇÃO DA PESSOA"}</span>
+              <strong>${escapeDashboardHtml(identificador)}</strong>
+              <p><i class="fas fa-map-marker-alt" aria-hidden="true"></i>${escapeDashboardHtml(local)}</p>
+            </div>
+          </section>
+
+          <div class="dashboard-detail-grid">
+            ${renderDashboardDetailField("Data e hora", dataFormatada, "fa-clock")}
+            ${renderDashboardDetailField("Guarda responsável", guardaNome, "fa-user-shield")}
+            ${renderDashboardDetailField("Local", local, "fa-location-dot", true)}
+          </div>
+
+          <section class="dashboard-detail-section">
+            <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">REGISTRO DA ABORDAGEM</span><h3>Motivo</h3></div></div>
+            <p class="dashboard-detail-text">${escapeDashboardHtml(data.motivo || "Não informado")}</p>
+          </section>
+
+          ${data.observacoes ? `
+            <section class="dashboard-detail-section">
+              <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">ANOTAÇÕES</span><h3>Observações</h3></div></div>
+              <p class="dashboard-detail-text">${escapeDashboardHtml(data.observacoes)}</p>
+            </section>
+          ` : ""}
+
+          ${prazo ? `
+            <section class="dashboard-detail-notice">
+              <span class="dashboard-detail-notice__icon"><i class="fas fa-calendar-check" aria-hidden="true"></i></span>
+              <div><span class="dashboard-detail-eyebrow">REGULARIZAÇÃO</span><strong>Prazo: ${escapeDashboardHtml(prazo)}</strong>${prazoStatus ? `<small>Status: ${escapeDashboardHtml(prazoStatus)}</small>` : ""}</div>
+            </section>
+          ` : ""}
+
+          ${renderDashboardDetailGallery(data.anexos)}
         </div>
-        <div class="modal-body" style="padding:16px 20px 20px 20px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-            <div>
-              <div style="font-size:18px;font-weight:700;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">${identificador}</div>
-              ${detalhes ? `<div style="font-size:13px;color:var(--cinza-medio);margin-top:2px;">${detalhes}</div>` : ""}
-            </div>
-            <span class="badge ${faseClass}" style="font-size:12px;padding:4px 14px;">${faseLabel}</span>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;background:var(--branco-fumaca);padding:12px;border-radius:var(--border-radius);margin-bottom:12px;">
-            <div><span style="color:var(--cinza-medio);">Data:</span> <strong>${dataFormatada}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Guarda:</span> <strong>${guardaNome}</strong></div>
-            <div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Local:</span> <strong>${data.local_abordagem || "Não informado"}</strong></div>
-          </div>
-
-          <div style="margin-bottom:12px;">
-            <p style="font-weight:600;margin:0 0 4px 0;font-size:13px;color:var(--cinza-escuro);"><i class="fas fa-info-circle"></i> Motivo</p>
-            <p style="font-size:14px;color:var(--cinza-escuro);margin:0;background:var(--branco-fumaca);padding:8px 12px;border-radius:var(--border-radius);">${data.motivo || "Não informado"}</p>
-          </div>
-
-          ${
-            data.observacoes
-              ? `
-            <div style="margin-bottom:12px;">
-              <p style="font-weight:600;margin:0 0 4px 0;font-size:13px;color:var(--cinza-escuro);"><i class="fas fa-pencil-alt"></i> Observações</p>
-              <p style="font-size:14px;color:var(--cinza-escuro);margin:0;background:var(--branco-fumaca);padding:8px 12px;border-radius:var(--border-radius);">${data.observacoes}</p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            data.prazo
-              ? `
-            <div style="margin-bottom:12px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);border-left:4px solid var(--aviso);">
-              <p style="margin:0;font-size:13px;color:#92400e;">
-                <i class="fas fa-calendar-check" style="margin-right:6px;"></i>
-                <strong>Prazo:</strong> ${new Date(data.prazo).toLocaleDateString("pt-BR")}
-                ${data.status_regularizacao ? ` - <strong>Status:</strong> ${data.status_regularizacao}` : ""}
-              </p>
-            </div>
-          `
-              : ""
-          }
-
-          ${anexosHTML}
-
-          <div style="margin-top:16px;display:flex;gap:8px;">
-            <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--cinza-claro);color:var(--cinza-escuro);border:none;cursor:pointer;">
-              Fechar
-            </button>
-            <button onclick="this.closest('.modal-overlay').remove(); window._dashboardNovaOcorrencia()" class="btn-primary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--gradiente-principal);color:var(--branco);border:none;cursor:pointer;">
-              <i class="fas fa-file-export" style="margin-right:6px;"></i> Converter em BO
-            </button>
-          </div>
-        </div>
-      </div>
+        <footer class="dashboard-detail-modal__footer">
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--secondary" data-detail-close>Fechar</button>
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--primary" data-action="convert"><i class="fas fa-file-export" aria-hidden="true"></i>Converter em BO</button>
+        </footer>
+      </section>
     `;
 
-    document.body.appendChild(overlay);
+    const closeModal = mountDashboardDetailModal(overlay, appInstance);
+    overlay.querySelector('[data-action="convert"]')?.addEventListener("click", () => {
+      closeModal();
+      if (typeof window._dashboardNovaOcorrencia === "function") window._dashboardNovaOcorrencia();
+    });
   } catch (error) {
     console.error("Erro ao buscar abordagem:", error);
     appInstance.showToast("Erro ao carregar detalhes da abordagem", "error");
@@ -1378,141 +1604,96 @@ export async function verBORapido(id, appInstance) {
     }
 
     const occ = result.data;
-
-    // Buscar envolvidos
-    const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
-    const envolvidos = envolvidosResult.success ? envolvidosResult.data : [];
-
-    // Buscar anexos
-    const anexosResult = await ocorrenciaManager.listarAnexos(id);
-    const anexos = anexosResult.success ? anexosResult.data : [];
-
-    // Criar modal
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
+    const [envolvidosResult, anexosResult] = await Promise.all([
+      ocorrenciaManager.listarEnvolvidos(id),
+      ocorrenciaManager.listarAnexos(id),
+    ]);
+    const envolvidos = envolvidosResult.success ? envolvidosResult.data || [] : [];
+    const anexos = anexosResult.success ? anexosResult.data || [] : [];
 
     const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
     const statusClass = getStatusClass(occ.status);
     const statusLabel = getStatusLabel(occ.status);
+    const toneByStatus = {
+      synced: "success",
+      pending: "warning",
+      pending_rectification: "warning",
+      rectified: "info",
+      cancelled: "danger",
+      rectification_rejected: "danger",
+      error: "danger",
+      draft: "neutral",
+    };
+    const statusTone = toneByStatus[statusClass] || "neutral";
     const dataCriacao = formatarDataHoraLocal(occ.criado_em);
-    const dataInicio = occ.data_hora_inicio
-      ? formatarDataHoraLocal(occ.data_hora_inicio)
-      : "Não informado";
+    const dataInicio = occ.data_hora_inicio ? formatarDataHoraLocal(occ.data_hora_inicio) : "Não informado";
     const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
-
-    // Anexos
-    let anexosHTML = "";
-    if (anexos && anexos.length > 0) {
-      const imagens = anexos.filter(
-        (a) => a.tipo_arquivo === "image" || a.tipo === "image",
-      );
-      if (imagens.length > 0) {
-        anexosHTML = `
-          <div style="margin-top:12px;">
-            <p style="font-weight:600;margin:0 0 8px 0;font-size:13px;color:var(--cinza-escuro);">
-              <i class="fas fa-camera"></i> Fotos (${imagens.length})
-            </p>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-              ${imagens
-                .map(
-                  (img) => `
-                <img src="${img.url_thumb || img.url}" alt="Anexo" style="width:80px;height:80px;object-fit:cover;border-radius:8px;cursor:pointer;border:2px solid var(--cinza-claro);" onclick="window.open('${img.url}', '_blank')">
-              `,
-                )
-                .join("")}
-            </div>
+    const envolvidosHTML = envolvidos.length
+      ? envolvidos.map((env) => `
+          <div class="dashboard-detail-person">
+            <span class="dashboard-detail-person__type">${escapeDashboardHtml(getTipoEnvolvidoLabel(env.tipo))}</span>
+            <div class="dashboard-detail-person__copy"><strong>${escapeDashboardHtml(env.nome_completo || "Nome não informado")}</strong>${env.cpf ? `<small>CPF: ${escapeDashboardHtml(env.cpf)}</small>` : ""}</div>
           </div>
-        `;
-      }
-    }
+        `).join("")
+      : `<p class="dashboard-detail-empty-note">Nenhum envolvido informado.</p>`;
 
-    // Envolvidos
-    let envolvidosHTML = "";
-    if (envolvidos && envolvidos.length > 0) {
-      envolvidosHTML = `
-        <div style="margin-top:12px;">
-          <p style="font-weight:600;margin:0 0 8px 0;font-size:13px;color:var(--cinza-escuro);">
-            <i class="fas fa-users"></i> Envolvidos (${envolvidos.length})
-          </p>
-          ${envolvidos
-            .map(
-              (env) => `
-            <div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--branco-fumaca);border-radius:6px;margin-bottom:4px;font-size:13px;">
-              <span><span class="badge badge-azul" style="font-size:9px;padding:1px 8px;">${getTipoEnvolvidoLabel(env.tipo)}</span> <strong>${env.nome_completo}</strong></span>
-              ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;">${env.cpf}</span>` : ""}
-            </div>
-          `,
-            )
-            .join("")}
-        </div>
-      `;
-    }
-
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay dashboard-detail-overlay dashboard-detail-overlay--bo";
     overlay.innerHTML = `
-      <div class="modal" style="max-width:550px;width:100%;max-height:95vh;overflow-y:auto;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px 12px 20px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
-          <div class="title" style="font-size:17px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-            #${numero}
-            <span class="badge badge-${statusClass}" style="font-size:11px;margin-left:8px;">${statusLabel}</span>
+      <section class="dashboard-detail-modal" role="dialog" aria-modal="true" aria-labelledby="dashboardBODetailTitle">
+        <header class="dashboard-detail-modal__header">
+          <div class="dashboard-detail-modal__title-group">
+            <span class="dashboard-detail-eyebrow">BOLETIM DE OCORRÊNCIA</span>
+            <h2 id="dashboardBODetailTitle">#${escapeDashboardHtml(numero)}</h2>
+            <p class="dashboard-detail-modal__subtitle">Resumo do registro operacional</p>
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
-            style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="padding:16px 20px 20px 20px;">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;background:var(--branco-fumaca);padding:12px;border-radius:var(--border-radius);margin-bottom:12px;">
-            <div><span style="color:var(--cinza-medio);">Tipo:</span> <strong>${tipoLabel}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Data:</span> <strong>${dataCriacao}</strong></div>
-            <div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Local:</span> <strong>${occ.local_ocorrencia || "Não informado"}</strong></div>
-            <div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Data/Hora Início:</span> <strong>${dataInicio}</strong></div>
-            ${occ.nome_solicitante ? `<div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Solicitante:</span> <strong>${occ.nome_solicitante}</strong></div>` : ""}
+          <div class="dashboard-detail-modal__header-actions">
+            <span class="dashboard-detail-badge dashboard-detail-badge--${statusTone}">${escapeDashboardHtml(statusLabel)}</span>
+            <button type="button" class="dashboard-detail-close" data-detail-close aria-label="Fechar detalhes"><i class="fas fa-times" aria-hidden="true"></i></button>
           </div>
-
-          ${
-            occ.observacoes
-              ? `
-            <div style="margin-bottom:12px;">
-              <p style="font-weight:600;margin:0 0 4px 0;font-size:13px;color:var(--cinza-escuro);"><i class="fas fa-pencil-alt"></i> Observações</p>
-              <p style="font-size:14px;color:var(--cinza-escuro);margin:0;background:var(--branco-fumaca);padding:8px 12px;border-radius:var(--border-radius);max-height:120px;overflow-y:auto;">${occ.observacoes}</p>
+        </header>
+        <div class="dashboard-detail-modal__body">
+          <section class="dashboard-detail-hero dashboard-detail-hero--occurrence">
+            <span class="dashboard-detail-hero__icon"><i class="fas fa-file-lines" aria-hidden="true"></i></span>
+            <div class="dashboard-detail-hero__copy">
+              <span class="dashboard-detail-eyebrow">TIPO DE OCORRÊNCIA</span>
+              <strong>${escapeDashboardHtml(tipoLabel)}</strong>
+              <p><i class="fas fa-map-marker-alt" aria-hidden="true"></i>${escapeDashboardHtml(occ.local_ocorrencia || "Local não informado")}</p>
             </div>
-          `
-              : ""
-          }
+          </section>
 
-          ${envolvidosHTML}
-          ${anexosHTML}
-
-          <div style="margin-top:16px;display:flex;gap:8px;">
-            <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--cinza-claro);color:var(--cinza-escuro);border:none;cursor:pointer;">
-              Fechar
-            </button>
-            <button onclick="this.closest('.modal-overlay').remove(); window._dashboardVerDetalhes('${id}')" class="btn-primary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--gradiente-principal);color:var(--branco);border:none;cursor:pointer;">
-              <i class="fas fa-eye" style="margin-right:6px;"></i> Ver BO Completo
-            </button>
+          <div class="dashboard-detail-grid">
+            ${renderDashboardDetailField("Data do registro", dataCriacao, "fa-clock")}
+            ${renderDashboardDetailField("Início da ocorrência", dataInicio, "fa-play")}
+            ${occ.nome_solicitante ? renderDashboardDetailField("Solicitante", occ.nome_solicitante, "fa-user", true) : ""}
           </div>
+
+          ${occ.observacoes ? `
+            <section class="dashboard-detail-section">
+              <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">RELATO</span><h3>Observações</h3></div></div>
+              <p class="dashboard-detail-text">${escapeDashboardHtml(occ.observacoes)}</p>
+            </section>
+          ` : ""}
+
+          <section class="dashboard-detail-section">
+            <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">PESSOAS RELACIONADAS</span><h3>Envolvidos</h3></div><span class="dashboard-detail-count">${envolvidos.length}</span></div>
+            <div class="dashboard-detail-people">${envolvidosHTML}</div>
+          </section>
+
+          ${renderDashboardDetailGallery(anexos)}
         </div>
-      </div>
+        <footer class="dashboard-detail-modal__footer">
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--secondary" data-detail-close>Fechar</button>
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--primary" data-action="open-full"><i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>Ver BO completo</button>
+        </footer>
+      </section>
     `;
 
-    document.body.appendChild(overlay);
+    const closeModal = mountDashboardDetailModal(overlay, appInstance);
+    overlay.querySelector('[data-action="open-full"]')?.addEventListener("click", () => {
+      closeModal();
+      if (typeof window._dashboardVerDetalhes === "function") window._dashboardVerDetalhes(id);
+    });
   } catch (error) {
     console.error("Erro ao buscar ocorrência:", error);
     appInstance.showToast("Erro ao carregar detalhes da ocorrência", "error");
@@ -1586,6 +1767,7 @@ function getTipoLabel(value) {
     { value: "incendio", label: "Incêndio" },
     { value: "desaparecimento", label: "Desaparecimento" },
     { value: "atendimento_social", label: "Atendimento Social" },
+    { value: "flagrante", label: "Flagrante" },
     { value: "outro", label: "Outro" },
   ];
   const encontrado = tipos.find((t) => t.value === value);

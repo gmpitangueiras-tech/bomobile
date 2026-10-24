@@ -1,5 +1,6 @@
 /**
  * MÓDULO CONSULTA - Consulta Operacional
+ * approach-intake-v2: tipo/resultado estruturados, identidade parcial e histórico contextual
  * Guarda Municipal de Pitangueiras - PR
  *
  * Este módulo gerencia:
@@ -93,6 +94,36 @@ function formatarTamanho(bytes) {
  * @param {string} tipo
  * @returns {string}
  */
+
+function obterRotuloTipoAtendimento(value) {
+  return ({
+    fiscalizacao_estacionamento: "Fiscalização / estacionamento irregular",
+    averiguacao_operacional: "Averiguação / abordagem operacional",
+    orientacao: "Orientação",
+    outro: "Outro atendimento",
+    legado_nao_classificado: "Registro legado · contexto não classificado",
+  })[value] || (value ? String(value).replace(/_/g, " ") : "Tipo não informado");
+}
+
+function obterRotuloProvidencia(value) {
+  return ({
+    em_andamento: "Atendimento em andamento",
+    orientacao_prestada: "Orientação prestada",
+    situacao_regularizada: "Situação regularizada",
+    sem_irregularidade: "Nenhuma irregularidade constatada",
+    encaminhamento: "Encaminhamento conforme procedimento",
+    outra: "Outra providência",
+  })[value] || (value ? String(value).replace(/_/g, " ") : "Providência não informada");
+}
+
+function obterRotuloIdentificacao(value) {
+  return ({
+    identificado: "Identificação informada",
+    parcial: "Identificação parcial",
+    nao_identificado: "Não identificado",
+  })[value] || "Situação não informada";
+}
+
 function getTipoEnvolvidoLabel(tipo) {
   const tipos = {
     autor: "Autor",
@@ -122,6 +153,7 @@ function getTipoLabel(value) {
     { value: "incendio", label: "Incêndio" },
     { value: "desaparecimento", label: "Desaparecimento" },
     { value: "atendimento_social", label: "Atendimento Social" },
+    { value: "flagrante", label: "Flagrante" },
     { value: "outro", label: "Outro" },
   ];
   const encontrado = tipos.find((t) => t.value === value);
@@ -206,6 +238,7 @@ let estado = {
     dataFim: "",
     guarda: "",
     busca: "",
+    tipoAtendimento: "",
   },
   listaGuardas: [],
   arquivosTemp: [],
@@ -220,6 +253,7 @@ let estado = {
   carregandoMais: false,
   temMais: true,
   formularioAberto: false,
+  tipoAbordagemAtual: null,
   dadosFormulario: {},
   carrosselData: null,
   // 🔥 NOVO: Estado para retificações
@@ -241,6 +275,15 @@ function obterDataHoraLocalFormatada() {
   const minutos = String(agora.getMinutes()).padStart(2, "0");
   const segundos = String(agora.getSeconds()).padStart(2, "0");
   return `${ano}-${mes}-${dia} ${horas}:${minutos}:${segundos}`;
+}
+function obterDataHoraLocalInputAbordagem() {
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  const horas = String(agora.getHours()).padStart(2, "0");
+  const minutos = String(agora.getMinutes()).padStart(2, "0");
+  return `${ano}-${mes}-${dia}T${horas}:${minutos}`;
 }
 
 function comprimirImagemInterna(
@@ -1529,6 +1572,12 @@ function abrirCarrosselFotos(imagens, indexInicial = 0, appInstance) {
   }
 }
 
+// Expor o visualizador desde a carga do módulo, para que o Dashboard também o use.
+if (typeof window !== "undefined") {
+  window._consultaAbrirCarrossel = (imagens, index, appInstance) =>
+    abrirCarrosselFotos(imagens, index, appInstance);
+}
+
 // ============================================
 // FUNÇÕES PRINCIPAIS
 // ============================================
@@ -1538,167 +1587,115 @@ export async function renderConsultaOperacional(container, appInstance) {
   definirPeriodoPadrao();
 
   let html = `
-    <div class="container" style="padding-bottom:100px;" id="consultaContainer">
-      <!-- Cabeçalho -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+    <main class="container consulta-screen" style="padding-bottom:100px;" id="consultaContainer">
+      <header class="consulta-hero">
+        <div class="consulta-hero-heading">
+          <div class="consulta-hero-icon" aria-hidden="true"><i class="fas fa-search"></i></div>
           <div>
-            <h2 style="color:var(--azul-bandeira);margin:0 0 2px 0;font-size:18px;">
-              <i class="fas fa-search" style="margin-right:8px;"></i>
-              Consulta Operacional
-            </h2>
-            <p style="color:var(--cinza-medio);font-size:13px;margin:0;">
-              Pesquise e acompanhe abordagens e orientações.
-            </p>
-          </div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button onclick="window._consultaExportarPDF()" class="btn-secondary" 
-              style="padding:4px 12px;font-size:11px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
-              <i class="fas fa-file-pdf" style="margin-right:4px;"></i> Exportar PDF
-            </button>
-            <button onclick="window._consultaRecarregar()" class="btn-secondary" 
-              style="padding:4px 12px;font-size:11px;min-height:auto;width:auto;border-radius:8px;">
-              <i class="fas fa-sync-alt"></i>
-            </button>
+            <h2>Consulta Operacional</h2>
+            <p>Encontre abordagens anteriores e consulte o contexto registrado.</p>
           </div>
         </div>
-      </div>
-
-      <!-- Ranking + Ações Rápidas -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-        <!-- Ranking de Reincidentes -->
-        <div id="rankingContainer" style="background:var(--azul-escuro);border-radius:var(--border-radius);padding:10px 12px;box-shadow:var(--sombra-suave);">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <h4 style="font-size:12px;color:var(--branco);margin:0;font-weight:600;opacity:0.9;">
-              <i class="fas fa-trophy" style="color:#fbbf24;margin-right:4px;"></i>
-              Ranking de Reincidentes
-            </h4>
-            <button onclick="window._consultaVerRankingCompleto()" style="background:rgba(255,255,255,0.15);border:none;color:var(--branco);font-size:10px;font-weight:600;cursor:pointer;padding:2px 10px;border-radius:12px;">
-              Ver todos <i class="fas fa-arrow-right" style="font-size:8px;margin-left:2px;"></i>
-            </button>
-          </div>
-          <div id="rankingLista" style="max-height:140px;overflow-y:auto;">
-            <div style="text-align:center;padding:10px;color:rgba(255,255,255,0.6);font-size:11px;">
-              Carregando ranking...
-            </div>
-          </div>
-        </div>
-
-        <!-- Ações Rápidas -->
-        <div style="display:flex;flex-direction:column;gap:6px;">
-          <button onclick="window._consultaAbrirFormulario()" 
-            class="btn-primary" 
-            style="padding:8px 10px;border-radius:var(--border-radius);font-size:12px;font-weight:600;background:var(--azul-bandeira);color:white;border:none;cursor:pointer;text-align:left;display:flex;align-items:center;gap:8px;box-shadow:var(--sombra-suave);min-height:44px;">
-            <i class="fas fa-plus-circle" style="font-size:16px;"></i>
-            <div>
-              <div style="font-weight:700;font-size:12px;">Nova Abordagem</div>
-              <div style="font-size:9px;font-weight:400;opacity:0.8;">Registre uma nova abordagem de veículo ou pessoa</div>
-            </div>
+        <div class="consulta-hero-actions">
+          <button type="button" onclick="window._consultaAbrirFormulario()" class="consulta-new-button">
+            <i class="fas fa-plus-circle" aria-hidden="true"></i><span>Nova abordagem</span>
           </button>
-          <button onclick="window._consultaReconhecerPlaca()" 
-            class="btn-primary" 
-            style="padding:8px 10px;border-radius:var(--border-radius);font-size:12px;font-weight:600;background:#8b5cf6;color:white;border:none;cursor:pointer;text-align:left;display:flex;align-items:center;gap:8px;box-shadow:var(--sombra-suave);min-height:44px;">
-            <i class="fas fa-camera" style="font-size:16px;"></i>
-            <div>
-              <div style="font-weight:700;font-size:12px;">Reconhecer Placa</div>
-              <div style="font-size:9px;font-weight:400;opacity:0.8;">Faça o reconhecimento da placa por foto</div>
-            </div>
+          <button type="button" onclick="window._consultaReconhecerPlaca()" class="consulta-secondary-button" aria-label="Reconhecer placa por foto" title="Reconhecer placa por foto">
+            <i class="fas fa-camera" aria-hidden="true"></i><span>Foto da placa</span>
+          </button>
+          <button type="button" onclick="window._consultaExportarPDF()" class="consulta-icon-button" aria-label="Exportar resultados em PDF" title="Exportar PDF">
+            <i class="fas fa-file-pdf" aria-hidden="true"></i>
+          </button>
+          <button type="button" onclick="window._consultaRecarregar()" class="consulta-icon-button" aria-label="Atualizar consulta" title="Atualizar">
+            <i class="fas fa-sync-alt" aria-hidden="true"></i>
           </button>
         </div>
-      </div>
+      </header>
 
-      <!-- Abas: Todos | Veículos | Pessoas -->
-      <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
-        <button onclick="window._consultaMudarAba('todos')" id="tabTodos" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "todos" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "todos" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-            <i class="fas fa-list"></i> Todos
-          </button>
-        <button onclick="window._consultaMudarAba('veiculos')" id="tabVeiculos" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "veiculos" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "veiculos" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-            <i class="fas fa-motorcycle"></i> Veículos
-          </button>
-        <button onclick="window._consultaMudarAba('pessoas')" id="tabPessoas" class="tab-btn" style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "pessoas" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "pessoas" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
-            <i class="fas fa-user-friends"></i> Pessoas
-          </button>
-      </div>
+      <section class="consulta-search-panel" aria-labelledby="consultaBuscaTitulo">
+        <div class="consulta-section-heading">
+          <div>
+            <span class="consulta-eyebrow">LOCALIZAR REGISTRO</span>
+            <h3 id="consultaBuscaTitulo">O que deseja consultar?</h3>
+          </div>
+          <span class="consulta-search-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
+        </div>
+        <div class="consulta-search-row">
+          <label class="sr-only" for="consultaBusca">Pesquisar abordagens por placa, nome, CPF ou RG</label>
+          <input type="search" id="consultaBusca" placeholder="Placa, nome, CPF/RG completo, local..."
+            value="${estado.filtros.busca || ""}"
+            aria-label="Pesquisar registros de abordagens"
+            oninput="window._consultaBuscaAutomatica(this.value)"
+            onkeydown="if(event.key==='Enter') window._consultaExecutarBusca()">
+          <button type="button" onclick="window._consultaExecutarBusca()" class="consulta-search-button"><i class="fas fa-search" aria-hidden="true"></i><span>Buscar</span></button>
+          <button type="button" onclick="window._consultaLimparBusca()" class="consulta-clear-button" aria-label="Limpar busca" title="Limpar busca"><i class="fas fa-times" aria-hidden="true"></i></button>
+        </div>
+        <p class="consulta-search-hint">Nome, placa, motivo e local são pesquisados por texto. Para CPF/RG, informe o identificador completo.</p>
+        <p class="consulta-scope-note"><i class="fas fa-info-circle" aria-hidden="true"></i><span>Esta consulta mostra registros de abordagens. BOs não têm placa estruturada para busca por veículo; ausência de resultado não prova que nunca houve ocorrência.</span></p>
+      </section>
 
-      <!-- Filtros -->
-      <div class="filtros-consulta" style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
-          <div style="flex:1;min-width:100px;">
-            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">
-              <i class="fas fa-calendar-alt" style="margin-right:4px;"></i> Período
-            </label>
-            <select id="consultaPeriodo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;" onchange="window._consultaPeriodoChange()">
+      <section class="consulta-filter-panel" aria-label="Filtros principais">
+        <div class="consulta-quick-filters">
+          <label class="consulta-filter-field" for="consultaPeriodo"><span><i class="fas fa-calendar-alt" aria-hidden="true"></i> Período</span>
+            <select id="consultaPeriodo" onchange="window._consultaPeriodoChange()">
               <option value="12h" ${estado.filtros.periodo === "12h" ? "selected" : ""}>Últimas 12 horas</option>
               <option value="hoje" ${estado.filtros.periodo === "hoje" ? "selected" : ""}>Hoje</option>
-              <option value="semana" ${estado.filtros.periodo === "semana" ? "selected" : ""}>Esta semana</option>
-              <option value="mes" ${estado.filtros.periodo === "mes" ? "selected" : ""}>Este mês</option>
-              <option value="personalizado" ${estado.filtros.periodo === "personalizado" ? "selected" : ""}>Personalizado</option>
+              <option value="semana" ${estado.filtros.periodo === "semana" ? "selected" : ""}>Últimos 7 dias</option>
+              <option value="mes" ${estado.filtros.periodo === "mes" ? "selected" : ""}>Últimos 30 dias</option>
+              <option value="personalizado" ${estado.filtros.periodo === "personalizado" ? "selected" : ""}>Período personalizado</option>
             </select>
-          </div>
-          <div style="flex:1;min-width:100px;">
-            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">
-              <i class="fas fa-user-shield" style="margin-right:4px;"></i> Guarda
+          </label>
+          <label class="consulta-filter-field" for="consultaTipoAtendimento"><span><i class="fas fa-clipboard-check" aria-hidden="true"></i> Tipo de atendimento</span>
+            <select id="consultaTipoAtendimento">
+              <option value="">Todos os tipos</option>
+              <option value="fiscalizacao_estacionamento" ${estado.filtros.tipoAtendimento === "fiscalizacao_estacionamento" ? "selected" : ""}>Fiscalização / estacionamento irregular</option>
+              <option value="averiguacao_operacional" ${estado.filtros.tipoAtendimento === "averiguacao_operacional" ? "selected" : ""}>Averiguação / abordagem operacional</option>
+              <option value="orientacao" ${estado.filtros.tipoAtendimento === "orientacao" ? "selected" : ""}>Orientação</option>
+              <option value="outro" ${estado.filtros.tipoAtendimento === "outro" ? "selected" : ""}>Outro atendimento</option>
+              <option value="legado_nao_classificado" ${estado.filtros.tipoAtendimento === "legado_nao_classificado" ? "selected" : ""}>Registro legado · não classificado</option>
+            </select>
+          </label>
+        </div>
+        <details id="consultaFiltrosAvancados" class="consulta-advanced-filters">
+          <summary><span><i class="fas fa-sliders-h" aria-hidden="true"></i> Mais filtros</span><span class="consulta-advanced-caption">Guarda e datas específicas</span></summary>
+          <div class="consulta-advanced-body">
+            <label class="consulta-filter-field" for="consultaGuarda"><span><i class="fas fa-user-shield" aria-hidden="true"></i> Guarda responsável</span>
+              <select id="consultaGuarda"><option value="">Todos os guardas</option>
+                ${estado.listaGuardas.map((g) => `<option value="${g.id}" ${estado.filtros.guarda === g.id ? "selected" : ""}>${g.nome_completo}</option>`).join("")}
+              </select>
             </label>
-            <select id="consultaGuarda" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;">
-              <option value="">Todos</option>
-              ${estado.listaGuardas
-                .map(
-                  (g) => `
-                <option value="${g.id}" ${estado.filtros.guarda === g.id ? "selected" : ""}>${g.nome_completo}</option>
-              `,
-                )
-                .join("")}
-            </select>
+            <div id="consultaDatasPersonalizadas" class="consulta-custom-dates" style="display:none;">
+              <label class="consulta-filter-field" for="consultaDataInicio"><span>Data inicial</span><input type="date" id="consultaDataInicio" value="${(estado.filtros.dataInicio || "").slice(0, 10)}"></label>
+              <label class="consulta-filter-field" for="consultaDataFim"><span>Data final</span><input type="date" id="consultaDataFim" value="${(estado.filtros.dataFim || "").slice(0, 10)}"></label>
+            </div>
+            <button type="button" onclick="window._consultaAplicarFiltros()" class="consulta-apply-filters"><i class="fas fa-filter" aria-hidden="true"></i> Aplicar filtros</button>
           </div>
-        </div>
-        <div style="display:flex;gap:6px;">
-          <div style="flex:1;position:relative;">
-            <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--cinza-medio);font-size:13px;z-index:2;"></i>
-            <input type="text" id="consultaBusca" placeholder="Pesquisar por placa, nome, motivo, local..." 
-              value="${estado.filtros.busca || ""}" 
-              style="width:100%;padding:8px 10px 8px 32px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;"
-              oninput="window._consultaBuscaAutomatica(this.value)"
-              onkeydown="if(event.key==='Enter') window._consultaExecutarBusca()">
-          </div>
-          <button onclick="window._consultaAplicarFiltros()" class="btn-primary" style="padding:6px 12px;font-size:13px;min-height:36px;width:auto;border-radius:8px;white-space:nowrap;">
-            <i class="fas fa-search"></i>
-          </button>
-        </div>
-        <div id="consultaDatasPersonalizadas" style="display:none;margin-top:6px;gap:6px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:100px;">
-            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Início</label>
-            <input type="date" id="consultaDataInicio" value="${estado.filtros.dataInicio || ""}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;">
-          </div>
-          <div style="flex:1;min-width:100px;">
-            <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Fim</label>
-            <input type="date" id="consultaDataFim" value="${estado.filtros.dataFim || ""}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;">
-          </div>
-        </div>
-      </div>
+        </details>
+        <button type="button" onclick="window._consultaAplicarFiltros()" class="consulta-apply-quick"><i class="fas fa-filter" aria-hidden="true"></i> Aplicar filtros</button>
+      </section>
 
-      <!-- Resultados -->
-      <div id="consultaResultadosArea">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;font-weight:600;">
-            <i class="fas fa-clock" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-            Últimas Abordagens/Orientações
-          </h3>
-          <span id="consultaTotalRegistros" style="font-size:11px;color:var(--cinza-medio);">0 registros</span>
-        </div>
+      <nav class="consulta-entity-tabs" role="tablist" aria-label="Filtrar por tipo de envolvido">
+        <button type="button" onclick="window._consultaMudarAba('todos')" id="tabTodos" class="tab-btn ${estado.abaAtiva === "todos" ? "active" : ""}" role="tab" aria-controls="consultaResultadosArea" aria-selected="${estado.abaAtiva === "todos"}"><i class="fas fa-list" aria-hidden="true"></i><span>Todos</span></button>
+        <button type="button" onclick="window._consultaMudarAba('veiculos')" id="tabVeiculos" class="tab-btn ${estado.abaAtiva === "veiculos" ? "active" : ""}" role="tab" aria-controls="consultaResultadosArea" aria-selected="${estado.abaAtiva === "veiculos"}"><i class="fas fa-car" aria-hidden="true"></i><span>Veículos</span></button>
+        <button type="button" onclick="window._consultaMudarAba('pessoas')" id="tabPessoas" class="tab-btn ${estado.abaAtiva === "pessoas" ? "active" : ""}" role="tab" aria-controls="consultaResultadosArea" aria-selected="${estado.abaAtiva === "pessoas"}"><i class="fas fa-user" aria-hidden="true"></i><span>Pessoas</span></button>
+      </nav>
+
+      <section id="consultaResultadosArea" class="consulta-results-panel" aria-live="polite">
+        <div class="consulta-results-heading"><div><span class="consulta-eyebrow">HISTÓRICO</span><h3>Resultados da consulta</h3><p>Mais recentes primeiro · <span id="consultaTotalRegistros">0 carregados</span></p></div></div>
         <div id="consultaListaAbordagens">
-          <div style="text-align:center;padding:30px;">
-            <div class="spinner-azul" style="margin:0 auto;width:30px;height:30px;border-width:3px;"></div>
-            <p style="margin-top:10px;color:var(--cinza-medio);font-size:13px;">Carregando abordagens...</p>
-          </div>
+          <div class="consulta-loading-state"><div class="spinner-azul" style="margin:0 auto;width:30px;height:30px;border-width:3px;"></div><p>Carregando registros...</p></div>
         </div>
-        <div id="consultaLoaderMais" style="display:none;text-align:center;padding:20px;">
-          <div class="spinner-azul" style="margin:0 auto;width:24px;height:24px;border-width:2px;"></div>
-          <p style="margin-top:8px;color:var(--cinza-medio);font-size:12px;">Carregando mais...</p>
-        </div>
-      </div>
-    </div>
-  `;
+        <div id="consultaLoaderMais" style="display:none;text-align:center;padding:20px;"><div class="spinner-azul" style="margin:0 auto;width:24px;height:24px;border-width:2px;"></div><p style="margin-top:8px;color:var(--cinza-medio);font-size:12px;">Carregando mais...</p></div>
+      </section>
 
+      <details id="rankingContainer" class="consulta-repeat-summary">
+        <summary><span><i class="fas fa-link" aria-hidden="true"></i> Correspondências exatas entre identificadores</span><i class="fas fa-chevron-down consulta-repeat-chevron" aria-hidden="true"></i></summary>
+        <p class="consulta-repeat-note">Resumo limitado a até 1.000 registros ativos por categoria e baseado em igualdade exata de placa/CPF/RG. É apenas uma coincidência entre registros; não avalia risco, autoria ou suspeição. Confirme o histórico e o contexto antes de qualquer conclusão.</p>
+        <div id="rankingLista"><div class="consulta-repeat-loading">Carregando resumo...</div></div>
+        <button type="button" onclick="window._consultaVerRankingCompleto()" class="consulta-repeat-open">Abrir resumo de correspondências</button>
+      </details>
+    </main>
+  `;
   container.innerHTML = html;
 
   // Registrar funções globais
@@ -1712,6 +1709,7 @@ export async function renderConsultaOperacional(container, appInstance) {
     executarBuscaConsulta(container, appInstance);
   window._consultaBuscaAutomatica = (termo) =>
     buscaAutomatica(termo, container, appInstance);
+  window._consultaLimparBusca = () => limparBuscaConsulta(container, appInstance);
   window._consultaVerRankingCompleto = () => verRankingCompleto(appInstance);
   window._consultaCarregarMais = () =>
     carregarMaisAbordagens(container, appInstance);
@@ -1720,14 +1718,16 @@ export async function renderConsultaOperacional(container, appInstance) {
   window._consultaConverterBO = (id, tipo) =>
     converterEmBO(id, tipo, appInstance);
   window._consultaSalvarAbordagem = () => salvarAbordagemComAnexos(appInstance);
+  window._consultaBuscarHistorico = () => buscarHistoricoAbordagem(appInstance);
+  window._consultaAtualizarIdentificacao = atualizarCamposIdentificacaoAbordagem;
   window._consultaPreviewImagens = (input) =>
     previewMultiplasImagensAbordagem(input);
   window._consultaRemoverImagem = (btn) => removerImagemAbordagemPreview(btn);
   window._consultaAbrirCameraRapida = () => abrirCameraRapida(appInstance);
   window._consultaFecharFormulario = () =>
     fecharFormularioComConfirmacao(container, appInstance);
-  window._consultaAbrirCarrossel = (imagens, index) =>
-    abrirCarrosselFotos(imagens, index, appInstance);
+  window._consultaAbrirCarrossel = (imagens, index, callerAppInstance) =>
+    abrirCarrosselFotos(imagens, index, callerAppInstance || appInstance);
 
   // 🔥 NOVO: Função para solicitar retificação
   window._consultaSolicitarRetificacao = (id, tipo) =>
@@ -1748,21 +1748,56 @@ export async function renderConsultaOperacional(container, appInstance) {
 
   window._consultaApp = appInstance;
 
-  await carregarRankingReincidentes();
+  void carregarRankingReincidentes();
   await carregarAbordagens(container, appInstance);
   configurarScrollInfinito(container, appInstance);
+}
+
+function mostrarSeletorTipoAbordagem(area, appInstance, termoPreenchido = "") {
+  estado.arquivosTemp = [];
+  estado.tipoAbordagemAtual = null;
+  estado.formularioAberto = true;
+  area.innerHTML = `
+    <section aria-labelledby="tituloEscolherTipoAbordagem" style="background:var(--branco);padding:18px 14px;border-radius:16px;box-shadow:var(--sombra-media);margin-bottom:16px;">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;">
+        <div style="width:44px;height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:20px;"><i class="fas fa-clipboard-check"></i></div>
+        <div><h3 id="tituloEscolherTipoAbordagem" style="font-size:17px;color:var(--azul-bandeira);margin:0 0 4px;">Que tipo de registro deseja fazer?</h3><p style="font-size:13px;line-height:1.4;color:var(--cinza-medio);margin:0;">Escolha uma opção para abrir os campos corretos.</p></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr;gap:10px;">
+        <button type="button" onclick="window._consultaEscolherTipoAbordagem('veiculo')" style="width:100%;min-height:64px;padding:12px;border:2px solid var(--azul-claro);border-radius:12px;background:var(--branco);color:var(--azul-bandeira);display:flex;align-items:center;gap:12px;text-align:left;font-size:15px;font-weight:700;cursor:pointer;">
+          <i class="fas fa-car" style="font-size:22px;width:28px;text-align:center;"></i><span>Abordagem de veículo<small style="display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--cinza-medio);">Placa, veículo e condutor</small></span><i class="fas fa-chevron-right" style="margin-left:auto;font-size:14px;"></i>
+        </button>
+        <button type="button" onclick="window._consultaEscolherTipoAbordagem('pessoa')" style="width:100%;min-height:64px;padding:12px;border:2px solid var(--verde-bandeira);border-radius:12px;background:var(--branco);color:var(--verde-escuro);display:flex;align-items:center;gap:12px;text-align:left;font-size:15px;font-weight:700;cursor:pointer;">
+          <i class="fas fa-user" style="font-size:22px;width:28px;text-align:center;"></i><span>Abordagem de pessoa<small style="display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--cinza-medio);">Identificação e características</small></span><i class="fas fa-chevron-right" style="margin-left:auto;font-size:14px;"></i>
+        </button>
+      </div>
+      <button type="button" onclick="window._consultaFecharFormulario()" class="btn-secondary" style="width:100%;min-height:44px;margin-top:14px;border-radius:10px;font-size:14px;">Cancelar</button>
+    </section>
+  `;
+  window._consultaEscolherTipoAbordagem = (tipo) => {
+    if (tipo !== "veiculo" && tipo !== "pessoa") return;
+    abrirFormularioAbordagem(appInstance, termoPreenchido, tipo);
+  };
 }
 
 // ============================================
 // 🔥 ALTERADO: FORMULÁRIO DE ABORDAGEM COM DATA/HORA
 // ============================================
 
-export function abrirFormularioAbordagem(appInstance, termoPreenchido = "") {
+export function abrirFormularioAbordagem(appInstance, termoPreenchido = "", tipoAbordagem = null) {
   const area = document.getElementById("consultaResultadosArea");
   if (!area) return;
 
-  const isVeiculo =
-    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
+  const tipoSelecionado = tipoAbordagem ||
+    (estado.abaAtiva === "veiculos" ? "veiculo" :
+      estado.abaAtiva === "pessoas" ? "pessoa" : null);
+  if (!tipoSelecionado) {
+    mostrarSeletorTipoAbordagem(area, appInstance, termoPreenchido);
+    return;
+  }
+  if (tipoSelecionado !== "veiculo" && tipoSelecionado !== "pessoa") return;
+  const isVeiculo = tipoSelecionado === "veiculo";
+  estado.tipoAbordagemAtual = tipoSelecionado;
   estado.arquivosTemp = [];
   estado.formularioAberto = true;
 
@@ -1771,168 +1806,242 @@ export function abrirFormularioAbordagem(appInstance, termoPreenchido = "") {
       ? window.app.obterLocalizacaoAtual()
       : null;
 
-  // 🔥 NOVO: Data/hora atual para os campos
-  const agora = new Date();
-  const dataHoraAtual = agora.toISOString().slice(0, 16);
+  // Data/hora local para preencher o campo datetime-local sem conversão UTC.
+  const dataHoraAtual = obterDataHoraLocalInputAbordagem();
   const dataHoraInicio = dataHoraAtual;
 
   let html = `
-    <div style="background:var(--branco);padding:12px 14px;border-radius:var(--border-radius);box-shadow:var(--sombra-media);margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="font-size:15px;color:var(--azul-bandeira);margin:0;">
-          <i class="fas fa-plus-circle" style="margin-right:6px;"></i> Nova Abordagem/Orientação
-        </h3>
-        <button onclick="window._consultaFecharFormulario()" class="btn-secondary" style="padding:4px 10px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
+    <div class="approach-form-shell">
+      <div class="approach-form-hero">
+        <div class="approach-form-hero__copy">
+          <span class="approach-form-kicker">REGISTRO OPERACIONAL · ABORDAGEM</span>
+          <h3><i class="fas ${isVeiculo ? "fa-car" : "fa-user-shield"}" aria-hidden="true"></i> Nova abordagem de ${isVeiculo ? "veículo" : "pessoa"}</h3>
+          <p>Registre o que foi observado, a identificação disponível e a providência adotada.</p>
+          <span class="approach-form-scope"><i class="fas fa-circle-info" aria-hidden="true"></i> Esta tela registra abordagens; rondas e BOs não são cadastrados aqui.</span>
+        </div>
+        <button type="button" aria-label="Fechar formulário" onclick="window._consultaFecharFormulario()" class="btn-secondary approach-form-close">
           <i class="fas fa-times"></i>
         </button>
       </div>
       ${
         localizacaoAtual
           ? `
-        <div style="font-size:10px;color:var(--cinza-medio);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-map-pin" style="color:var(--verde-bandeira);"></i>
-          📍 GPS: ${localizacaoAtual.latitude.toFixed(6)}, ${localizacaoAtual.longitude.toFixed(6)}
+        <div style="font-size:12px;color:var(--verde-escuro);margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--verde-muito-claro);display:flex;align-items:center;gap:7px;">
+          <i class="fas fa-location-dot" aria-hidden="true"></i>
+          Localização GPS disponível para o registro
         </div>
       `
-          : ""
+          : `<div class="approach-location-note"><i class="fas fa-location-crosshairs" aria-hidden="true"></i><span>GPS indisponível no momento. Informe o local por endereço ou ponto de referência; não perca o relato preenchido.</span></div>`
       }
-      <form id="formAbordagem" onsubmit="event.preventDefault();">
+      <form id="formAbordagem" aria-label="Registro de abordagem" onsubmit="event.preventDefault();">
+        <div class="approach-section-heading"><span>01</span><div><h4><i class="fas fa-id-card" aria-hidden="true"></i> Contexto e identificação</h4><p>Selecione o tipo de atendimento e informe somente o que foi possível confirmar.</p></div></div>
+        <div class="approach-form-field approach-form-field--wide">
+          <label for="formTipoAtendimento">Tipo de atendimento *</label>
+          <select id="formTipoAtendimento" required onchange="window._consultaAtualizarTipoAtendimento()">
+            <option value="">Selecione o contexto</option>
+            ${isVeiculo ? `
+              <option value="fiscalizacao_estacionamento">Fiscalização de estacionamento irregular</option>
+              <option value="averiguacao_operacional">Abordagem / averiguação de veículo</option>
+              <option value="orientacao">Orientação relacionada a veículo</option>
+              <option value="outro">Outro atendimento com veículo</option>
+            ` : `
+              <option value="averiguacao_operacional">Abordagem / averiguação de pessoa</option>
+              <option value="orientacao">Orientação relacionada a pessoa</option>
+              <option value="outro">Outro atendimento com pessoa</option>
+            `}
+          </select>
+          <small id="approachAtendimentoHint">O tipo contextualiza o atendimento; o campo Motivo registra os fatos observados ou informados.</small>
+        </div>
   `;
 
   if (isVeiculo) {
     html += `
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Placa *</label>
-        <input type="text" id="formPlaca" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;text-transform:uppercase;font-size:13px;min-height:36px;" required>
+      <div class="approach-form-field">
+        <label for="formIdentificacaoStatus">Situação da identificação *</label>
+        <select id="formIdentificacaoStatus" onchange="window._consultaAtualizarIdentificacao()" required>
+          <option value="identificado">Veículo identificado</option>
+          <option value="parcial">Identificação parcial</option>
+          <option value="nao_identificado">Placa não identificada</option>
+        </select>
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:6px;">
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Marca/Modelo</label>
-          <input type="text" id="formMarcaModelo" placeholder="Ex: Honda Civic" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      <div class="approach-form-field">
+        <label for="formPlaca">Placa (se legível)</label>
+        <input type="text" id="formPlaca" value="${escapeHtmlAbordagem(termoPreenchido)}" placeholder="ABC1D23" autocomplete="off" autocapitalize="characters" maxlength="8">
+        <small>Não estime a placa. Se estiver ausente ou ilegível, registre a situação e descreva apenas o que foi observado.</small>
+      </div>
+      <button type="button" class="approach-history-trigger" onclick="window._consultaBuscarHistorico()"><i class="fas fa-clock-rotate-left"></i> Consultar registros anteriores pela placa</button>
+      <div id="abordagemHistorico" class="approach-history-panel" aria-live="polite"></div>
+      <div class="approach-form-grid">
+        <div class="approach-form-field">
+          <label for="formMarcaModelo">Marca / modelo</label>
+          <input type="text" id="formMarcaModelo" placeholder="Ex.: hatch, Honda Civic">
         </div>
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Cor</label>
-          <input type="text" id="formCor" placeholder="Ex: Prata" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        <div class="approach-form-field">
+          <label for="formCor">Cor</label>
+          <input type="text" id="formCor" placeholder="Ex.: prata">
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Condutor (Nome)</label>
-        <input type="text" id="formCondutor" placeholder="Nome completo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      <div class="approach-form-field">
+        <label for="formDescricaoIdentificacao">Descrição objetiva do veículo</label>
+        <textarea id="formDescricaoIdentificacao" rows="2" placeholder="Características visíveis úteis para identificar o veículo, sem suposições"></textarea>
+        <small>Obrigatória quando a placa não estiver identificada.</small>
       </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF do Condutor</label>
-        <input type="text" id="formCondutorCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-      </div>
+      <details class="approach-optional-section">
+        <summary>Dados do condutor (opcionais, se disponíveis)</summary>
+        <div class="approach-form-field">
+          <label for="formCondutor">Nome do condutor</label>
+          <input type="text" id="formCondutor" placeholder="Nome informado/confirmado">
+        </div>
+        <div class="approach-form-field">
+          <label for="formCondutorCpf">CPF do condutor</label>
+          <input type="text" id="formCondutorCpf" placeholder="000.000.000-00" inputmode="numeric">
+        </div>
+      </details>
     `;
   } else {
     html += `
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Nome Completo *</label>
-        <input type="text" id="formNome" value="${termoPreenchido}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" required>
+      <div class="approach-form-field">
+        <label for="formIdentificacaoStatus">Situação da identificação *</label>
+        <select id="formIdentificacaoStatus" onchange="window._consultaAtualizarIdentificacao()" required>
+          <option value="identificado">Pessoa identificada</option>
+          <option value="parcial">Identificação parcial</option>
+          <option value="nao_identificado">Pessoa não identificada</option>
+        </select>
       </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Alcunha (Apelido)</label>
-        <input type="text" id="formAlcunha" placeholder="Ex: 'Neguinho', 'Magrão'" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      <div class="approach-form-field">
+        <label for="formNome">Nome <span class="approach-optional-label">(se identificado)</span></label>
+        <input type="text" id="formNome" value="${escapeHtmlAbordagem(termoPreenchido)}" placeholder="Nome informado/confirmado" autocomplete="off">
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:6px;">
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">CPF</label>
-          <input type="text" id="formCpf" placeholder="000.000.000-00" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      <div class="approach-form-grid">
+        <div class="approach-form-field">
+          <label for="formCpf">CPF (opcional)</label>
+          <input type="text" id="formCpf" placeholder="000.000.000-00" inputmode="numeric" autocomplete="off">
         </div>
-        <div style="flex:1;">
-          <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">RG</label>
-          <input type="text" id="formRg" placeholder="00.000.000-0" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+        <div class="approach-form-field">
+          <label for="formRg">RG (opcional)</label>
+          <input type="text" id="formRg" placeholder="00.000.000-0" autocomplete="off">
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Características Físicas</label>
-        <textarea id="formCaracteristicas" rows="2" placeholder="Altura, peso, tatuagens, cicatrizes..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+      <button type="button" class="approach-history-trigger" onclick="window._consultaBuscarHistorico()"><i class="fas fa-clock-rotate-left"></i> Consultar registros anteriores</button>
+      <div id="abordagemHistorico" class="approach-history-panel" aria-live="polite"></div>
+      <div class="approach-form-field">
+        <label for="formDescricaoIdentificacao">Descrição objetiva (quando necessária)</label>
+        <textarea id="formDescricaoIdentificacao" rows="2" placeholder="Características observáveis pertinentes à identificação, sem avaliações subjetivas"></textarea>
+        <small>Obrigatória quando a pessoa não estiver plenamente identificada.</small>
       </div>
-      <div class="form-group" style="margin-bottom:6px;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Vestimentas</label>
-        <textarea id="formVestimentas" rows="2" placeholder="Roupas, calçados, acessórios..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
-      </div>
+      <details class="approach-optional-section">
+        <summary>Outros dados (opcionais e pertinentes)</summary>
+        <div class="approach-form-field">
+          <label for="formAlcunha">Alcunha (se informada e pertinente)</label>
+          <input type="text" id="formAlcunha" placeholder="Não invente nem deduza apelidos">
+        </div>
+        <div class="approach-form-field">
+          <label for="formCaracteristicas">Características observáveis pertinentes</label>
+          <textarea id="formCaracteristicas" rows="2" placeholder="Registre características objetivas e relevantes, se necessário"></textarea>
+        </div>
+        <div class="approach-form-field">
+          <label for="formVestimentas">Vestimentas (se pertinentes ao atendimento)</label>
+          <textarea id="formVestimentas" rows="2" placeholder="Descrição objetiva e circunstancial"></textarea>
+        </div>
+      </details>
     `;
   }
 
   html += `
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Local da Abordagem</label>
-      <input type="text" id="formLocal" placeholder="Endereço ou Ponto de Referência" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+    <div class="approach-section-heading"><span>02</span><div><h4><i class="fas fa-map-marker-alt" aria-hidden="true"></i> Onde e quando</h4><p>Confira o horário do atendimento e descreva o local com referência útil.</p></div></div>
+    <div class="form-group" style="margin-bottom:10px;">
+      <label for="formLocal" style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Local da abordagem</label>
+      <input type="text" id="formLocal" placeholder="Endereço, cruzamento ou ponto de referência" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:44px;">
+      <small class="approach-field-hint">Se o GPS não estiver disponível, registre uma referência que permita localizar o atendimento.</small>
     </div>
     
     <!-- 🔥 NOVO: Data/Hora Início e Encerramento -->
-    <div style="display:flex;gap:6px;margin-bottom:6px;">
-      <div style="flex:1;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Data/Hora Início *</label>
-        <input type="datetime-local" id="formDataHoraInicio" value="${dataHoraInicio}" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" required>
+    <div class="approach-form-time-grid">
+      <div style="min-width:0;">
+        <label style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Data/Hora Início *</label>
+        <input type="datetime-local" id="formDataHoraInicio" value="${dataHoraInicio}" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:44px;" required>
       </div>
-      <div style="flex:1;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Data/Hora Encerramento</label>
-        <input type="datetime-local" id="formDataHoraEncerramento" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
+      <div style="min-width:0;">
+        <label style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Data/Hora Encerramento (se já ocorreu)</label>
+        <input type="datetime-local" id="formDataHoraEncerramento" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:44px;">
       </div>
     </div>
 
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Motivo da Abordagem</label>
-      <textarea id="formMotivo" rows="3" placeholder="Descreva o que motivou a orientação..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+    <div class="approach-section-heading"><span>03</span><div><h4><i class="fas fa-clipboard-list" aria-hidden="true"></i> Fatos e providências</h4><p>Separe o motivo observado do que a equipe fez e do resultado.</p></div></div>
+    <div class="form-group" style="margin-bottom:10px;">
+      <label style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Motivo da Abordagem</label>
+      <textarea id="formMotivo" rows="3" placeholder="Descreva o fato observado ou informado: condição, local e circunstância relevante." required></textarea>
+      <small>Use linguagem objetiva e circunstancial. Evite conclusões, suposições ou rótulos sobre a pessoa.</small>
     </div>
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Observações Adicionais</label>
-      <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;resize:vertical;"></textarea>
+    <div class="approach-form-field">
+      <label for="formProvidencia">Providência e resultado *</label>
+      <select id="formProvidencia" required>
+        <option value="em_andamento" selected>Atendimento em andamento</option>
+        <option value="orientacao_prestada">Orientação prestada</option>
+        <option value="situacao_regularizada">Situação regularizada</option>
+        <option value="sem_irregularidade">Nenhuma irregularidade constatada</option>
+        <option value="encaminhamento">Encaminhamento conforme procedimento</option>
+        <option value="outra">Outra providência</option>
+      </select>
+    </div>
+    <div class="form-group approach-optional-observations" style="margin-bottom:6px;">
+      <label style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Complemento (opcional)</label>
+      <textarea id="formObservacoesAbordagem" rows="2" placeholder="Informações complementares..." style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:44px;resize:vertical;"></textarea>
     </div>
 
-    <div style="display:flex;gap:6px;margin-bottom:6px;">
-      <div style="flex:1;">
-        <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">Fase da Abordagem</label>
-        <select id="formFase" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;">
-          <option value="advertencia">⚠️ Advertência</option>
-          <option value="multa">💰 Multa</option>
+    <details class="approach-optional-section">
+      <summary>Fase administrativa e prazo (quando aplicável)</summary>
+      <div class="approach-form-field">
+        <label for="formFase">Fase</label>
+        <select id="formFase">
+          <option value="advertencia">Advertência</option>
+          <option value="multa">Multa</option>
         </select>
       </div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="formTemPrazo" style="width:16px;height:16px;accent-color:var(--azul-bandeira);" onchange="document.getElementById('formPrazo').disabled = !this.checked">
-        <label style="font-size:11px;font-weight:600;">📅 Prazo</label>
+      <label class="approach-checkbox-row" for="formTemPrazo">
+        <input type="checkbox" id="formTemPrazo" onchange="document.getElementById('formPrazo').disabled = !this.checked">
+        <span>Definir prazo para regularização</span>
+      </label>
+      <div class="approach-form-field">
+        <label for="formPrazo">Prazo</label>
+        <input type="date" id="formPrazo" disabled>
       </div>
-    </div>
-    <div class="form-group" style="margin-bottom:6px;">
-      <input type="date" id="formPrazo" style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;min-height:36px;" disabled>
-    </div>
+    </details>
 
-    <div class="form-group" style="margin-bottom:6px;">
-      <label style="display:block;font-size:11px;margin-bottom:2px;font-weight:600;">
-        <i class="fas fa-camera"></i> Fotos (sem limite de quantidade)
+    <div class="approach-section-heading"><span>04</span><div><h4><i class="fas fa-camera" aria-hidden="true"></i> Evidências</h4><p>Fotos são opcionais. Confira a prévia antes de salvar.</p></div></div>
+    <div class="form-group approach-photo-field" style="margin-bottom:6px;">
+      <label style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">
+        <i class="fas fa-camera"></i> Fotos do atendimento
       </label>
       <div style="display:flex;flex-direction:column;gap:4px;">
         <input type="file" id="abordagemFileInput" accept="image/*" multiple style="display:none;" onchange="window._consultaPreviewImagens(this)">
         <div style="display:flex;gap:6px;">
-          <button type="button" onclick="document.getElementById('abordagemFileInput').click()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;min-height:36px;">
+          <button type="button" onclick="document.getElementById('abordagemFileInput').click()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;min-height:44px;">
             <i class="fas fa-camera"></i> Selecionar Fotos
           </button>
-          <button type="button" onclick="window._consultaAbrirCameraRapida()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:36px;">
+          <button type="button" onclick="window._consultaAbrirCameraRapida()" class="btn-secondary" style="flex:1;font-size:12px;padding:4px 6px;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);min-height:44px;">
             <i class="fas fa-camera-retro"></i> Tirar Foto
           </button>
         </div>
         <div id="abordagemPreviewArea" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
-        <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
-          <i class="fas fa-info-circle"></i> Sem limite de quantidade. Cada imagem será comprimida para até 1MB.
+        <div class="input-hint" style="font-size:11px;color:var(--cinza-medio);">
+          <i class="fas fa-info-circle"></i> Anexos opcionais; as imagens são comprimidas antes do envio.
         </div>
       </div>
     </div>
 
-    <div style="display:flex;gap:6px;margin-top:12px;">
-      <button type="button" onclick="window._consultaSalvarAbordagem()" class="btn-primary" style="flex:2;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
-        <i class="fas fa-save"></i> Salvar Orientação
+    <div class="approach-form-actions">
+      <button type="button" onclick="window._consultaSalvarAbordagem()" class="btn-primary">
+        <i class="fas fa-save"></i> Salvar abordagem
       </button>
-      <button type="button" onclick="window._consultaFecharFormulario()" class="btn-secondary" style="flex:1;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:600;min-height:40px;">
-        Cancelar
-      </button>
+      <button type="button" onclick="window._consultaFecharFormulario()" class="btn-secondary">Cancelar</button>
     </div>
   `;
 
   html += `</form></div>`;
 
   area.innerHTML = html;
+  atualizarCamposIdentificacaoAbordagem();
 
   const cpfInput =
     document.getElementById("formCpf") ||
@@ -1955,9 +2064,159 @@ export function abrirFormularioAbordagem(appInstance, termoPreenchido = "") {
 // 🔥 ALTERADO: SALVAR ABORDAGEM COM DATA/HORA
 // ============================================
 
+
+function escapeHtmlAbordagem(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  })[char]);
+}
+
+function normalizarPlacaAbordagem(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function atualizarCamposIdentificacaoAbordagem() {
+  const status = document.getElementById("formIdentificacaoStatus")?.value || "identificado";
+  const isVeiculo = estado.tipoAbordagemAtual === "veiculo";
+  const identifierInput = document.getElementById(isVeiculo ? "formPlaca" : "formNome");
+  const descriptionInput = document.getElementById("formDescricaoIdentificacao");
+  if (identifierInput) {
+    identifierInput.required = status === "identificado";
+    identifierInput.setAttribute("aria-required", status === "identificado" ? "true" : "false");
+    const label = identifierInput.closest(".approach-form-field")?.querySelector("label");
+    if (label) label.classList.toggle("is-required", status === "identificado");
+  }
+  if (descriptionInput) {
+    descriptionInput.required = status !== "identificado";
+    descriptionInput.setAttribute("aria-required", status !== "identificado" ? "true" : "false");
+  }
+}
+
+function formatarHistoricoData(value) {
+  if (!value) return "Data não informada";
+  try { return formatarDataHoraLocal(value); } catch (_) { return "Data não informada"; }
+}
+
+function renderHistoricoAbordagem(approaches, boRecords, options = {}) {
+  const panel = document.getElementById("abordagemHistorico");
+  if (!panel) return;
+  const items = [
+    ...(approaches || []).map((row) => ({ source: "abordagem", row })),
+    ...(boRecords || []).map((row) => ({ source: "bo", row })),
+  ].sort((a, b) => {
+    const dateA = new Date(a.source === "bo" ? (a.row.ocorrencia?.data_hora_inicio || a.row.criado_em) : (a.row.data_hora_inicio || a.row.criado_em)).getTime() || 0;
+    const dateB = new Date(b.source === "bo" ? (b.row.ocorrencia?.data_hora_inicio || b.row.criado_em) : (b.row.data_hora_inicio || b.row.criado_em)).getTime() || 0;
+    return dateB - dateA;
+  });
+  const cards = items.map(({ source, row }) => {
+    if (source === "bo") {
+      const occ = row.ocorrencia || {};
+      const number = occ.numero_ocorrencia || String(occ.id || row.ocorrencia_id || "").slice(0, 8) || "BO";
+      const title = occ.tipo_ocorrencia ? getTipoLabel(occ.tipo_ocorrencia) : "Ocorrência registrada";
+      const detail = [getTipoEnvolvidoLabel(row.tipo), occ.local_ocorrencia || "Local não informado"].filter(Boolean).join(" · ");
+      return `<article class="approach-history-result"><div class="approach-history-result__top"><strong>BO ${escapeHtmlAbordagem(number)}</strong><time>${escapeHtmlAbordagem(formatarHistoricoData(occ.data_hora_inicio || row.criado_em))}</time></div><div class="approach-history-result__title">${escapeHtmlAbordagem(title)}</div><p>${escapeHtmlAbordagem(detail)}</p><small>Registro relacionado por identificador; confira o BO em Ocorrências.</small></article>`;
+    }
+    const date = formatarHistoricoData(row.data_hora_inicio || row.criado_em);
+    const summary = [obterRotuloTipoAtendimento(row.tipo_atendimento), obterRotuloProvidencia(row.providencia), row.local_abordagem || "Local não informado"].filter(Boolean).join(" · ");
+    const reason = row.motivo ? String(row.motivo).trim().slice(0, 180) : "Motivo não informado";
+    const id = String(row.id || "").replace(/[^a-fA-F0-9-]/g, "");
+    const kind = options.isVeiculo ? "Registro de veículo" : "Registro de pessoa";
+    return `<article class="approach-history-result"><div class="approach-history-result__top"><strong>${kind}</strong><time>${escapeHtmlAbordagem(date)}</time></div><p>${escapeHtmlAbordagem(summary)}</p><div class="approach-history-result__reason">${escapeHtmlAbordagem(reason)}</div>${id ? `<button type="button" class="approach-history-open" onclick="event.stopPropagation();window._consultaVerAbordagemDetalhe('${id}','${options.isVeiculo ? "veiculo" : "pessoa"}')">Abrir registro</button>` : ""}</article>`;
+  }).join("");
+  const title = items.length ? `<strong>${items.length} registro(s) localizado(s)</strong>` : `<strong>Nenhum registro localizado com esse identificador</strong>`;
+  const notes = [
+    options.nameFallback ? "Busca por nome exato: podem existir homônimos; confira o contexto antes de associar." : "A correspondência por placa/CPF/RG é um indício de registro relacionado, não uma conclusão sobre a pessoa ou veículo.",
+    options.isVeiculo ? "A busca por placa cobre registros de Abordagem; os BOs atuais não armazenam placa em campo estruturado." : "Busca nos BOs limitada a correspondências por CPF, RG ou nome exato.",
+    options.boUnavailable ? "Não foi possível consultar BOs agora; o histórico de Abordagens continua disponível." : "",
+  ].filter(Boolean).map((note) => `<p class="approach-history-note">${escapeHtmlAbordagem(note)}</p>`).join("");
+  panel.innerHTML = `<div class="approach-history-heading">${title}<span>Dados do app · até 12 resultados</span></div>${cards || `<p class="approach-history-empty">Nenhum registro encontrado nos dados consultados.</p>`}${notes}`;
+}
+
+async function buscarHistoricoAbordagem(appInstance) {
+  const panel = document.getElementById("abordagemHistorico");
+  const user = typeof authManager !== "undefined" ? authManager.getUser() : null;
+  const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!panel) return;
+  if (!user || !client) {
+    panel.innerHTML = `<p class="approach-history-empty">Entre no app para consultar os registros.</p>`;
+    return;
+  }
+  const isVeiculo = estado.tipoAbordagemAtual === "veiculo";
+  let approachQuery;
+  let boQuery = null;
+  let nameFallback = false;
+  if (isVeiculo) {
+    const rawPlate = document.getElementById("formPlaca")?.value || "";
+    const plate = normalizarPlacaAbordagem(rawPlate);
+    if (plate.length !== 7) {
+      panel.innerHTML = `<p class="approach-history-empty">Informe uma placa completa de 7 caracteres para pesquisar. Placas parciais não são tratadas como correspondência.</p>`;
+      return;
+    }
+    const variants = [...new Set([plate, `${plate.slice(0, 3)}-${plate.slice(3)}`])];
+    approachQuery = client.from("abordagens_veiculos")
+      .select("id,placa,marca_modelo,cor,motivo,tipo_atendimento,providencia,local_abordagem,data_hora_inicio,criado_em,status_abordagem,esta_ativa")
+      .in("placa", variants).eq("esta_ativa", true)
+      .order("data_hora_inicio", { ascending: false }).limit(6);
+  } else {
+    const cpfRaw = document.getElementById("formCpf")?.value || "";
+    const cpfDigits = cpfRaw.replace(/\D/g, "");
+    const rgRaw = (document.getElementById("formRg")?.value || "").trim();
+    const rgDigits = rgRaw.replace(/\D/g, "");
+    const name = (document.getElementById("formNome")?.value || "").trim();
+    let keyColumn, values;
+    if (cpfDigits.length === 11) {
+      keyColumn = "cpf";
+      values = [...new Set([cpfDigits, aplicarMascaraCPFInterna(cpfDigits)])];
+    } else if (rgRaw.length >= 5) {
+      keyColumn = "rg";
+      values = [...new Set([rgRaw, rgDigits].filter(Boolean))];
+    } else if (name.length >= 3) {
+      keyColumn = "nome";
+      values = [name];
+      nameFallback = true;
+    } else {
+      panel.innerHTML = `<p class="approach-history-empty">Informe CPF, RG ou nome completo (mínimo de 3 caracteres) para pesquisar.</p>`;
+      return;
+    }
+    const cols = "id,nome,cpf,rg,motivo,tipo_atendimento,providencia,local_abordagem,data_hora_inicio,criado_em,status_abordagem,esta_ativa";
+    approachQuery = keyColumn === "nome"
+      ? client.from("abordagens_pessoas").select(cols).eq("nome", values[0]).eq("esta_ativa", true).order("data_hora_inicio", { ascending: false }).limit(6)
+      : client.from("abordagens_pessoas").select(cols).in(keyColumn, values).eq("esta_ativa", true).order("data_hora_inicio", { ascending: false }).limit(6);
+    const boCols = "id,tipo,ocorrencia_id,criado_em,ocorrencias!inner(id,numero_ocorrencia,tipo_ocorrencia,local_ocorrencia,data_hora_inicio,status,esta_ativa,deleted_at)";
+    boQuery = keyColumn === "nome"
+      ? client.from("envolvidos").select(boCols).eq("nome_completo", values[0]).order("criado_em", { ascending: false }).limit(6)
+      : client.from("envolvidos").select(boCols).in(keyColumn, values).order("criado_em", { ascending: false }).limit(6);
+  }
+  panel.innerHTML = `<div class="approach-history-loading"><span class="spinner-azul"></span>Consultando registros anteriores…</div>`;
+  try {
+    const approachResult = await approachQuery;
+    if (approachResult.error) throw approachResult.error;
+    const approaches = approachResult.data || [];
+    let boRecords = [];
+    let boUnavailable = false;
+    if (boQuery) {
+      const boResult = await boQuery;
+      if (boResult.error) {
+        console.warn("Consulta de BO relacionada indisponível:", boResult.error);
+        boUnavailable = true;
+      } else {
+        boRecords = (boResult.data || []).map((row) => {
+          const raw = row.ocorrencias;
+          const ocorrencia = Array.isArray(raw) ? raw[0] : raw;
+          return { ...row, ocorrencia };
+        }).filter((row) => row.ocorrencia && row.ocorrencia.deleted_at == null && row.ocorrencia.esta_ativa !== false);
+      }
+    }
+    renderHistoricoAbordagem(approaches, boRecords, { isVeiculo, nameFallback, boUnavailable });
+  } catch (error) {
+    console.error("Erro ao consultar histórico da abordagem:", error);
+    panel.innerHTML = `<p class="approach-history-empty">Não foi possível consultar o histórico agora. Tente novamente quando houver conexão.</p>`;
+    if (appInstance?.showToast) appInstance.showToast("Falha ao consultar histórico", "warning");
+  }
+}
+
 export async function salvarAbordagemComAnexos(appInstance) {
-  const isVeiculo =
-    estado.abaAtiva === "veiculos" || estado.abaAtiva === "todos";
+  const isVeiculo = estado.tipoAbordagemAtual === "veiculo";
   const user =
     typeof authManager !== "undefined" ? authManager.getUser() : null;
 
@@ -1966,19 +2225,38 @@ export async function salvarAbordagemComAnexos(appInstance) {
     return;
   }
 
+  const identificacaoStatus = document.getElementById("formIdentificacaoStatus")?.value || "identificado";
   const identificador = isVeiculo
     ? document.getElementById("formPlaca")?.value?.toUpperCase()?.trim()
     : document.getElementById("formNome")?.value?.trim();
+  const descricaoIdentificacao = document.getElementById("formDescricaoIdentificacao")?.value?.trim() || "";
+  const tipoAtendimento = document.getElementById("formTipoAtendimento")?.value || "";
+  const motivoAbordagem = document.getElementById("formMotivo")?.value?.trim() || "";
+  const providencia = document.getElementById("formProvidencia")?.value || "";
 
-  if (!identificador) {
-    appInstance.showToast(
-      isVeiculo ? "Placa é obrigatória" : "Nome é obrigatório",
-      "warning",
-    );
+  if (identificacaoStatus === "identificado" && !identificador) {
+    appInstance.showToast(isVeiculo ? "Informe a placa ou altere a situação da identificação" : "Informe o nome ou altere a situação da identificação", "warning");
+    return;
+  }
+  if (identificacaoStatus !== "identificado" && !descricaoIdentificacao) {
+    appInstance.showToast("Descreva objetivamente o que foi possível observar para registrar a identificação parcial", "warning");
+    return;
+  }
+  if (!tipoAtendimento) {
+    appInstance.showToast("Selecione o tipo de atendimento", "warning");
+    return;
+  }
+  if (!motivoAbordagem) {
+    appInstance.showToast("Descreva o motivo objetivo do atendimento", "warning");
+    document.getElementById("formMotivo")?.focus();
+    return;
+  }
+  if (!providencia) {
+    appInstance.showToast("Selecione a providência ou mantenha Atendimento em andamento", "warning");
     return;
   }
 
-  // 🔥 NOVO: Validar data/hora início
+  // Validar data/hora início
   const dataHoraInicio = document.getElementById("formDataHoraInicio")?.value;
   if (!dataHoraInicio) {
     appInstance.showToast("Data/Hora Início é obrigatória", "warning");
@@ -2015,7 +2293,11 @@ export async function salvarAbordagemComAnexos(appInstance) {
     const dados = {
       criado_por: user.id,
       local_abordagem: document.getElementById("formLocal")?.value || "",
-      motivo: document.getElementById("formMotivo")?.value || "",
+      motivo: motivoAbordagem,
+      tipo_atendimento: tipoAtendimento,
+      providencia,
+      identificacao_status: identificacaoStatus,
+      descricao_identificacao: descricaoIdentificacao || null,
       observacoes:
         document.getElementById("formObservacoesAbordagem")?.value || "",
       fase: document.getElementById("formFase")?.value || "advertencia",
@@ -2040,7 +2322,7 @@ export async function salvarAbordagemComAnexos(appInstance) {
     }
 
     if (isVeiculo) {
-      dados.placa = identificador;
+      dados.placa = identificador || null;
       dados.marca_modelo =
         document.getElementById("formMarcaModelo")?.value || "";
       dados.cor = document.getElementById("formCor")?.value || "";
@@ -2049,7 +2331,7 @@ export async function salvarAbordagemComAnexos(appInstance) {
       dados.condutor_cpf =
         document.getElementById("formCondutorCpf")?.value || "";
     } else {
-      dados.nome = identificador;
+      dados.nome = identificador || null;
       dados.alcunha = document.getElementById("formAlcunha")?.value || "";
       dados.cpf = document.getElementById("formCpf")?.value || "";
       dados.rg = document.getElementById("formRg")?.value || "";
@@ -2179,6 +2461,45 @@ export async function finalizarAbordagem(id, tipo, appInstance) {
   }
 }
 
+function aplicarBuscaConsultaOperacional(queryVeiculos, queryPessoas, valor) {
+  const busca = String(valor || "").trim();
+  if (!busca) return { queryVeiculos, queryPessoas };
+  const termoLike = busca
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/"/g, '\\"');
+  const ilike = (campo) => `${campo}.ilike."%${termoLike}%"`;
+  queryVeiculos = queryVeiculos.or([
+    ilike("placa"),
+    ilike("condutor_nome"),
+    ilike("marca_modelo"),
+    ilike("motivo"),
+    ilike("local_abordagem"),
+  ].join(","));
+  const digitos = busca.replace(/\D/g, "");
+  const buscaDeDocumento = /^[-0-9.\s\/]+$/.test(busca) && digitos.length >= 5;
+  if (buscaDeDocumento) {
+    const candidatos = new Set([busca, digitos]);
+    if (digitos.length === 11) {
+      candidatos.add(`${digitos.slice(0, 3)}.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-${digitos.slice(9)}`);
+    }
+    const igualdade = [...candidatos].flatMap((identificador) => {
+      const seguro = `"${identificador.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+      return [`cpf.eq.${seguro}`, `rg.eq.${seguro}`];
+    });
+    queryPessoas = queryPessoas.or(igualdade.join(","));
+  } else {
+    queryPessoas = queryPessoas.or([
+      ilike("nome"),
+      ilike("alcunha"),
+      ilike("motivo"),
+      ilike("local_abordagem"),
+    ].join(","));
+  }
+  return { queryVeiculos, queryPessoas };
+}
+
 // ============================================
 // EXPORTAÇÃO PDF - LISTA DE ABORDAGENS
 // ============================================
@@ -2203,7 +2524,7 @@ export async function exportarListaPDF(appInstance) {
 
     appInstance.showToast("Gerando PDF da lista de abordagens...", "info");
 
-    const { dataInicio, dataFim, guarda, busca } = estado.filtros;
+    const { dataInicio, dataFim, guarda, busca, tipoAtendimento, periodo } = estado.filtros;
     const aba = estado.abaAtiva;
 
     let queryVeiculos = client
@@ -2218,7 +2539,7 @@ export async function exportarListaPDF(appInstance) {
       queryPessoas = queryPessoas.gte("criado_em", dataInicio);
     }
     if (dataFim) {
-      const dataFimCompleta = dataFim + "T23:59:59";
+      const dataFimCompleta = periodo === "12h" ? dataFim : dataFim + "T23:59:59";
       queryVeiculos = queryVeiculos.lte("criado_em", dataFimCompleta);
       queryPessoas = queryPessoas.lte("criado_em", dataFimCompleta);
     }
@@ -2226,14 +2547,14 @@ export async function exportarListaPDF(appInstance) {
       queryVeiculos = queryVeiculos.eq("criado_por", guarda);
       queryPessoas = queryPessoas.eq("criado_por", guarda);
     }
+    if (tipoAtendimento) {
+      queryVeiculos = queryVeiculos.eq("tipo_atendimento", tipoAtendimento);
+      queryPessoas = queryPessoas.eq("tipo_atendimento", tipoAtendimento);
+    }
     if (busca) {
-      const termo = `%${busca}%`;
-      queryVeiculos = queryVeiculos.or(
-        `placa.ilike.${termo},condutor_nome.ilike.${termo},marca_modelo.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
-      queryPessoas = queryPessoas.or(
-        `nome.ilike.${termo},cpf.ilike.${termo},rg.ilike.${termo},alcunha.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
+      const consultas = aplicarBuscaConsultaOperacional(queryVeiculos, queryPessoas, busca);
+      queryVeiculos = consultas.queryVeiculos;
+      queryPessoas = consultas.queryPessoas;
     }
 
     if (aba === "veiculos") {
@@ -2285,9 +2606,19 @@ export async function exportarListaPDF(appInstance) {
     }
 
     // Preparar dados para o relatório
+    const formatarDataFiltroPDF = (valor) => {
+      const match = String(valor || "").slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+    };
+    const periodoRelatorio = dataInicio || dataFim
+      ? `${dataInicio ? formatarDataFiltroPDF(dataInicio) : "Início aberto"} a ${dataFim ? formatarDataFiltroPDF(dataFim) : "sem data final"}`
+      : "Todos os períodos";
     const dadosRelatorio = {
       veiculos: todasAbordagens.filter((a) => a.tipo_abordagem === "veiculo"),
       pessoas: todasAbordagens.filter((a) => a.tipo_abordagem === "pessoa"),
+      dataInicio,
+      dataFim,
+      periodo: periodoRelatorio,
     };
 
     // Usar a função de exportação de relatório do pdfExport
@@ -2296,6 +2627,7 @@ export async function exportarListaPDF(appInstance) {
       dadosRelatorio,
       {
         title: `Relatório de Abordagens - ${estado.abaAtiva.charAt(0).toUpperCase() + estado.abaAtiva.slice(1)}`,
+        reportType: aba === "veiculos" ? "abordagens-veiculos" : aba === "pessoas" ? "abordagens-pessoas" : "abordagens-geral",
         author: "Guarda Municipal de Pitangueiras - PR",
         subject: "Lista de abordagens operacionais",
         keywords: "Guarda Municipal, Abordagens, Veículos, Pessoas",
@@ -2360,13 +2692,19 @@ export async function exportarDetalhePDF(id, tipo, appInstance) {
       return;
     }
 
-    // Criar um relatório com uma única abordagem
+    // Criar uma ficha individual com o período visível no cabeçalho institucional.
+    const isVeiculo = tipo === "veiculo";
+    const dataReferencia = data.data_hora_inicio || data.criado_em;
+    const dataReferenciaDate = dataReferencia ? new Date(dataReferencia) : null;
+    const periodoRegistro = dataReferenciaDate && !Number.isNaN(dataReferenciaDate.getTime())
+      ? new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(dataReferenciaDate)
+      : "Registro individual";
     const dadosRelatorio = {
-      veiculos: tipo === "veiculo" ? [data] : [],
-      pessoas: tipo === "pessoa" ? [data] : [],
+      veiculos: isVeiculo ? [data] : [],
+      pessoas: isVeiculo ? [] : [data],
+      periodo: periodoRegistro,
     };
 
-    const isVeiculo = tipo === "veiculo";
     const identificador = isVeiculo ? data.placa : data.nome;
 
     const result = await pdfExport.exportarRelatorio(
@@ -2374,6 +2712,7 @@ export async function exportarDetalhePDF(id, tipo, appInstance) {
       dadosRelatorio,
       {
         title: `Abordagem ${isVeiculo ? "de Veículo" : "de Pessoa"} - ${identificador}`,
+        reportType: isVeiculo ? "abordagem-detalhe-veiculo" : "abordagem-detalhe-pessoa",
         author: "Guarda Municipal de Pitangueiras - PR",
         subject: `Detalhes da abordagem ${isVeiculo ? "de veículo" : "de pessoa"}`,
         keywords: `Guarda Municipal, Abordagem, ${isVeiculo ? "Veículo" : "Pessoa"}, ${identificador}`,
@@ -2421,6 +2760,7 @@ async function fecharFormularioComConfirmacao(container, appInstance) {
 
 function fecharFormulario(container, appInstance) {
   estado.arquivosTemp = [];
+  estado.tipoAbordagemAtual = null;
   estado.formularioAberto = false;
 
   if (container) {
@@ -2507,27 +2847,18 @@ function mudarAba(aba, container, appInstance) {
   estado.pagina = 0;
   estado.temMais = true;
 
-  const tabTodos = document.getElementById("tabTodos");
-  const tabVeiculos = document.getElementById("tabVeiculos");
-  const tabPessoas = document.getElementById("tabPessoas");
-
-  if (tabTodos) {
-    tabTodos.style.background = aba === "todos" ? "var(--branco)" : "none";
-    tabTodos.style.color =
-      aba === "todos" ? "var(--cinza-escuro)" : "var(--cinza-medio)";
-  }
-  if (tabVeiculos) {
-    tabVeiculos.style.background =
-      aba === "veiculos" ? "var(--branco)" : "none";
-    tabVeiculos.style.color =
-      aba === "veiculos" ? "var(--cinza-escuro)" : "var(--cinza-medio)";
-  }
-  if (tabPessoas) {
-    tabPessoas.style.background = aba === "pessoas" ? "var(--branco)" : "none";
-    tabPessoas.style.color =
-      aba === "pessoas" ? "var(--cinza-escuro)" : "var(--cinza-medio)";
-  }
-
+  const tabs = [
+    ["tabTodos", "todos"],
+    ["tabVeiculos", "veiculos"],
+    ["tabPessoas", "pessoas"],
+  ];
+  tabs.forEach(([id, value]) => {
+    const tab = document.getElementById(id);
+    if (!tab) return;
+    const ativo = aba === value;
+    tab.classList.toggle("active", ativo);
+    tab.setAttribute("aria-selected", String(ativo));
+  });
   carregarAbordagens(container, appInstance);
 }
 
@@ -2537,72 +2868,68 @@ function mudarAba(aba, container, appInstance) {
 
 function definirPeriodoPadrao() {
   const agora = new Date();
-  const dataFim = agora.toISOString().slice(0, 10);
   const dozeHoras = new Date(agora);
   dozeHoras.setHours(dozeHoras.getHours() - 12);
-  const dataInicio = dozeHoras.toISOString().slice(0, 10);
-
-  estado.filtros.dataInicio = dataInicio;
-  estado.filtros.dataFim = dataFim;
+  estado.filtros.periodo = "12h";
+  estado.filtros.dataInicio = dozeHoras.toISOString();
+  estado.filtros.dataFim = agora.toISOString();
 }
-
 function consultaPeriodoChange() {
   const periodo = document.getElementById("consultaPeriodo")?.value || "12h";
   const agora = new Date();
   let dataInicio = "";
   let dataFim = agora.toISOString().slice(0, 10);
-
+  if (periodo === "personalizado") {
+    const filtrosAvancados = document.getElementById("consultaFiltrosAvancados");
+    if (filtrosAvancados) filtrosAvancados.open = true;
+    const datas = document.getElementById("consultaDatasPersonalizadas");
+    if (datas) datas.style.display = "grid";
+    return;
+  }
   switch (periodo) {
     case "12h": {
-      const dozeHoras = new Date(agora);
-      dozeHoras.setHours(dozeHoras.getHours() - 12);
-      dataInicio = dozeHoras.toISOString().slice(0, 10);
+      const limite = new Date(agora);
+      limite.setHours(limite.getHours() - 12);
+      dataInicio = limite.toISOString();
+      dataFim = agora.toISOString();
       break;
     }
-    case "hoje": {
+    case "hoje":
       dataInicio = dataFim;
       break;
-    }
     case "semana": {
-      const semana = new Date(agora);
-      semana.setDate(semana.getDate() - 7);
-      dataInicio = semana.toISOString().slice(0, 10);
+      const limite = new Date(agora);
+      limite.setDate(limite.getDate() - 7);
+      dataInicio = limite.toISOString().slice(0, 10);
       break;
     }
     case "mes": {
-      const mes = new Date(agora);
-      mes.setMonth(mes.getMonth() - 1);
-      dataInicio = mes.toISOString().slice(0, 10);
+      const limite = new Date(agora);
+      limite.setDate(limite.getDate() - 30);
+      dataInicio = limite.toISOString().slice(0, 10);
       break;
     }
-    case "personalizado": {
-      document.getElementById("consultaDatasPersonalizadas").style.display =
-        "flex";
-      return;
-    }
-    default: {
+    default:
       dataInicio = estado.filtros.dataInicio || "";
       dataFim = estado.filtros.dataFim || "";
-    }
   }
-
   estado.filtros.periodo = periodo;
   estado.filtros.dataInicio = dataInicio;
   estado.filtros.dataFim = dataFim;
-
-  document.getElementById("consultaDatasPersonalizadas").style.display = "none";
-  const dataInicioInput = document.getElementById("consultaDataInicio");
-  const dataFimInput = document.getElementById("consultaDataFim");
-  if (dataInicioInput) dataInicioInput.value = dataInicio;
-  if (dataFimInput) dataFimInput.value = dataFim;
-
-  const container = document.getElementById("consultaResultadosArea");
-  if (container) {
-    const app = window._consultaApp;
-    carregarAbordagens(container.closest(".container") || container, app);
-  }
+  estado.filtros.guarda = document.getElementById("consultaGuarda")?.value || "";
+  estado.filtros.tipoAtendimento = document.getElementById("consultaTipoAtendimento")?.value || "";
+  estado.filtros.busca = document.getElementById("consultaBusca")?.value?.trim() || "";
+  const datas = document.getElementById("consultaDatasPersonalizadas");
+  if (datas) datas.style.display = "none";
+  const inicioInput = document.getElementById("consultaDataInicio");
+  const fimInput = document.getElementById("consultaDataFim");
+  if (inicioInput) inicioInput.value = dataInicio.slice(0, 10);
+  if (fimInput) fimInput.value = dataFim.slice(0, 10);
+  estado.pagina = 0;
+  estado.temMais = true;
+  const area = document.getElementById("consultaResultadosArea");
+  if (area) carregarAbordagens(area.closest(".container") || area, window._consultaApp);
 }
-
 // ============================================
 // LISTA DE GUARDAS
 // ============================================
@@ -2632,68 +2959,36 @@ async function carregarListaGuardas() {
 async function carregarRankingReincidentes() {
   try {
     estado.carregandoRanking = true;
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) return;
-
-    const { data: veiculos, error: veicError } = await client
-      .from("abordagens_veiculos")
-      .select("placa, criado_em")
-      .order("criado_em", { ascending: false });
-    if (veicError) throw veicError;
-
-    const { data: pessoas, error: pesError } = await client
-      .from("abordagens_pessoas")
-      .select("nome, cpf, criado_em")
-      .order("criado_em", { ascending: false });
-    if (pesError) throw pesError;
-
-    const veiculosCount = {};
-    if (veiculos) {
-      veiculos.forEach((v) => {
-        const placa = v.placa || "Sem placa";
-        if (!veiculosCount[placa]) veiculosCount[placa] = 0;
-        veiculosCount[placa]++;
-      });
+    const [veiculosResult, pessoasResult] = await Promise.all([
+      client.from("abordagens_veiculos").select("placa").eq("esta_ativa", true).limit(1000),
+      client.from("abordagens_pessoas").select("cpf,rg").eq("esta_ativa", true).limit(1000),
+    ]);
+    if (veiculosResult.error) throw veiculosResult.error;
+    if (pessoasResult.error) throw pessoasResult.error;
+    const counts = new Map();
+    for (const row of veiculosResult.data || []) {
+      const key = normalizarPlacaAbordagem(row.placa);
+      if (key.length === 7) counts.set(`veiculo:${key}`, (counts.get(`veiculo:${key}`) || 0) + 1);
     }
-
-    const pessoasCount = {};
-    if (pessoas) {
-      pessoas.forEach((p) => {
-        const nome = p.nome || "Sem nome";
-        if (!pessoasCount[nome]) pessoasCount[nome] = 0;
-        pessoasCount[nome]++;
-        if (p.cpf) {
-          if (!pessoasCount[p.cpf]) pessoasCount[p.cpf] = 0;
-          pessoasCount[p.cpf]++;
-        }
-      });
+    for (const row of pessoasResult.data || []) {
+      const cpf = String(row.cpf || "").replace(/\D/g, "");
+      const rg = String(row.rg || "").trim().toUpperCase();
+      const key = cpf.length === 11 ? `cpf:${cpf}` : rg.length >= 5 ? `rg:${rg}` : "";
+      if (key) counts.set(`pessoa:${key}`, (counts.get(`pessoa:${key}`) || 0) + 1);
     }
-
-    const ranking = [];
-    Object.keys(veiculosCount).forEach((key) => {
-      ranking.push({
-        identificador: key,
-        tipo: "veiculo",
-        total: veiculosCount[key],
-        label: "🚗 " + key,
-      });
+    const ranking = [...counts.entries()].filter(([, total]) => total > 1).map(([key, total]) => {
+      if (key.startsWith("veiculo:")) return { identificador: key.slice(8), tipo: "veículo", total };
+      const identifier = key.slice(7);
+      const [kind, value] = identifier.split(":", 2);
+      return { identificador: `Pessoa · ${kind.toUpperCase()} final ${value.slice(-4)}`, tipo: "pessoa", total };
     });
-    Object.keys(pessoasCount).forEach((key) => {
-      const isCpf = /^\d{11}$/.test(key.replace(/\D/g, ""));
-      ranking.push({
-        identificador: key,
-        tipo: "pessoa",
-        total: pessoasCount[key],
-        label: "👤 " + (isCpf ? `CPF: ${key}` : key),
-      });
-    });
-
-    ranking.sort((a, b) => b.total - a.total);
+    ranking.sort((a, b) => a.tipo.localeCompare(b.tipo, "pt-BR") || a.identificador.localeCompare(b.identificador, "pt-BR"));
     estado.rankingReincidentes = ranking.slice(0, 10);
     renderizarRanking(estado.rankingReincidentes);
   } catch (error) {
-    console.error("Erro ao carregar ranking:", error);
+    console.error("Erro ao carregar resumo de correspondências:", error);
   } finally {
     estado.carregandoRanking = false;
   }
@@ -2702,41 +2997,20 @@ async function carregarRankingReincidentes() {
 function renderizarRanking(ranking) {
   const lista = document.getElementById("rankingLista");
   if (!lista) return;
-
-  if (ranking.length === 0) {
-    lista.innerHTML = `
-      <div style="text-align:center;padding:10px;color:rgba(255,255,255,0.6);font-size:11px;">
-        Nenhum reincidente encontrado
-      </div>
-    `;
+  if (!ranking.length) {
+    lista.innerHTML = `<div class="consulta-repeat-empty">Nenhuma correspondência exata encontrada no conjunto consultado.</div>`;
     return;
   }
-
-  const top5 = ranking.slice(0, 5);
-  const emojis = ["🥇", "🥈", "🥉", "4º", "5º"];
-
-  lista.innerHTML = top5
-    .map((item, index) => {
-      const emoji = emojis[index] || `${index + 1}º`;
-      return `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.1);font-size:11px;">
-        <span style="display:flex;align-items:center;gap:4px;">
-          <span style="font-weight:700;color:rgba(255,255,255,0.7);min-width:28px;font-size:11px;">${emoji}</span>
-          <span style="font-weight:500;color:var(--branco);">${item.identificador}</span>
-        </span>
-        <span style="font-weight:600;color:#fbbf24;font-size:11px;">
-          ${item.total}${item.total === 1 ? "x" : "x"}
-        </span>
-      </div>
-    `;
-    })
-    .join("");
-}
-
-function verRankingCompleto(appInstance) {
+  lista.innerHTML = ranking.slice(0, 10).map((item) => `
+    <div class="consulta-repeat-row">
+      <span><strong>${item.identificador}</strong><small>${item.tipo === "veículo" ? "Placa" : "Documento parcialmente mascarado"}</small></span>
+      <span class="consulta-repeat-count">${item.total} registros</span>
+    </div>
+  `).join("");
+}function verRankingCompleto(appInstance) {
   const ranking = estado.rankingReincidentes;
   if (ranking.length === 0) {
-    appInstance.showToast("Nenhum reincidente encontrado", "info");
+    appInstance.showToast("Nenhum identificador com registros repetidos", "info");
     return;
   }
 
@@ -2763,8 +3037,8 @@ function verRankingCompleto(appInstance) {
     <div class="modal" style="max-width:400px;width:100%;max-height:80vh;overflow-y:auto;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
       <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
         <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-          <i class="fas fa-trophy" style="color:#fbbf24;margin-right:8px;"></i>
-          Ranking Completo
+          <i class="fas fa-link" style="color:#5c7d95;margin-right:8px;"></i>
+          Resumo de correspondências exatas
         </div>
         <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
           style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
@@ -2774,18 +3048,15 @@ function verRankingCompleto(appInstance) {
       <div class="modal-body" style="padding:14px 16px 4px 16px;">
         ${ranking
           .map(
-            (item, index) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--cinza-claro);font-size:13px;">
-            <span style="display:flex;align-items:center;gap:8px;">
-              <span style="font-weight:700;color:${index < 3 ? "var(--azul-bandeira)" : "var(--cinza-medio)"};min-width:30px;">${index + 1}º</span>
-              <span>${item.identificador}</span>
-              <span style="font-size:10px;color:var(--cinza-medio);background:var(--cinza-claro);padding:1px 8px;border-radius:10px;">${item.tipo}</span>
-            </span>
-            <span style="font-weight:700;color:var(--azul-bandeira);">${item.total}x</span>
+            (item) => `
+          <div class="consulta-repeat-row consulta-repeat-modal-row">
+            <span><strong>${item.identificador}</strong><small>${item.tipo === "veículo" ? "Placa" : "Documento parcialmente mascarado"}</small></span>
+            <span class="consulta-repeat-count">${item.total} registros</span>
           </div>
         `,
           )
           .join("")}
+        <p class="consulta-repeat-note">Correspondências exatas em registros ativos; este resumo não classifica pessoas ou veículos nem indica risco ou autoria.</p>
       </div>
       <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);">
         <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
@@ -2816,7 +3087,7 @@ async function carregarAbordagens(container, appInstance) {
       return;
     }
 
-    const { dataInicio, dataFim, guarda, busca } = estado.filtros;
+    const { dataInicio, dataFim, guarda, busca, tipoAtendimento, periodo } = estado.filtros;
     const aba = estado.abaAtiva;
 
     let queryVeiculos = client
@@ -2831,7 +3102,7 @@ async function carregarAbordagens(container, appInstance) {
       queryPessoas = queryPessoas.gte("criado_em", dataInicio);
     }
     if (dataFim) {
-      const dataFimCompleta = dataFim + "T23:59:59";
+      const dataFimCompleta = periodo === "12h" ? dataFim : dataFim + "T23:59:59";
       queryVeiculos = queryVeiculos.lte("criado_em", dataFimCompleta);
       queryPessoas = queryPessoas.lte("criado_em", dataFimCompleta);
     }
@@ -2839,14 +3110,14 @@ async function carregarAbordagens(container, appInstance) {
       queryVeiculos = queryVeiculos.eq("criado_por", guarda);
       queryPessoas = queryPessoas.eq("criado_por", guarda);
     }
+    if (tipoAtendimento) {
+      queryVeiculos = queryVeiculos.eq("tipo_atendimento", tipoAtendimento);
+      queryPessoas = queryPessoas.eq("tipo_atendimento", tipoAtendimento);
+    }
     if (busca) {
-      const termo = `%${busca}%`;
-      queryVeiculos = queryVeiculos.or(
-        `placa.ilike.${termo},condutor_nome.ilike.${termo},marca_modelo.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
-      queryPessoas = queryPessoas.or(
-        `nome.ilike.${termo},cpf.ilike.${termo},rg.ilike.${termo},alcunha.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
+      const consultas = aplicarBuscaConsultaOperacional(queryVeiculos, queryPessoas, busca);
+      queryVeiculos = consultas.queryVeiculos;
+      queryPessoas = consultas.queryPessoas;
     }
 
     if (aba === "veiculos") {
@@ -2898,26 +3169,19 @@ async function carregarAbordagens(container, appInstance) {
 
     estado.totalRegistros = todasAbordagens.length;
     if (totalSpan) {
-      totalSpan.textContent = `${estado.totalRegistros} registro(s)`;
+      totalSpan.textContent = `${estado.totalRegistros} carregados`;
     }
 
     if (todasAbordagens.length === 0) {
       area.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;font-weight:600;">
-            <i class="fas fa-clock" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-            Últimas Abordagens/Orientações
-          </h3>
-          <span id="consultaTotalRegistros" style="font-size:11px;color:var(--cinza-medio);">0 registros</span>
-        </div>
+                <div class="consulta-results-heading"><div><span class="consulta-eyebrow">HISTÓRICO</span><h3>Resultados da consulta</h3><p>Mais recentes primeiro · <span id="consultaTotalRegistros">0 carregados</span></p></div></div>
+        <p class="consulta-results-note">Os registros representam atendimentos documentados. Uma correspondência de identificador não prova reincidência, autoria ou risco.</p>
         <div style="text-align:center;padding:30px 20px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
           <div style="font-size:36px;color:var(--cinza-claro);margin-bottom:8px;">
             <i class="fas fa-search"></i>
           </div>
-          <p style="font-size:14px;color:var(--cinza-medio);">Nenhuma abordagem encontrada</p>
-          <button onclick="window._consultaAbrirFormulario()" class="btn-primary" style="margin-top:12px;padding:8px 20px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-            <i class="fas fa-plus"></i> Nova Abordagem
-          </button>
+          <p style="font-size:14px;color:var(--cinza-medio);">Nenhum registro encontrado com estes filtros</p><p style="font-size:12px;color:var(--cinza-medio);">Tente ampliar o período, alterar o tipo ou limpar a busca.</p>
+          
         </div>
       `;
       estado.temMais = false;
@@ -2925,13 +3189,8 @@ async function carregarAbordagens(container, appInstance) {
     }
 
     area.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="font-size:14px;color:var(--cinza-escuro);margin:0;font-weight:600;">
-          <i class="fas fa-clock" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-          Últimas Abordagens/Orientações
-        </h3>
-        <span id="consultaTotalRegistros" style="font-size:11px;color:var(--cinza-medio);">${estado.totalRegistros} registros</span>
-      </div>
+              <div class="consulta-results-heading"><div><span class="consulta-eyebrow">HISTÓRICO</span><h3>Resultados da consulta</h3><p>Mais recentes primeiro · <span id="consultaTotalRegistros">${estado.totalRegistros} carregados</span></p></div></div>
+        <p class="consulta-results-note">Os registros representam atendimentos documentados. Uma correspondência de identificador não prova reincidência, autoria ou risco.</p>
       <div id="consultaListaAbordagens">
         ${renderAbordagensCards(todasAbordagens, appInstance)}
       </div>
@@ -2972,7 +3231,6 @@ function renderAbordagensCards(abordagens, appInstance) {
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit",
       });
       const guardaNome = ab.usuarios?.nome_completo || "Desconhecido";
 
@@ -2989,74 +3247,69 @@ function renderAbordagensCards(abordagens, appInstance) {
 
       // 🔥 NOVO: Status da abordagem
       const statusAbordagem = ab.status_abordagem || "ativa";
-      const statusLabel =
+      const statusMeta =
         {
-          ativa: "🟢 Ativa",
-          encerrada: "🟡 Encerrada",
-          finalizada: "✅ Finalizada",
-          cancelada: "❌ Cancelada",
-        }[statusAbordagem] || "🟢 Ativa";
+          ativa: { label: "Ativa", tone: "active", icon: "fa-play" },
+          encerrada: { label: "Encerrada", tone: "ended", icon: "fa-check" },
+          finalizada: { label: "Finalizada", tone: "finished", icon: "fa-check-double" },
+          cancelada: { label: "Cancelada", tone: "cancelled", icon: "fa-ban" },
+        }[statusAbordagem] || { label: "Ativa", tone: "active", icon: "fa-play" };
 
-      const statusClass =
-        {
-          ativa: "badge-synced",
-          encerrada: "badge-pending",
-          finalizada: "badge-verde",
-          cancelada: "badge-cancelled",
-        }[statusAbordagem] || "badge-synced";
-
-      let faseLabel = "PRIMEIRA ORIENTAÇÃO";
+      let faseLabel = "Primeira orientação";
       let faseClass = "badge-primeira";
       if (
         ab.fase === "advertencia" &&
         ab.reincidencia_count >= REINCIDENCIA_LIMITE_ADVERTENCIA
       ) {
-        faseLabel = "ADVERTÊNCIA";
+        faseLabel = "Advertência";
         faseClass = "badge-pending";
       } else if (
         ab.fase === "multa" ||
         ab.reincidencia_count >= REINCIDENCIA_LIMITE_MULTA
       ) {
-        faseLabel = "MULTA";
+        faseLabel = "Multa";
         faseClass = "badge-cancelled";
       } else if (ab.fase === "advertencia") {
-        faseLabel = "ADVERTÊNCIA";
+        faseLabel = "Advertência";
         faseClass = "badge-pending";
       }
+      const faseTone =
+        faseClass === "badge-pending"
+          ? "warning"
+          : faseClass === "badge-cancelled"
+            ? "danger"
+            : "orientation";
 
       // 🔥 NOVO: Status de retificação
       const statusRetificacao = ab.status_retificacao || "none";
       let badgeRetificacao = "";
       if (statusRetificacao === "pending_rectification") {
-        badgeRetificacao = `<span class="badge badge-pending" style="font-size:8px;padding:1px 8px;background:#fef3c7;color:#92400e;">⏳ Retificação Pendente</span>`;
+        badgeRetificacao = `<span class="consulta-approach-retification is-pending"><i class="fas fa-rotate" aria-hidden="true"></i>Retificação pendente</span>`;
       } else if (statusRetificacao === "rectified") {
-        badgeRetificacao = `<span class="badge badge-synced" style="font-size:8px;padding:1px 8px;background:#d1fae5;color:#065f46;">✅ Retificada</span>`;
+        badgeRetificacao = `<span class="consulta-approach-retification is-done"><i class="fas fa-check" aria-hidden="true"></i>Retificada</span>`;
       } else if (statusRetificacao === "rectification_rejected") {
-        badgeRetificacao = `<span class="badge badge-cancelled" style="font-size:8px;padding:1px 8px;background:#fee2e2;color:#991b1b;">❌ Retificação Rejeitada</span>`;
+        badgeRetificacao = `<span class="consulta-approach-retification is-rejected"><i class="fas fa-xmark" aria-hidden="true"></i>Retificação rejeitada</span>`;
       }
 
       let identificador = "";
       let detalhes = "";
       let badgeTipo = "";
-      let badgeCor = "";
       let infoExtra = "";
 
       if (isVeiculo) {
-        identificador = ab.placa || "Placa não informada";
+        identificador = ab.placa || (ab.identificacao_status === "nao_identificado" ? "Veículo sem placa identificada" : "Placa não informada");
         detalhes = ab.marca_modelo || "";
         if (ab.cor) detalhes += ` (${ab.cor})`;
         badgeTipo = "VEÍCULO";
-        badgeCor = "badge-azul";
         infoExtra = ab.condutor_nome ? `Condutor: ${ab.condutor_nome}` : "";
       } else {
-        identificador = ab.nome || "Nome não informado";
+        identificador = ab.nome || (ab.identificacao_status === "nao_identificado" ? "Pessoa não identificada" : "Nome não informado");
         const alcunha = ab.alcunha ? `(${ab.alcunha})` : "";
         const cpf = ab.cpf ? `CPF: ${ab.cpf}` : "";
         const rg = ab.rg ? `RG: ${ab.rg}` : "";
         detalhes = [alcunha, cpf, rg].filter(Boolean).join(" ");
         badgeTipo = "PESSOA";
-        badgeCor = "badge-verde";
-        infoExtra = detalhes;
+        infoExtra = detalhes || ab.descricao_identificacao || "";
       }
 
       let totalAnexos = 0;
@@ -3067,8 +3320,8 @@ function renderAbordagensCards(abordagens, appInstance) {
       let resumoMotivo = "";
       if (ab.motivo) {
         const palavras = ab.motivo.split(" ");
-        resumoMotivo = palavras.slice(0, 12).join(" ");
-        if (palavras.length > 12) resumoMotivo += "...";
+        resumoMotivo = palavras.slice(0, 10).join(" ");
+        if (palavras.length > 10) resumoMotivo += "...";
       }
 
       // Extrair imagens dos anexos
@@ -3104,109 +3357,106 @@ function renderAbordagensCards(abordagens, appInstance) {
       // 🔥 NOVO: Verificar se pode finalizar (apenas se estiver ativa)
       const podeFinalizar = statusAbordagem === "ativa";
 
+      const tipoCard = isVeiculo ? "vehicle" : "person";
+      const tipoIcone = isVeiculo ? "fa-car-side" : "fa-user";
+      const tipoAcao = isVeiculo ? "veiculo" : "pessoa";
+      const idSeguro = String(ab.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+      const subtituloIdentificacao = isVeiculo
+        ? [detalhes, infoExtra].filter(Boolean).join(" · ")
+        : detalhes || ab.descricao_identificacao || "";
+      const identificacaoStatus =
+        ab.identificacao_status && ab.identificacao_status !== "identificado"
+          ? `<span class="consulta-approach-identification"><i class="fas fa-circle-info" aria-hidden="true"></i>${escapeHtmlAbordagem(obterRotuloIdentificacao(ab.identificacao_status))}</span>`
+          : "";
+      const classeIdentificador = isVeiculo
+        ? ab.placa
+          ? "is-plate"
+          : "is-vehicle-generic"
+        : ab.identificacao_status === "nao_identificado"
+          ? "is-unidentified"
+          : "is-person";
+
       return `
-        <div class="abordagem-card" style="background:var(--branco);border-radius:var(--border-radius);padding:10px 12px;margin-bottom:10px;box-shadow:var(--sombra-suave);border-left:4px solid ${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};cursor:pointer;transition:transform 0.15s ease;">
-          
-          <!-- Cabeçalho do Card -->
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;flex-wrap:wrap;gap:4px;">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-              <span class="badge ${badgeCor}" style="font-size:9px;padding:2px 10px;font-weight:700;">${badgeTipo}</span>
-              <span style="font-weight:700;font-size:14px;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">${identificador}</span>
-              ${infoExtra ? `<span style="font-size:11px;color:var(--cinza-medio);word-break:break-word;">${infoExtra}</span>` : ""}
-              ${badgeRetificacao}
+        <article class="abordagem-card consulta-approach-card consulta-approach-card--${tipoCard} consulta-approach-card--compact">
+          <header class="consulta-approach-card__header">
+            <div class="consulta-approach-card__compact-topline">
+              <div class="consulta-approach-card__compact-markers">
+                <span class="consulta-approach-card__type"><i class="fas ${tipoIcone}" aria-hidden="true"></i>${badgeTipo}</span>
+                <span class="consulta-approach-status is-${statusMeta.tone}"><i class="fas ${statusMeta.icon}" aria-hidden="true"></i>${statusMeta.label}</span>
+              </div>
+              <time class="consulta-approach-card__registered" aria-label="Data e hora do registro">${escapeHtmlAbordagem(data)}</time>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-              <span class="badge ${statusClass}" style="font-size:9px;padding:2px 10px;white-space:nowrap;">${statusLabel}</span>
-              <span class="badge ${faseClass}" style="font-size:9px;padding:2px 10px;white-space:nowrap;">${faseLabel}</span>
-              ${totalAnexos > 0 ? `<span style="font-size:11px;color:var(--cinza-medio);background:var(--cinza-claro);padding:1px 8px;border-radius:10px;white-space:nowrap;">+${totalAnexos}</span>` : ""}
+            <div class="consulta-approach-card__compact-heading">
+              <div class="consulta-approach-card__identity">
+                <h4 class="consulta-approach-card__primary-id ${classeIdentificador}">${escapeHtmlAbordagem(identificador)}</h4>
+                ${subtituloIdentificacao ? `<p class="consulta-approach-card__subtitle">${escapeHtmlAbordagem(subtituloIdentificacao)}</p>` : ""}
+                ${identificacaoStatus}
+                <div class="consulta-approach-card__badges">
+                  <span class="consulta-approach-phase is-${faseTone}"><i class="fas fa-layer-group" aria-hidden="true"></i>${escapeHtmlAbordagem(faseLabel)}</span>
+                  ${badgeRetificacao}
+                </div>
+              </div>
+              ${primeiroAnexo ? `
+                <div class="consulta-approach-card__photo-panel">
+                  <button type="button" class="consulta-approach-card__photo-feature" aria-label="Abrir fotos anexadas" title="Abrir fotos anexadas" onclick="event.stopPropagation();window._consultaAbrirCarrossel(${escapeHtmlAbordagem(imagensJSON)},0)">
+                    <img src="${escapeHtmlAbordagem(primeiroAnexo)}" alt="Foto anexada à abordagem" loading="lazy">
+                    ${imagens.length > 1 ? `<span class="consulta-approach-card__photo-more">+${imagens.length - 1}</span>` : ""}
+                  </button>
+                  <span class="consulta-approach-card__attachment-count"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${totalAnexos === 1 ? "anexo" : "anexos"}</span>
+                </div>
+              ` : totalAnexos > 0 ? `
+                <span class="consulta-approach-card__attachment-only"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${totalAnexos === 1 ? "anexo" : "anexos"}</span>
+              ` : ""}
             </div>
+          </header>
+
+          <div class="consulta-approach-card__compact-meta">
+            <span class="consulta-approach-card__compact-location" title="${escapeHtmlAbordagem(ab.local_abordagem || "Local não informado")}"><i class="fas fa-location-dot" aria-hidden="true"></i><span>${escapeHtmlAbordagem(ab.local_abordagem || "Local não informado")}</span></span>
+            <span class="consulta-approach-card__compact-guard" title="${escapeHtmlAbordagem(guardaNome)}"><i class="fas fa-user-shield" aria-hidden="true"></i><span>${escapeHtmlAbordagem(guardaNome)}</span></span>
           </div>
 
-          <!-- 🔥 NOVO: Data/Hora -->
-          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:10px;color:var(--cinza-medio);margin-bottom:2px;background:var(--branco-fumaca);padding:4px 8px;border-radius:4px;">
-            <span><i class="fas fa-play" style="margin-right:2px;"></i>Início: ${dataInicio}</span>
-            <span><i class="fas fa-stop" style="margin-right:2px;"></i>Encerramento: ${dataEncerramento}</span>
-            ${dataFinalizacao ? `<span><i class="fas fa-check-circle" style="margin-right:2px;color:var(--verde-bandeira);"></i>Finalização: ${dataFinalizacao}</span>` : ""}
-            <span><i class="fas fa-calendar" style="margin-right:2px;"></i>Registro: ${data}</span>
+          <div class="consulta-approach-card__compact-times">
+            <span><b>Início</b><time>${escapeHtmlAbordagem(dataInicio)}</time></span>
+            <span><b>Enc.</b><time>${escapeHtmlAbordagem(dataEncerramento)}</time></span>
+            ${dataFinalizacao ? `<span><b>Fin.</b><time>${escapeHtmlAbordagem(dataFinalizacao)}</time></span>` : ""}
           </div>
 
-          <!-- Detalhes -->
-          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--cinza-medio);margin-bottom:2px;">
-            <span><i class="fas fa-map-marker-alt" style="margin-right:4px;"></i>${ab.local_abordagem || "Local não informado"}</span>
-            <span><i class="fas fa-user" style="margin-right:4px;"></i>${guardaNome}</span>
-          </div>
-
-          <!-- Motivo -->
-          ${
-            resumoMotivo
-              ? `
-            <div style="font-size:12px;color:var(--cinza-escuro);margin-top:4px;padding-top:4px;border-top:1px solid var(--cinza-claro);word-break:break-word;">
-              <strong>Motivo:</strong> ${resumoMotivo}
+          ${ab.tipo_atendimento || ab.providencia ? `
+            <div class="consulta-approach-card__compact-classification" aria-label="Atendimento e providência">
+              <i class="fas fa-clipboard-check" aria-hidden="true"></i>
+              <div class="consulta-approach-card__tags">
+                ${ab.tipo_atendimento ? `<span>${escapeHtmlAbordagem(obterRotuloTipoAtendimento(ab.tipo_atendimento))}</span>` : ""}
+                ${ab.providencia ? `<span>${escapeHtmlAbordagem(obterRotuloProvidencia(ab.providencia))}</span>` : ""}
+              </div>
             </div>
-          `
-              : ""
-          }
+          ` : ""}
 
-          <!-- Miniaturas de anexos com clique para abrir carrossel -->
-          ${
-            primeiroAnexo
-              ? `
-            <div style="margin-top:6px;display:flex;gap:4px;cursor:pointer;" onclick="event.stopPropagation(); window._consultaAbrirCarrossel(${imagensJSON}, 0)">
-              <img src="${primeiroAnexo}" alt="Anexo" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--cinza-claro);">
-              ${totalAnexos > 1 ? `<span style="font-size:10px;color:var(--cinza-medio);display:flex;align-items:center;padding:0 4px;">+${totalAnexos - 1}</span>` : ""}
-            </div>
-          `
-              : ""
-          }
+          ${resumoMotivo ? `
+            <section class="consulta-approach-card__compact-reason" aria-label="Motivo da abordagem">
+              <span><i class="fas fa-comment-dots" aria-hidden="true"></i>Motivo</span>
+              <p>${escapeHtmlAbordagem(resumoMotivo)}</p>
+            </section>
+          ` : ""}
 
-          <!-- Badge de reincidência -->
-          ${
-            ab.reincidencia_count > 0
-              ? `
-            <div style="margin-top:4px;">
-              <span class="badge ${ab.reincidencia_count >= REINCIDENCIA_LIMITE_MULTA ? "reincidencia-alta" : "reincidencia-media"}" style="font-size:9px;padding:1px 10px;">
-                ${ab.reincidencia_count >= REINCIDENCIA_LIMITE_MULTA ? "🔴" : "🟡"} Reincidente (${ab.reincidencia_count + 1}x)
-              </span>
-            </div>
-          `
-              : ""
-          }
-          
-          <!-- 🔥 CORRIGIDO: Botões de ação com cores diferenciadas -->
-          <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
-            <button onclick="event.stopPropagation(); window._consultaVerAbordagemDetalhe('${ab.id}', '${ab.tipo_abordagem}')" 
-              style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
-              <i class="fas fa-eye"></i> Ver
+          <div class="consulta-approach-card__actions">
+            <button type="button" class="consulta-approach-action is-details" aria-label="Ver detalhes da abordagem" onclick="event.stopPropagation();window._consultaVerAbordagemDetalhe('${idSeguro}','${tipoAcao}')">
+              <i class="fas fa-eye" aria-hidden="true"></i><span>Detalhes</span>
             </button>
-            
-            ${
-              podeFinalizar
-                ? `
-              <button onclick="event.stopPropagation(); window._consultaFinalizarAbordagem('${ab.id}', '${ab.tipo_abordagem}')" 
-                style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--verde-muito-claro);color:var(--verde-escuro);cursor:pointer;">
-                <i class="fas fa-check-circle"></i> Finalizar
+            ${podeFinalizar ? `
+              <button type="button" class="consulta-approach-action is-finish" aria-label="Finalizar abordagem" onclick="event.stopPropagation();window._consultaFinalizarAbordagem('${idSeguro}','${tipoAcao}')">
+                <i class="fas fa-check" aria-hidden="true"></i><span>Finalizar</span>
               </button>
-            `
-                : ""
-            }
-            
-            ${
-              podeSolicitarRetificacao
-                ? `
-              <button onclick="event.stopPropagation(); window._consultaSolicitarRetificacao('${ab.id}', '${ab.tipo_abordagem}')" 
-                style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:#ede9fe;color:#6d28d9;cursor:pointer;">
-                <i class="fas fa-sync-alt"></i> Retificar
+            ` : ""}
+            ${podeSolicitarRetificacao ? `
+              <button type="button" class="consulta-approach-action is-rectify" aria-label="Solicitar retificação" onclick="event.stopPropagation();window._consultaSolicitarRetificacao('${idSeguro}','${tipoAcao}')">
+                <i class="fas fa-rotate" aria-hidden="true"></i><span>Retificar</span>
               </button>
-            `
-                : ""
-            }
-            
-            <button onclick="event.stopPropagation(); window._consultaExportarDetalhePDF('${ab.id}', '${ab.tipo_abordagem}')" 
-              style="flex:1;padding:2px 10px;font-size:10px;min-height:auto;width:auto;border:none;border-radius:4px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;">
-              <i class="fas fa-file-pdf"></i> PDF
+            ` : ""}
+            <button type="button" class="consulta-approach-action is-pdf" aria-label="Exportar ficha da abordagem em PDF" onclick="event.stopPropagation();window._consultaExportarDetalhePDF('${idSeguro}','${tipoAcao}')">
+              <i class="fas fa-file-pdf" aria-hidden="true"></i><span>PDF</span>
             </button>
           </div>
-        </div>
+        </article>
       `;
     })
     .join("");
@@ -3233,7 +3483,7 @@ async function carregarMaisAbordagens(container, appInstance) {
       return;
     }
 
-    const { dataInicio, dataFim, guarda, busca } = estado.filtros;
+    const { dataInicio, dataFim, guarda, busca, tipoAtendimento, periodo } = estado.filtros;
     const aba = estado.abaAtiva;
 
     let queryVeiculos = client
@@ -3248,7 +3498,7 @@ async function carregarMaisAbordagens(container, appInstance) {
       queryPessoas = queryPessoas.gte("criado_em", dataInicio);
     }
     if (dataFim) {
-      const dataFimCompleta = dataFim + "T23:59:59";
+      const dataFimCompleta = periodo === "12h" ? dataFim : dataFim + "T23:59:59";
       queryVeiculos = queryVeiculos.lte("criado_em", dataFimCompleta);
       queryPessoas = queryPessoas.lte("criado_em", dataFimCompleta);
     }
@@ -3256,14 +3506,14 @@ async function carregarMaisAbordagens(container, appInstance) {
       queryVeiculos = queryVeiculos.eq("criado_por", guarda);
       queryPessoas = queryPessoas.eq("criado_por", guarda);
     }
+    if (tipoAtendimento) {
+      queryVeiculos = queryVeiculos.eq("tipo_atendimento", tipoAtendimento);
+      queryPessoas = queryPessoas.eq("tipo_atendimento", tipoAtendimento);
+    }
     if (busca) {
-      const termo = `%${busca}%`;
-      queryVeiculos = queryVeiculos.or(
-        `placa.ilike.${termo},condutor_nome.ilike.${termo},marca_modelo.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
-      queryPessoas = queryPessoas.or(
-        `nome.ilike.${termo},cpf.ilike.${termo},rg.ilike.${termo},alcunha.ilike.${termo},motivo.ilike.${termo},local_abordagem.ilike.${termo}`,
-      );
+      const consultas = aplicarBuscaConsultaOperacional(queryVeiculos, queryPessoas, busca);
+      queryVeiculos = consultas.queryVeiculos;
+      queryPessoas = consultas.queryPessoas;
     }
 
     if (aba === "veiculos") {
@@ -3336,7 +3586,7 @@ async function carregarMaisAbordagens(container, appInstance) {
     estado.totalRegistros += novasAbordagens.length;
     const totalSpan = document.getElementById("consultaTotalRegistros");
     if (totalSpan) {
-      totalSpan.textContent = `${estado.totalRegistros} registro(s)`;
+      totalSpan.textContent = `${estado.totalRegistros} carregados`;
     }
 
     estado.temMais = novasAbordagens.length >= estado.paginaSize;
@@ -3393,7 +3643,8 @@ function aplicarFiltrosConsulta(container, appInstance) {
 
   estado.filtros.periodo = periodo;
   estado.filtros.guarda = guarda;
-  estado.filtros.busca = busca;
+  estado.filtros.busca = busca.trim();
+  estado.filtros.tipoAtendimento = document.getElementById("consultaTipoAtendimento")?.value || "";
   estado.pagina = 0;
   estado.temMais = true;
 
@@ -3405,23 +3656,33 @@ function aplicarFiltrosConsulta(container, appInstance) {
 
 function executarBuscaConsulta(container, appInstance) {
   const busca = document.getElementById("consultaBusca")?.value || "";
-  estado.filtros.busca = busca;
+  estado.filtros.busca = busca.trim();
+  estado.filtros.tipoAtendimento = document.getElementById("consultaTipoAtendimento")?.value || "";
   estado.pagina = 0;
   estado.temMais = true;
   carregarAbordagens(container, appInstance);
 }
-
+function limparBuscaConsulta(container, appInstance) {
+  if (estado.timeoutBusca) clearTimeout(estado.timeoutBusca);
+  const campo = document.getElementById("consultaBusca");
+  if (campo) {
+    campo.value = "";
+    campo.focus();
+  }
+  estado.filtros.busca = "";
+  estado.pagina = 0;
+  estado.temMais = true;
+  carregarAbordagens(container, appInstance);
+}
 function buscaAutomatica(termo, container, appInstance) {
-  if (termo && termo.length >= 2) {
-    if (estado.timeoutBusca) {
-      clearTimeout(estado.timeoutBusca);
-    }
+  if (estado.timeoutBusca) clearTimeout(estado.timeoutBusca);
+  const busca = String(termo || "").trim();
+  if (busca.length >= 2 || busca.length === 0) {
     estado.timeoutBusca = setTimeout(() => {
       executarBuscaConsulta(container, appInstance);
-    }, 500);
+    }, busca.length === 0 ? 250 : 500);
   }
 }
-
 // ============================================
 // RECONHECIMENTO DE PLACA
 // ============================================
@@ -3523,6 +3784,45 @@ export async function reconhecerPlacaPorFoto(appInstance) {
 // VER DETALHES DA ABORDAGEM (MODAL)
 // ============================================
 
+function escapeConsultaDetailHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char]);
+}
+
+function safeConsultaDetailUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value), window.location.href);
+    return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function isConsultaDetailImage(anexo) {
+  if (!anexo || typeof anexo !== "object") return false;
+  const tipo = String(anexo.tipo || anexo.tipo_arquivo || "").trim().toLowerCase();
+  const mime = String(anexo.mime_type || anexo.mimeType || "").trim().toLowerCase();
+  if (tipo === "image" || tipo.startsWith("image/") || mime.startsWith("image/")) return true;
+  const url = String(anexo.url || anexo.url_thumb || "").split(/[?#]/, 1)[0].toLowerCase();
+  return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(url);
+}
+
+function renderConsultaDetailInfo(label, value, icon, wide = false) {
+  const texto = value === null || value === undefined || value === "" ? "Não informado" : value;
+  return `
+    <div class="dashboard-detail-info${wide ? " dashboard-detail-info--wide" : ""}">
+      <span class="dashboard-detail-info__label"><i class="fas ${icon}" aria-hidden="true"></i>${escapeConsultaDetailHtml(label)}</span>
+      <strong class="dashboard-detail-info__value">${escapeConsultaDetailHtml(texto)}</strong>
+    </div>
+  `;
+}
+
 async function verAbordagemDetalhe(id, tipo, appInstance) {
   try {
     const client =
@@ -3532,8 +3832,7 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
       return;
     }
 
-    const tabela =
-      tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+    const tabela = tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
     const { data, error } = await client
       .from(tabela)
       .select("*, usuarios(nome_completo)")
@@ -3550,325 +3849,215 @@ async function verAbordagemDetalhe(id, tipo, appInstance) {
     const guardaNome = data.usuarios?.nome_completo || "Desconhecido";
     const dataFormatada = new Date(data.criado_em).toLocaleString("pt-BR", {
       timeZone: "America/Sao_Paulo",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
+    const dataInicio = data.data_hora_inicio ? formatarDataHoraLocal(data.data_hora_inicio) : "Não informado";
+    const dataEncerramento = data.data_hora_encerramento ? formatarDataHoraLocal(data.data_hora_encerramento) : "Não encerrado";
+    const dataFinalizacao = data.data_hora_finalizacao ? formatarDataHoraLocal(data.data_hora_finalizacao) : "";
 
-    // 🔥 NOVO: Data/hora início e encerramento
-    const dataInicio = data.data_hora_inicio
-      ? formatarDataHoraLocal(data.data_hora_inicio)
-      : "Não informado";
-    const dataEncerramento = data.data_hora_encerramento
-      ? formatarDataHoraLocal(data.data_hora_encerramento)
-      : "Não encerrado";
-    const dataFinalizacao = data.data_hora_finalizacao
-      ? formatarDataHoraLocal(data.data_hora_finalizacao)
-      : null;
-
-    // 🔥 NOVO: Status da abordagem
     const statusAbordagem = data.status_abordagem || "ativa";
-    const statusLabel =
-      {
-        ativa: "🟢 Ativa",
-        encerrada: "🟡 Encerrada",
-        finalizada: "✅ Finalizada",
-        cancelada: "❌ Cancelada",
-      }[statusAbordagem] || "🟢 Ativa";
+    const statusMeta = {
+      ativa: { label: "Ativa", tone: "success" },
+      encerrada: { label: "Encerrada", tone: "warning" },
+      finalizada: { label: "Finalizada", tone: "info" },
+      cancelada: { label: "Cancelada", tone: "danger" },
+    }[statusAbordagem] || { label: "Ativa", tone: "success" };
 
-    const statusClass =
-      {
-        ativa: "badge-synced",
-        encerrada: "badge-pending",
-        finalizada: "badge-verde",
-        cancelada: "badge-cancelled",
-      }[statusAbordagem] || "badge-synced";
-
-    let faseLabel = "PRIMEIRA ORIENTAÇÃO";
-    let faseClass = "badge-primeira";
-    if (
-      data.fase === "advertencia" &&
-      data.reincidencia_count >= REINCIDENCIA_LIMITE_ADVERTENCIA
-    ) {
-      faseLabel = "ADVERTÊNCIA";
-      faseClass = "badge-pending";
-    } else if (
-      data.fase === "multa" ||
-      data.reincidencia_count >= REINCIDENCIA_LIMITE_MULTA
-    ) {
-      faseLabel = "MULTA";
-      faseClass = "badge-cancelled";
+    let faseLabel = "Primeira orientação";
+    let faseTone = "info";
+    if (data.fase === "advertencia" && data.reincidencia_count >= REINCIDENCIA_LIMITE_ADVERTENCIA) {
+      faseLabel = "Advertência";
+      faseTone = "warning";
+    } else if (data.fase === "multa" || data.reincidencia_count >= REINCIDENCIA_LIMITE_MULTA) {
+      faseLabel = "Multa";
+      faseTone = "danger";
     } else if (data.fase === "advertencia") {
-      faseLabel = "ADVERTÊNCIA";
-      faseClass = "badge-pending";
+      faseLabel = "Advertência";
+      faseTone = "warning";
     }
 
-    // 🔥 NOVO: Status de retificação
     const statusRetificacao = data.status_retificacao || "none";
-    let badgeRetificacao = "";
-    if (statusRetificacao === "pending_rectification") {
-      badgeRetificacao = `<span class="badge badge-pending" style="font-size:10px;padding:2px 12px;background:#fef3c7;color:#92400e;">⏳ Retificação Pendente</span>`;
-    } else if (statusRetificacao === "rectified") {
-      badgeRetificacao = `<span class="badge badge-synced" style="font-size:10px;padding:2px 12px;background:#d1fae5;color:#065f46;">✅ Retificada</span>`;
-    } else if (statusRetificacao === "rectification_rejected") {
-      badgeRetificacao = `<span class="badge badge-cancelled" style="font-size:10px;padding:2px 12px;background:#fee2e2;color:#991b1b;">❌ Retificação Rejeitada</span>`;
-    }
+    const retificacaoMeta = {
+      pending_rectification: { label: "Retificação pendente", tone: "warning" },
+      rectified: { label: "Retificada", tone: "success" },
+      rectification_rejected: { label: "Retificação rejeitada", tone: "danger" },
+    }[statusRetificacao] || null;
 
-    let identificador = "";
-    let detalhes = "";
-    let badgeTipo = "";
-    let badgeCor = "";
-    if (isVeiculo) {
-      identificador = data.placa || "Placa não informada";
-      detalhes =
-        `${data.marca_modelo || ""} ${data.cor ? `(${data.cor})` : ""}`.trim();
-      badgeTipo = "VEÍCULO";
-      badgeCor = "badge-azul";
-    } else {
-      identificador = data.nome || "Nome não informado";
-      detalhes =
-        `${data.alcunha ? `(${data.alcunha})` : ""} ${data.cpf ? `CPF: ${data.cpf}` : ""} ${data.rg ? `RG: ${data.rg}` : ""}`.trim();
-      badgeTipo = "PESSOA";
-      badgeCor = "badge-verde";
-    }
+    const identificador = isVeiculo
+      ? data.placa || (data.identificacao_status === "nao_identificado" ? "Veículo sem placa identificada" : "Placa não informada")
+      : data.nome || (data.identificacao_status === "nao_identificado" ? "Pessoa não identificada" : "Nome não informado");
+    const tipoAtendimentoLabel = obterRotuloTipoAtendimento(data.tipo_atendimento);
+    const providenciaLabel = obterRotuloProvidencia(data.providencia);
+    const identificacaoLabel = obterRotuloIdentificacao(data.identificacao_status);
+    const detalhes = isVeiculo
+      ? `${data.marca_modelo || ""}${data.cor ? ` · ${data.cor}` : ""}`.trim()
+      : [data.alcunha ? `Alcunha: ${data.alcunha}` : "", data.cpf ? `CPF: ${data.cpf}` : "", data.rg ? `RG: ${data.rg}` : ""]
+          .filter(Boolean)
+          .join(" · ");
 
-    // Processar anexos/imagens
-    let anexosHTML = "";
-    let imagens = [];
-    let imagensProcessadas = [];
-
-    if (data.anexos && Array.isArray(data.anexos) && data.anexos.length > 0) {
-      imagens = data.anexos.filter(
-        (a) => a.tipo === "image" || a.tipo_arquivo === "image",
-      );
-
-      imagensProcessadas = imagens.map((img) => ({
-        url: img.url || "",
-        url_thumb: img.url_thumb || img.url || "",
-        nome: img.nome || img.nome_arquivo || "Imagem",
+    const imagensProcessadas = (Array.isArray(data.anexos) ? data.anexos : [])
+      .filter(isConsultaDetailImage)
+      .map((img, index) => ({
+        url: safeConsultaDetailUrl(img.url || img.url_thumb),
+        url_thumb: safeConsultaDetailUrl(img.url_thumb || img.url),
+        nome: img.nome || img.nome_arquivo || `Foto ${index + 1}`,
         tamanho: img.tamanho || 0,
         tipo: img.tipo || img.tipo_arquivo || "image",
-      }));
+      }))
+      .filter((img) => img.url && img.url_thumb);
 
-      if (imagensProcessadas.length > 0) {
-        const cols = Math.min(imagensProcessadas.length, 4);
-        const imagensGrid = imagensProcessadas
-          .map(
-            (img, index) => `
-          <div class="consulta-imagem-thumb" 
-               data-url="${img.url}" 
-               data-url-thumb="${img.url_thumb}" 
-               data-nome="${img.nome}" 
-               data-index="${index}"
-               data-total="${imagensProcessadas.length}"
-               data-imagens='${JSON.stringify(imagensProcessadas).replace(/'/g, "\\'")}'
-               style="aspect-ratio:1;border-radius:8px;overflow:hidden;cursor:pointer;background:var(--cinza-claro);border:2px solid var(--cinza-claro);position:relative;">
-            <img src="${img.url_thumb || img.url}" alt="${img.nome}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
-            <div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.6);color:white;font-size:9px;padding:2px 8px;border-radius:4px;">
-              <i class="fas fa-expand"></i>
-            </div>
-          </div>
-        `,
-          )
-          .join("");
+    estado._imagensModal = estado._imagensModal || {};
+    estado._imagensModal[id] = imagensProcessadas;
 
-        anexosHTML = `
-          <div style="margin-top:12px;">
-            <p style="font-weight:600;margin:0 0 8px 0;font-size:13px;color:var(--cinza-escuro);">
-              <i class="fas fa-camera"></i> Fotos (${imagensProcessadas.length})
-            </p>
-            <div style="display:grid;grid-template-columns:repeat(${cols}, 1fr);gap:8px;" id="galeria-imagens-${id}">
-              ${imagensGrid}
-            </div>
-            ${
-              imagensProcessadas.length > 4
-                ? `
-              <button onclick="window._consultaAbrirCarrosselPorId('${id}')" 
-                style="width:100%;margin-top:6px;padding:4px;border:none;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;font-weight:600;cursor:pointer;">
-                <i class="fas fa-images"></i> Ver todas (${imagensProcessadas.length})
-              </button>
-            `
-                : ""
-            }
-          </div>
-        `;
+    const imagensGrid = imagensProcessadas.slice(0, 4).map((img, index) => `
+      <button type="button" class="dashboard-detail-photo" data-photo-index="${index}" aria-label="Abrir ${escapeConsultaDetailHtml(img.nome)}">
+        <img src="${escapeConsultaDetailHtml(img.url_thumb)}" data-fallback="${escapeConsultaDetailHtml(img.url)}" alt="${escapeConsultaDetailHtml(img.nome)}" loading="lazy" decoding="async" fetchpriority="low" width="240" height="180">
+        <span class="dashboard-detail-photo__zoom" aria-hidden="true"><i class="fas fa-expand-alt"></i></span>
+        <span class="dashboard-detail-photo__index">${index + 1}</span>
+      </button>
+    `).join("");
 
-        // Registrar as imagens no estado para acesso posterior
-        estado._imagensModal = estado._imagensModal || {};
-        estado._imagensModal[id] = imagensProcessadas;
-      }
-    }
+    const imagensHTML = imagensProcessadas.length ? `
+      <section class="dashboard-detail-section" aria-label="Fotos da abordagem">
+        <div class="dashboard-detail-section__heading">
+          <div><span class="dashboard-detail-eyebrow">REGISTRO VISUAL</span><h3>Fotos</h3></div>
+          <span class="dashboard-detail-count">${imagensProcessadas.length}</span>
+        </div>
+        <div class="dashboard-detail-gallery">${imagensGrid}</div>
+        ${imagensProcessadas.length > 4 ? `<button type="button" class="dashboard-detail-gallery-more" data-show-all><i class="fas fa-images" aria-hidden="true"></i>Ver todas as ${imagensProcessadas.length} fotos</button>` : ""}
+      </section>
+    ` : "";
 
+    const prazo = data.prazo ? new Date(data.prazo).toLocaleDateString("pt-BR") : "";
     const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.id = `modal-${id}`;
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
-
+    overlay.className = "modal-overlay dashboard-detail-overlay dashboard-detail-overlay--approach dashboard-detail-overlay--consultation";
+    overlay.id = `modal-${String(id).replace(/[^a-zA-Z0-9_-]/g, "")}`;
     overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;width:100%;max-height:95vh;overflow-y:auto;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);position:sticky;top:0;background:var(--branco);border-radius:20px 20px 0 0;z-index:1;">
-          <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas ${isVeiculo ? "fa-motorcycle" : "fa-user"}" style="margin-right:8px;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};"></i>
-            Detalhes da Abordagem
+      <section class="dashboard-detail-modal" role="dialog" aria-modal="true" aria-labelledby="consultaApproachDetailTitle">
+        <header class="dashboard-detail-modal__header">
+          <div class="dashboard-detail-modal__title-group">
+            <span class="dashboard-detail-eyebrow">CONSULTA OPERACIONAL · ABORDAGEM</span>
+            <h2 id="consultaApproachDetailTitle">${escapeConsultaDetailHtml(identificador)}</h2>
+            ${detalhes ? `<p class="dashboard-detail-modal__subtitle">${escapeConsultaDetailHtml(detalhes)}</p>` : ""}
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
-            style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-            <i class="fas fa-times"></i>
-          </button>
+          <div class="dashboard-detail-modal__header-actions">
+            <span class="dashboard-detail-badge dashboard-detail-badge--${isVeiculo ? "info" : "success"}"><i class="fas ${isVeiculo ? "fa-car-side" : "fa-user"}" aria-hidden="true"></i>${isVeiculo ? "Veículo" : "Pessoa"}</span>
+            <button type="button" class="dashboard-detail-close" data-detail-close aria-label="Fechar detalhes"><i class="fas fa-times" aria-hidden="true"></i></button>
+          </div>
+        </header>
+        <div class="dashboard-detail-modal__body">
+          <div class="dashboard-detail-badges">
+            <span class="dashboard-detail-badge dashboard-detail-badge--${statusMeta.tone}">Status: ${escapeConsultaDetailHtml(statusMeta.label)}</span>
+            <span class="dashboard-detail-badge dashboard-detail-badge--${faseTone}">Fase: ${escapeConsultaDetailHtml(faseLabel)}</span>
+            ${retificacaoMeta ? `<span class="dashboard-detail-badge dashboard-detail-badge--${retificacaoMeta.tone}">${escapeConsultaDetailHtml(retificacaoMeta.label)}</span>` : ""}
+          </div>
+
+          <div class="dashboard-detail-grid">
+            ${renderConsultaDetailInfo("Data do registro", dataFormatada, "fa-clock")}
+            ${renderConsultaDetailInfo("Guarda responsável", guardaNome, "fa-user-shield")}
+            ${renderConsultaDetailInfo("Início", dataInicio, "fa-play")}
+            ${renderConsultaDetailInfo("Encerramento", dataEncerramento, "fa-stop")}
+            ${dataFinalizacao ? renderConsultaDetailInfo("Finalização", dataFinalizacao, "fa-check", true) : ""}
+            ${renderConsultaDetailInfo("Local", data.local_abordagem || "Não informado", "fa-location-dot", true)}
+            ${renderConsultaDetailInfo("Tipo de atendimento", tipoAtendimentoLabel, "fa-list-check", true)}
+            ${renderConsultaDetailInfo("Providência / resultado", providenciaLabel, "fa-clipboard-check", true)}
+            ${renderConsultaDetailInfo("Identificação", identificacaoLabel, "fa-id-card", true)}
+          </div>
+
+          ${data.descricao_identificacao ? `
+            <section class="dashboard-detail-section">
+              <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">IDENTIFICAÇÃO</span><h3>Descrição observável</h3></div></div>
+              <p class="dashboard-detail-text">${escapeConsultaDetailHtml(data.descricao_identificacao)}</p>
+            </section>
+          ` : ""}
+
+          ${data.motivo ? `
+            <section class="dashboard-detail-section">
+              <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">REGISTRO DA ABORDAGEM</span><h3>Motivo</h3></div></div>
+              <p class="dashboard-detail-text">${escapeConsultaDetailHtml(data.motivo)}</p>
+            </section>
+          ` : ""}
+
+          ${data.observacoes ? `
+            <section class="dashboard-detail-section">
+              <div class="dashboard-detail-section__heading"><div><span class="dashboard-detail-eyebrow">ANOTAÇÕES</span><h3>Observações</h3></div></div>
+              <p class="dashboard-detail-text">${escapeConsultaDetailHtml(data.observacoes)}</p>
+            </section>
+          ` : ""}
+
+          ${prazo ? `
+            <section class="dashboard-detail-notice">
+              <span class="dashboard-detail-notice__icon"><i class="fas fa-calendar-check" aria-hidden="true"></i></span>
+              <div><span class="dashboard-detail-eyebrow">REGULARIZAÇÃO</span><strong>Prazo: ${escapeConsultaDetailHtml(prazo)}</strong>${data.status_regularizacao ? `<small>Status: ${escapeConsultaDetailHtml(data.status_regularizacao)}</small>` : ""}</div>
+            </section>
+          ` : ""}
+
+          ${imagensHTML}
         </div>
-        <div class="modal-body" style="padding:14px 16px 4px 16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-            <div>
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap;">
-                <span class="badge ${badgeCor}" style="font-size:10px;padding:2px 12px;font-weight:700;">${badgeTipo}</span>
-                <span style="font-size:18px;font-weight:700;color:${isVeiculo ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};word-break:break-word;">${identificador}</span>
-                ${badgeRetificacao}
-              </div>
-              ${detalhes ? `<div style="font-size:13px;color:var(--cinza-medio);word-break:break-word;">${detalhes}</div>` : ""}
-            </div>
-            <span class="badge ${faseClass}" style="font-size:12px;padding:4px 14px;white-space:nowrap;">${faseLabel}</span>
-          </div>
-
-          <!-- 🔥 NOVO: Status e Data/Hora -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;background:var(--branco-fumaca);padding:8px 10px;border-radius:var(--border-radius);margin-bottom:8px;">
-            <div><span style="color:var(--cinza-medio);">Status:</span> <span class="badge ${statusClass}" style="font-size:10px;">${statusLabel}</span></div>
-            <div><span style="color:var(--cinza-medio);">Fase:</span> <strong>${faseLabel}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Início:</span> <strong>${dataInicio}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Encerramento:</span> <strong>${dataEncerramento}</strong></div>
-            ${dataFinalizacao ? `<div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Finalização:</span> <strong>${dataFinalizacao}</strong></div>` : ""}
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;background:var(--branco-fumaca);padding:10px 12px;border-radius:var(--border-radius);margin-bottom:12px;">
-            <div><span style="color:var(--cinza-medio);">Data:</span> <strong>${dataFormatada}</strong></div>
-            <div><span style="color:var(--cinza-medio);">Guarda:</span> <strong>${guardaNome}</strong></div>
-            <div style="grid-column:span 2;"><span style="color:var(--cinza-medio);">Local:</span> <strong>${data.local_abordagem || "Não informado"}</strong></div>
-          </div>
-
-          ${
-            data.motivo
-              ? `
-            <div style="margin-bottom:12px;">
-              <p style="font-weight:600;margin:0 0 4px 0;font-size:13px;color:var(--cinza-escuro);"><i class="fas fa-info-circle"></i> Motivo</p>
-              <p style="font-size:14px;color:var(--cinza-escuro);margin:0;background:var(--branco-fumaca);padding:8px 12px;border-radius:var(--border-radius);word-break:break-word;">${data.motivo}</p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            data.observacoes
-              ? `
-            <div style="margin-bottom:12px;">
-              <p style="font-weight:600;margin:0 0 4px 0;font-size:13px;color:var(--cinza-escuro);"><i class="fas fa-pencil-alt"></i> Observações</p>
-              <p style="font-size:14px;color:var(--cinza-escuro);margin:0;background:var(--branco-fumaca);padding:8px 12px;border-radius:var(--border-radius);word-break:break-word;">${data.observacoes}</p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            data.prazo
-              ? `
-            <div style="margin-bottom:12px;padding:8px 12px;background:#fef3c7;border-radius:var(--border-radius);border-left:4px solid var(--aviso);">
-              <p style="margin:0;font-size:13px;color:#92400e;">
-                <i class="fas fa-calendar-check" style="margin-right:6px;"></i>
-                <strong>Prazo:</strong> ${new Date(data.prazo).toLocaleDateString("pt-BR")}
-                ${data.status_regularizacao ? ` - <strong>Status:</strong> ${data.status_regularizacao}` : ""}
-              </p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            data.reincidencia_count > 0
-              ? `
-            <div style="margin-bottom:12px;padding:6px 12px;background:#fef3c7;border-radius:var(--border-radius);">
-              <p style="margin:0;font-size:13px;color:#92400e;">
-                <i class="fas fa-exclamation-triangle" style="color:var(--aviso);margin-right:6px;"></i>
-                <strong>Reincidência:</strong> ${data.reincidencia_count + 1}ª abordagem
-              </p>
-            </div>
-          `
-              : ""
-          }
-
-          ${anexosHTML}
-
-          <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--cinza-claro);color:var(--cinza-escuro);border:none;cursor:pointer;min-width:80px;">
-              Fechar
-            </button>
-            <button onclick="this.closest('.modal-overlay').remove(); window._consultaExportarDetalhePDF('${id}', '${tipo}')" class="btn-primary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);cursor:pointer;min-width:80px;">
-              <i class="fas fa-file-pdf"></i> PDF
-            </button>
-            <button onclick="this.closest('.modal-overlay').remove(); window._consultaConverterBO('${id}', '${tipo}')" class="btn-primary" style="flex:1;padding:10px;border-radius:12px;font-size:14px;font-weight:600;background:var(--gradiente-principal);color:var(--branco);border:none;cursor:pointer;min-width:80px;">
-              <i class="fas fa-file-export" style="margin-right:6px;"></i> Converter em BO
-            </button>
-          </div>
-        </div>
-      </div>
+        <footer class="dashboard-detail-modal__footer">
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--secondary" data-detail-close>Fechar</button>
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--secondary" data-action="pdf"><i class="fas fa-file-pdf" aria-hidden="true"></i>PDF</button>
+          <button type="button" class="dashboard-detail-action dashboard-detail-action--primary" data-action="convert"><i class="fas fa-file-export" aria-hidden="true"></i>Converter em BO</button>
+        </footer>
+      </section>
     `;
 
+    const closeModal = () => {
+      document.removeEventListener("keydown", onEscape);
+      overlay.remove();
+    };
+    const onEscape = (event) => { if (event.key === "Escape") closeModal(); };
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
+    overlay.querySelectorAll("[data-detail-close]").forEach((button) => button.addEventListener("click", closeModal));
     document.body.appendChild(overlay);
+    document.addEventListener("keydown", onEscape);
+    overlay.querySelector(".dashboard-detail-close")?.focus({ preventScroll: true });
 
-    // Adicionar event listeners para as imagens
-    setTimeout(() => {
-      const container = document.getElementById(`galeria-imagens-${id}`);
-      if (container) {
-        container.addEventListener("click", function (e) {
-          const thumb = e.target.closest(".consulta-imagem-thumb");
-          if (thumb) {
-            const url = thumb.dataset.url;
-            const nome = thumb.dataset.nome || "Imagem";
-            const imagensData = thumb.dataset.imagens;
+    overlay.querySelectorAll(".dashboard-detail-photo img").forEach((image) => {
+      image.addEventListener("error", () => {
+        const fallback = image.dataset.fallback;
+        if (fallback && image.src !== fallback) {
+          image.dataset.fallback = "";
+          image.src = fallback;
+        } else {
+          image.closest(".dashboard-detail-photo")?.classList.add("is-broken");
+        }
+      });
+    });
 
-            try {
-              if (imagensData) {
-                const imagens = JSON.parse(imagensData);
-                const index = parseInt(thumb.dataset.index) || 0;
-                window._consultaAbrirCarrossel(imagens, index, appInstance);
-              } else if (url) {
-                window.open(url, "_blank");
-              }
-            } catch (error) {
-              console.error("Erro ao abrir imagem:", error);
-              if (url) {
-                window.open(url, "_blank");
-              }
-            }
-          }
-        });
-      }
-    }, 100);
-
-    // Registrar função para abrir carrossel por ID
-    window._consultaAbrirCarrosselPorId = function (avisoId) {
-      const imagens = estado._imagensModal && estado._imagensModal[avisoId];
-      if (imagens && imagens.length > 0) {
+    overlay.querySelectorAll("[data-photo-index]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const index = Number(button.dataset.photoIndex) || 0;
+        if (typeof window._consultaAbrirCarrossel === "function") {
+          window._consultaAbrirCarrossel(imagensProcessadas, index, appInstance);
+        }
+      });
+    });
+    window._consultaAbrirCarrosselPorId = function (abordagemId) {
+      const imagens = estado._imagensModal && estado._imagensModal[abordagemId];
+      if (imagens && imagens.length > 0 && typeof window._consultaAbrirCarrossel === "function") {
         window._consultaAbrirCarrossel(imagens, 0, appInstance);
       } else if (appInstance && appInstance.showToast) {
         appInstance.showToast("Nenhuma imagem disponível", "info");
       }
     };
+    overlay.querySelector("[data-show-all]")?.addEventListener("click", () => {
+      window._consultaAbrirCarrosselPorId(id);
+    });
+
+    overlay.querySelector('[data-action="pdf"]')?.addEventListener("click", () => {
+      closeModal();
+      if (typeof window._consultaExportarDetalhePDF === "function") {
+        window._consultaExportarDetalhePDF(id, tipo);
+      }
+    });
+    overlay.querySelector('[data-action="convert"]')?.addEventListener("click", () => {
+      closeModal();
+      if (typeof window._consultaConverterBO === "function") {
+        window._consultaConverterBO(id, tipo);
+      }
+    });
   } catch (error) {
     console.error("Erro ao buscar abordagem:", error);
     appInstance.showToast("Erro ao carregar detalhes da abordagem", "error");

@@ -448,6 +448,68 @@ class PDFExport {
         }
       };
 
+      // Narrative text is set as an official, fully aligned paragraph. Explicitly
+      // normalize paragraph breaks and use an inset content box to keep both edges
+      // inside the printable area on every page.
+      const drawNarrativeSection = (label, value) => {
+        const text = safe(value, "").replace(/\r\n?/g, "\n").replace(/\u00a0/g, " ").trim();
+        if (!text) return;
+        sectionTitle(label);
+        const paragraphs = text
+          .split(/\n\s*\n/)
+          .map((paragraph) => paragraph.replace(/\s*\n\s*/g, " ").trim())
+          .filter(Boolean);
+        const bodyX = margin + 2;
+        const bodyWidth = contentWidth - 4;
+        const lineHeight = 4.2;
+        const drawAlignedLine = (line, baseline, width, justify) => {
+          const words = String(line).trim().split(/\s+/).filter(Boolean);
+          if (!justify || words.length < 2) {
+            doc.text(String(line), bodyX, baseline);
+            return;
+          }
+          const wordWidths = words.map((word) => doc.getTextWidth(word));
+          const totalWordsWidth = wordWidths.reduce((sum, wordWidth) => sum + wordWidth, 0);
+          const gap = (width - totalWordsWidth) / (words.length - 1);
+          const normalGap = doc.getTextWidth(" ");
+          if (!Number.isFinite(gap) || gap < normalGap * 0.6 || gap > normalGap * 4) {
+            doc.text(String(line), bodyX, baseline);
+            return;
+          }
+          let x = bodyX;
+          words.forEach((word, index) => {
+            doc.text(word, x, baseline);
+            x += wordWidths[index] + (index < words.length - 1 ? gap : 0);
+          });
+        };
+        doc.setFont("times", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(...ink);
+        for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+          const lines = doc.splitTextToSize(paragraphs[paragraphIndex], bodyWidth);
+          let offset = 0;
+          while (offset < lines.length) {
+            const availableLines = Math.max(1, Math.floor((footerLimit - y - 5) / lineHeight));
+            const chunk = lines.slice(offset, offset + availableLines);
+            chunk.forEach((line, index) => {
+              const lineIndex = offset + index;
+              drawAlignedLine(line, y + 3, bodyWidth, lineIndex < lines.length - 1);
+              y += lineHeight;
+            });
+            y += 2;
+            offset += chunk.length;
+            if (offset < lines.length) {
+              newPage();
+              sectionTitle(`${label} — continuação`);
+              doc.setFont("times", "normal");
+              doc.setFontSize(9);
+              doc.setTextColor(...ink);
+            }
+          }
+          if (paragraphIndex < paragraphs.length - 1) y += 2;
+        }
+      };
+
       const prepareField = (item, width) => {
         const labelText = `${String(item[0]).toUpperCase()}: `;
         const valueText = safe(item[1], "—");
@@ -622,7 +684,7 @@ class PDFExport {
       }
 
       if (options.sections.observacoes !== false) {
-        drawParagraphSection("Histórico / narrativa da ocorrência", ocorrencia.observacoes);
+        drawNarrativeSection("Descrição do fato", ocorrencia.observacoes);
       }
 
       sectionTitle("Classificação da ocorrência");
@@ -742,7 +804,29 @@ class PDFExport {
       if (options.sections.anexos !== false && imagens.length) {
         newPage();
         sectionTitle("Anexos fotográficos");
+
+        const automaticColumns = imagens.length === 1 ? 1 : imagens.length >= 6 ? 3 : 2;
+        const requestedColumns = Number(options.attachmentColumns);
+        const columns = Number.isInteger(requestedColumns) && requestedColumns >= 1 && requestedColumns <= 3
+          ? requestedColumns
+          : automaticColumns;
+        const gapX = 5;
+        const gapY = 5;
+        const cellWidth = (contentWidth - gapX * (columns - 1)) / columns;
+        const maxImageWidth = cellWidth - 8;
+        const maxImageHeight = columns === 1 ? 150 : columns === 2 ? 64 : 46;
+        const preparedImages = [];
+
         for (const img of imagens) {
+          const caption = safe(img.nome_arquivo || img.nome, "Anexo fotográfico");
+          let prepared = {
+            base64: img.base64,
+            caption,
+            loaded: false,
+            width: cellWidth - 8,
+            height: 24,
+            format: "JPEG",
+          };
           try {
             const image = new Image();
             image.src = img.base64;
@@ -753,33 +837,85 @@ class PDFExport {
                 image.onerror = resolve;
               }
             });
-            const ratio = image.width && image.height ? image.width / image.height : 1.4;
-            const width = Math.min(contentWidth - 8, 92);
-            const height = Math.min(68, width / ratio);
-            if (y + height + 12 > footerLimit) {
-              newPage();
-              sectionTitle("Anexos fotográficos — continuação");
+            const imageWidth = image.naturalWidth || image.width;
+            const imageHeight = image.naturalHeight || image.height;
+            if (!imageWidth || !imageHeight) throw new Error("Dimensões de imagem indisponíveis");
+            const ratio = imageWidth / imageHeight;
+            let fitWidth = maxImageWidth;
+            let fitHeight = fitWidth / ratio;
+            if (fitHeight > maxImageHeight) {
+              fitHeight = maxImageHeight;
+              fitWidth = fitHeight * ratio;
             }
-            const x = margin + (contentWidth - width) / 2;
-            doc.setDrawColor(...rule);
-            doc.setLineWidth(0.25);
-            doc.rect(x - 1, y - 1, width + 2, height + 2);
-            const format = String(img.base64).startsWith("data:image/png") ? "PNG" : "JPEG";
-            doc.addImage(img.base64, format, x, y, width, height);
-            y += height + 3;
-            doc.setFont("courier", "normal");
-            doc.setFontSize(6.8);
-            doc.setTextColor(...ink);
-            doc.text(safe(img.nome_arquivo || img.nome, "Anexo fotográfico"), x, y + 2.5);
-            y += 7;
+            const source = String(img.base64).toLowerCase();
+            const format = source.startsWith("data:image/png")
+              ? "PNG"
+              : source.startsWith("data:image/webp")
+                ? "WEBP"
+                : "JPEG";
+            prepared = {
+              base64: img.base64,
+              caption,
+              loaded: true,
+              width: fitWidth,
+              height: fitHeight,
+              format,
+            };
           } catch (e) {
-            ensureSpace(8);
-            doc.setFont("courier", "normal");
-            doc.setFontSize(7);
-            doc.setTextColor(...ink);
-            doc.text(`Imagem não disponível: ${safe(img.nome_arquivo || img.nome, "Anexo")}`, margin, y + 3);
-            y += 7;
+            prepared.error = true;
           }
+          doc.setFont("courier", "normal");
+          doc.setFontSize(6.4);
+          prepared.captionLines = doc.splitTextToSize(prepared.caption, cellWidth - 8).slice(0, 2);
+          preparedImages.push(prepared);
+        }
+
+        for (let offset = 0; offset < preparedImages.length; offset += columns) {
+          const row = preparedImages.slice(offset, offset + columns);
+          const imageRowHeight = Math.max(...row.map((item) => item.height));
+          const captionLineCount = Math.max(...row.map((item) => Math.max(1, item.captionLines.length)));
+          const captionHeight = captionLineCount * 3.1;
+          const cardHeight = imageRowHeight + captionHeight + 10;
+          if (y + cardHeight > footerLimit) {
+            newPage();
+            sectionTitle("Anexos fotográficos — continuação");
+          }
+
+          row.forEach((item, columnIndex) => {
+            const x = margin + columnIndex * (cellWidth + gapX);
+            const cardY = y;
+            doc.setDrawColor(...softRule);
+            doc.setLineWidth(0.2);
+            doc.rect(x, cardY, cellWidth, cardHeight);
+
+            const imageX = x + (cellWidth - item.width) / 2;
+            const imageY = cardY + 3 + (imageRowHeight - item.height) / 2;
+            if (item.loaded) {
+              try {
+                doc.setDrawColor(...rule);
+                doc.setLineWidth(0.25);
+                doc.rect(imageX - 0.5, imageY - 0.5, item.width + 1, item.height + 1);
+                doc.addImage(item.base64, item.format, imageX, imageY, item.width, item.height);
+              } catch (e) {
+                item.error = true;
+              }
+            }
+            if (!item.loaded || item.error) {
+              doc.setFont("times", "italic");
+              doc.setFontSize(8);
+              doc.setTextColor(...softRule);
+              doc.text("Imagem não disponível", x + cellWidth / 2, cardY + 3 + imageRowHeight / 2, { align: "center" });
+            }
+            doc.setFont("courier", "normal");
+            doc.setFontSize(6.4);
+            doc.setTextColor(...ink);
+            doc.text(item.captionLines, x + cellWidth / 2, cardY + 3 + imageRowHeight + 3, {
+              align: "center",
+              maxWidth: cellWidth - 8,
+              lineHeightFactor: 1.05,
+            });
+          });
+          y += cardHeight + gapY;
         }
       }
 
@@ -797,33 +933,890 @@ class PDFExport {
   // EXPORTAÇÃO DE RELATÓRIO
   // ============================================
 
+  async gerarPDFRelatorioInstitucional(dados, options = {}) {
+    const jsPDF = this.getJSPDF();
+    const doc = new jsPDF({ ...options, orientation: "portrait", unit: "mm", format: "a4", compress: true });
+    const pageWidth = doc.internal.pageSize.width;
+    const pageHeight = doc.internal.pageSize.height;
+    const margin = 14;
+    const contentWidth = pageWidth - margin * 2;
+    const footerLimit = pageHeight - 19;
+    const ink = [0, 0, 0];
+    const rule = [45, 45, 45];
+    const softRule = [125, 125, 125];
+    const reportType = options.reportType || dados.tipoRelatorio || "detalhado";
+    const isApproachDetail = reportType === "abordagem-detalhe-veiculo" || reportType === "abordagem-detalhe-pessoa";
+    const isApproachDetailVehicle = reportType === "abordagem-detalhe-veiculo";
+    const isApproachReport = reportType === "abordagens" || reportType.startsWith("abordagens-");
+    const reportTitle = String(dados.titulo || options.title || "Relatório operacional");
+    const period = String(dados.periodo || "Período não informado");
+    const emitted = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const logo = await this.carregarImagemBase64(options.logoUrl || "assets/logo-guarda.png");
+    const safe = (value, fallback = "—") => value === null || value === undefined || String(value).trim() === "" ? fallback : String(value);
+    const list = (value) => Array.isArray(value) ? value : [];
+    const approachPhotos = (record) => list(record?.anexos)
+      .map((item, index) => typeof item === "string" ? { url: item, nome: `Foto ${index + 1}`, tipo: "image" } : item)
+      .filter((item) => item && item.tipo !== "assinatura" &&
+        (item.tipo === "image" || item.tipo_arquivo === "image" || (!item.tipo && !item.tipo_arquivo)) &&
+        (item.url || item.url_thumb));
+    const occurrences = list(dados.ocorrencias);
+    const labelStatus = (value) => this.getStatusLabel(value || "Não informado");
+    const parseDate = (value) => {
+      if (!value) return new Date(NaN);
+      if (value instanceof Date) return new Date(value.getTime());
+      const raw = String(value).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T00:00:00Z`);
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(raw)) {
+        return new Date(`${raw.replace(" ", "T")}Z`);
+      }
+      return new Date(raw);
+    };
+    const formatDateTime = (value) => {
+      if (!value) return "—";
+      const d = parseDate(value);
+      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(d);
+    };
+    const formatDate = (value) => {
+      if (!value) return "—";
+      const raw = String(value);
+      const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+      const d = parseDate(value);
+      return Number.isNaN(d.getTime()) ? safe(value) : new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short" }).format(d);
+    };
+
+    const percent = (n, denominator) => denominator > 0 ? `${((n / denominator) * 100).toFixed(1)}%` : "—";
+    const countBy = (rows, keyFn) => {
+      const map = new Map();
+      for (const row of rows) {
+        const key = safe(keyFn(row), "Não informado");
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+      return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR"));
+    };
+
+    doc.setProperties({
+      title: reportTitle,
+      author: options.author || "Guarda Municipal de Pitangueiras/PR",
+      subject: options.subject || "Relatório operacional — Guarda Municipal de Pitangueiras/PR",
+      keywords: options.keywords || `Guarda Municipal, Relatório, ${reportTitle}`,
+      creator: "Sistema de Registro de Ocorrências — Guarda Municipal de Pitangueiras/PR",
+    });
+
+    let page = 1;
+    let y = 39;
+    const drawHeader = (pageNumber) => {
+      doc.setPage(pageNumber);
+      doc.setDrawColor(...rule);
+      doc.setLineWidth(0.55);
+      doc.line(margin, 4, pageWidth - margin, 4);
+      if (logo) {
+        try { doc.addImage(logo, "PNG", margin + 1, 6, 21, 21, undefined, "FAST"); }
+        catch (e) { doc.setLineWidth(0.35); doc.rect(margin + 1, 6, 21, 21); }
+      }
+      const centerX = pageWidth / 2;
+      doc.setTextColor(...ink);
+      doc.setFont("times", "bold");
+      doc.setFontSize(8.5);
+      doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS/PR", centerX, 9, { align: "center" });
+      doc.setFontSize(7.2);
+      doc.text("REGISTRO OPERACIONAL", centerX, 15, { align: "center" });
+      doc.setFontSize(9);
+      doc.text("RELATÓRIO GERENCIAL", centerX, 21, { align: "center" });
+      doc.setFont("courier", "normal");
+      doc.setFontSize(6.3);
+      const titleLines = doc.splitTextToSize(reportTitle.toUpperCase(), 92).slice(0, 2);
+      doc.text(titleLines, centerX, 26, { align: "center" });
+      const rightX = pageWidth - margin - 35;
+      doc.setDrawColor(...softRule);
+      doc.setLineWidth(0.25);
+      doc.line(rightX - 3, 6, rightX - 3, 27);
+      doc.setFont("courier", "bold");
+      doc.setFontSize(6.2);
+      doc.text("PERÍODO", rightX, 9);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(5.6);
+      doc.text(doc.splitTextToSize(period, 33).slice(0, 2), rightX, 14);
+      doc.setFontSize(5.4);
+      doc.text(`EMISSÃO ${formatDate(new Date())}`, rightX, 25);
+      doc.setDrawColor(...rule);
+      doc.setLineWidth(0.55);
+      doc.line(margin, 31, pageWidth - margin, 31);
+      doc.setLineWidth(0.2);
+      doc.line(margin, 32.2, pageWidth - margin, 32.2);
+    };
+    const drawFooter = (pageNumber, totalPages) => {
+      doc.setPage(pageNumber);
+      doc.setDrawColor(...rule);
+      doc.setLineWidth(0.45);
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+      doc.setTextColor(...ink);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(5.8);
+      doc.text("GUARDA MUNICIPAL DE PITANGUEIRAS/PR  |  SISTEMA DE REGISTRO DE OCORRÊNCIAS", margin, pageHeight - 10);
+      doc.text(`EMITIDO EM ${emitted}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+      doc.setFont("courier", "bold");
+      doc.text(`PÁGINA ${pageNumber} DE ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: "center" });
+    };
+    const newPage = () => {
+      doc.addPage();
+      page = doc.internal.getCurrentPageInfo().pageNumber;
+      drawHeader(page);
+      y = 39;
+    };
+    const ensureSpace = (height) => { if (y + height > footerLimit) newPage(); };
+    const sectionTitle = (text) => {
+      ensureSpace(11);
+      doc.setTextColor(...ink);
+      doc.setFont("times", "bold");
+      doc.setFontSize(8.5);
+      doc.text(String(text).toUpperCase(), pageWidth / 2, y + 4, { align: "center" });
+      doc.setDrawColor(...rule);
+      doc.setLineWidth(0.3);
+      doc.line(margin, y + 6.2, pageWidth - margin, y + 6.2);
+      y += 9;
+    };
+    const drawFields = (fields) => {
+      for (let i = 0; i < fields.length; i += 2) {
+        const row = fields.slice(i, i + 2);
+        const gap = row.length > 1 ? 4 : 0;
+        const cellWidth = (contentWidth - gap * (row.length - 1)) / row.length;
+        const prepared = row.map(([label, value]) => {
+          const labelText = `${String(label).toUpperCase()}: `;
+          doc.setFont("courier", "bold"); doc.setFontSize(6.4);
+          const labelWidth = doc.getTextWidth(labelText);
+          const stacked = labelWidth > cellWidth * 0.46;
+          const text = doc.splitTextToSize(safe(value), Math.max(12, cellWidth - (stacked ? 0 : labelWidth + 1.2)));
+          return { labelText, labelWidth, stacked, text, height: Math.max(4, (stacked ? 3 : 0) + text.length * 3.2) };
+        });
+        const rowHeight = Math.max(...prepared.map((p) => p.height));
+        ensureSpace(rowHeight + 3);
+        prepared.forEach((item, index) => {
+          const x = margin + index * (cellWidth + gap);
+          doc.setTextColor(...ink); doc.setFont("courier", "bold"); doc.setFontSize(6.4);
+          if (item.stacked) {
+            doc.text(item.labelText.trim(), x, y + 2.5);
+            doc.setFont("courier", "normal"); doc.setFontSize(7.2);
+            doc.text(item.text, x, y + 5.7, { lineHeightFactor: 1.05 });
+          } else {
+            doc.text(item.labelText, x, y + 2.7);
+            doc.setFont("courier", "normal"); doc.setFontSize(7.2);
+            doc.text(item.text, x + item.labelWidth + 1.2, y + 2.7, { lineHeightFactor: 1.05 });
+          }
+          doc.setDrawColor(...softRule); doc.setLineWidth(0.15);
+          doc.line(x, y + rowHeight + 1, x + cellWidth, y + rowHeight + 1);
+        });
+        y += rowHeight + 4;
+      }
+    };
+    const drawTable = (title, headers, rows) => {
+      if (rows.length) ensureSpace(25);
+      sectionTitle(title);
+      if (!rows.length) {
+        ensureSpace(8);
+        doc.setTextColor(...ink); doc.setFont("courier", "normal"); doc.setFontSize(7.2);
+        doc.text("Nenhum registro no período.", margin, y + 3);
+        y += 7;
+        return;
+      }
+      doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin, top: 38, bottom: 18 },
+        theme: "grid",
+        head: [headers],
+        body: rows.map((row) => row.map((cell) => safe(cell))),
+        styles: { font: "courier", fontSize: 6.8, textColor: ink, cellPadding: 1.6, lineColor: rule, lineWidth: 0.18, overflow: "linebreak", valign: "middle" },
+        headStyles: { fillColor: [255, 255, 255], textColor: ink, font: "courier", fontStyle: "bold", fontSize: 6.6, lineColor: rule, lineWidth: 0.3 },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
+        didDrawPage: (data) => {
+          const pageNumber = data.doc.internal.getCurrentPageInfo().pageNumber;
+          page = Math.max(page, pageNumber);
+          drawHeader(pageNumber);
+        },
+      });
+      page = doc.internal.getCurrentPageInfo().pageNumber;
+      y = (doc.lastAutoTable?.finalY || y) + 4;
+    };
+    const drawParagraphSection = (title, value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      sectionTitle(title);
+      const paragraphs = raw.replace(/\r\n/g, "\n").split("\n");
+      const lineHeight = 4.1;
+      for (const paragraph of paragraphs) {
+        const lines = paragraph ? doc.splitTextToSize(paragraph, contentWidth) : [""];
+        for (const line of lines) {
+          if (y + lineHeight > footerLimit) {
+            newPage();
+            sectionTitle(`${title} — continuação`);
+          }
+          if (line) {
+            doc.setTextColor(...ink);
+            doc.setFont("times", "normal");
+            doc.setFontSize(8);
+            doc.text(line, margin, y + 2.8, { maxWidth: contentWidth });
+          }
+          y += lineHeight;
+        }
+        y += 1.2;
+      }
+      y += 2;
+    };
+    const drawApproachPhotos = async (record, requestedColumns) => {
+      const photos = approachPhotos(record);
+      if (!photos.length) return 0;
+      newPage();
+      sectionTitle("Anexos fotográficos");
+      const automaticColumns = photos.length === 1 ? 1 : photos.length >= 6 ? 3 : 2;
+      const requested = Number(requestedColumns);
+      const columns = Number.isInteger(requested) && requested >= 1 && requested <= 3 ? requested : automaticColumns;
+      const gapX = 5;
+      const gapY = 5;
+      const cellWidth = (contentWidth - gapX * (columns - 1)) / columns;
+      const maxImageWidth = cellWidth - 8;
+      const maxImageHeight = columns === 1 ? 150 : columns === 2 ? 64 : 46;
+      for (let offset = 0; offset < photos.length; offset += columns) {
+        const row = [];
+        for (const [index, photo] of photos.slice(offset, offset + columns).entries()) {
+          const caption = safe(photo.nome_arquivo || photo.nome, `Foto ${offset + index + 1}`);
+          const item = { base64: null, caption, loaded: false, width: maxImageWidth, height: 24, format: "JPEG" };
+          try {
+            const base64 = await this.carregarImagemBase64(photo.url || photo.url_thumb);
+            if (!base64) throw new Error("Imagem indisponível");
+            const properties = doc.getImageProperties(base64);
+            const imageWidth = Number(properties.width);
+            const imageHeight = Number(properties.height);
+            if (!imageWidth || !imageHeight) throw new Error("Dimensões indisponíveis");
+            const ratio = imageWidth / imageHeight;
+            let fitWidth = maxImageWidth;
+            let fitHeight = fitWidth / ratio;
+            if (fitHeight > maxImageHeight) {
+              fitHeight = maxImageHeight;
+              fitWidth = fitHeight * ratio;
+            }
+            const source = String(base64).toLowerCase();
+            item.base64 = base64;
+            item.loaded = true;
+            item.width = fitWidth;
+            item.height = fitHeight;
+            item.format = source.startsWith("data:image/png") ? "PNG" : source.startsWith("data:image/webp") ? "WEBP" : "JPEG";
+          } catch (error) {
+            item.error = true;
+          }
+          doc.setFont("courier", "normal");
+          doc.setFontSize(6.4);
+          item.captionLines = doc.splitTextToSize(item.caption, cellWidth - 8).slice(0, 2);
+          row.push(item);
+        }
+
+        const imageRowHeight = Math.max(...row.map((item) => item.height));
+        const captionLineCount = Math.max(...row.map((item) => Math.max(1, item.captionLines.length)));
+        const captionHeight = captionLineCount * 3.1;
+        const cardHeight = imageRowHeight + captionHeight + 10;
+        if (y + cardHeight > footerLimit) {
+          newPage();
+          sectionTitle("Anexos fotográficos — continuação");
+        }
+        row.forEach((item, columnIndex) => {
+          const x = margin + columnIndex * (cellWidth + gapX);
+          const cardY = y;
+          doc.setDrawColor(...softRule);
+          doc.setLineWidth(0.2);
+          doc.rect(x, cardY, cellWidth, cardHeight);
+          const imageX = x + (cellWidth - item.width) / 2;
+          const imageY = cardY + 3 + (imageRowHeight - item.height) / 2;
+          if (item.loaded) {
+            try {
+              doc.setDrawColor(...rule);
+              doc.setLineWidth(0.25);
+              doc.rect(imageX - 0.5, imageY - 0.5, item.width + 1, item.height + 1);
+              doc.addImage(item.base64, item.format, imageX, imageY, item.width, item.height);
+            } catch (error) {
+              item.error = true;
+            }
+          }
+          if (!item.loaded || item.error) {
+            doc.setFont("times", "italic");
+            doc.setFontSize(8);
+            doc.setTextColor(...softRule);
+            doc.text("Imagem não disponível", x + cellWidth / 2, cardY + 3 + imageRowHeight / 2, { align: "center" });
+          }
+          doc.setFont("courier", "normal");
+          doc.setFontSize(6.4);
+          doc.setTextColor(...ink);
+          doc.text(item.captionLines, x + cellWidth / 2, cardY + 3 + imageRowHeight + 3, {
+            align: "center",
+            maxWidth: cellWidth - 8,
+            lineHeightFactor: 1.05,
+          });
+        });
+        y += cardHeight + gapY;
+      }
+      return photos.length;
+    };
+    const chartPalette = [
+      [0, 63, 135],
+    ];
+    const chartGrid = [218, 226, 235];
+    const chartTrack = [238, 243, 248];
+    const chartText = (value) => safe(value);
+    const chartInteger = (value) => Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+    const normalizeChartItems = (entries) => list(entries).map((item) => Array.isArray(item)
+      ? { label: chartText(item[0]), value: Number(item[1]) }
+      : { label: chartText(item?.label), value: Number(item?.value) })
+      .filter((item) => Number.isFinite(item.value) && item.value >= 0);
+
+    const drawHorizontalBars = (title, entries, options = {}) => {
+      const all = normalizeChartItems(entries);
+      const sorted = options.sort === false ? all : all.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "pt-BR"));
+      const limit = Math.max(1, Number(options.limit) || 10);
+      const items = sorted.slice(0, limit);
+      if (!items.length || !items.some((item) => item.value > 0)) return false;
+
+      const labelWidth = 56;
+      const valueWidth = 16;
+      const plotX = margin + labelWidth + 2;
+      const plotWidth = contentWidth - labelWidth - valueWidth - 2;
+      const rowHeight = 8;
+      const topPad = 2;
+      const max = Math.max(1, ...items.map((item) => item.value));
+      ensureSpace(items.length * rowHeight + 24);
+      sectionTitle(title);
+      const chartTop = y + topPad;
+      const chartBottom = chartTop + items.length * rowHeight;
+
+      doc.setDrawColor(...chartGrid);
+      doc.setLineWidth(0.18);
+      [0, 0.5, 1].forEach((fraction) => {
+        const x = plotX + plotWidth * fraction;
+        doc.line(x, chartTop, x, chartBottom);
+      });
+
+      items.forEach((item, index) => {
+        const rowY = chartTop + index * rowHeight;
+        const labelLines = doc.splitTextToSize(item.label, labelWidth - 3).slice(0, 2);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.2);
+        doc.setTextColor(...ink);
+        doc.text(labelLines, margin, rowY + (labelLines.length > 1 ? 2.5 : 4.5), { lineHeightFactor: 1 });
+
+        doc.setFillColor(...chartTrack);
+        doc.rect(plotX, rowY + 2.5, plotWidth, 3.4, "F");
+        const barWidth = item.value > 0 ? Math.max(0.8, (item.value / max) * plotWidth) : 0;
+        const color = options.colors?.[index] || chartPalette[index % chartPalette.length];
+        if (barWidth > 0) {
+          doc.setFillColor(...color);
+          doc.rect(plotX, rowY + 2.5, barWidth, 3.4, "F");
+        }
+        const value = options.valueFormatter ? options.valueFormatter(item.value) : chartInteger(item.value);
+        doc.setFontSize(6.1);
+        doc.setTextColor(...ink);
+        doc.text(chartText(value), plotX + plotWidth + 2, rowY + 4.9);
+      });
+
+      const axisY = chartBottom + 4.2;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(5.2);
+      doc.setTextColor(90, 100, 112);
+      [0, 0.5, 1].forEach((fraction) => {
+        const value = max * fraction;
+        const label = options.tickFormatter ? options.tickFormatter(value) : chartInteger(value);
+        doc.text(chartText(label), plotX + plotWidth * fraction, axisY, { align: "center" });
+      });
+      y = axisY + 3.5;
+      if (sorted.length > items.length) {
+        doc.setFontSize(5.6);
+        doc.setTextColor(90, 100, 112);
+        doc.text(`Exibidos ${items.length} de ${sorted.length}; a tabela apresenta o conjunto completo.`, margin, y + 2.5);
+        y += 4;
+      }
+      y += 2;
+      return true;
+    };
+
+    const drawColumnBars = (title, entries, options = {}) => {
+      const all = normalizeChartItems(entries);
+      const limit = Math.max(1, Number(options.limit) || 12);
+      const items = all.slice(-limit);
+      if (!items.length || !items.some((item) => item.value > 0)) return false;
+
+      const plotX = margin + 12;
+      const plotWidth = contentWidth - 16;
+      const plotHeight = 31;
+      ensureSpace(plotHeight + 29);
+      sectionTitle(title);
+      const chartTop = y + 6;
+      const chartBottom = chartTop + plotHeight;
+      const max = Math.max(1, ...items.map((item) => item.value));
+
+      doc.setDrawColor(...chartGrid);
+      doc.setLineWidth(0.18);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(5.2);
+      doc.setTextColor(90, 100, 112);
+      [0, 0.5, 1].forEach((fraction) => {
+        const lineY = chartBottom - plotHeight * fraction;
+        doc.line(plotX, lineY, plotX + plotWidth, lineY);
+        if (fraction > 0) doc.text(chartInteger(max * fraction), margin, lineY + 1.6, { align: "left" });
+      });
+
+      const band = plotWidth / items.length;
+      const barWidth = Math.max(1.2, Math.min(10, band * 0.62));
+      items.forEach((item, index) => {
+        const x = plotX + index * band + (band - barWidth) / 2;
+        const barHeight = item.value > 0 ? Math.max(0.7, (item.value / max) * plotHeight) : 0;
+        const color = options.colors?.[index] || chartPalette[index % chartPalette.length];
+        if (barHeight > 0) {
+          doc.setFillColor(...color);
+          doc.rect(x, chartBottom - barHeight, barWidth, barHeight, "F");
+        }
+        const showValue = options.showValues === true || (options.showValues !== false && items.length <= 14);
+        if (showValue && (item.value > 0 || options.showValues === true)) {
+          doc.setFontSize(items.length > 14 ? 4.3 : 5.1);
+          doc.setTextColor(...ink);
+          doc.text(chartInteger(item.value), x + barWidth / 2, chartBottom - barHeight - 1.2, { align: "center" });
+        }
+        const every = Math.max(1, Number(options.labelEvery) || Math.ceil(items.length / 12));
+        if (index % every === 0 || index === items.length - 1) {
+          doc.setFontSize(5.1);
+          doc.setTextColor(...ink);
+          doc.text(item.label, x + barWidth / 2, chartBottom + 4.2, { align: "center" });
+        }
+      });
+      y = chartBottom + 9;
+      if (all.length > items.length) {
+        doc.setFontSize(5.6);
+        doc.setTextColor(90, 100, 112);
+        doc.text(`Exibidos os ${items.length} períodos mais recentes; a tabela apresenta o período completo.`, margin, y + 1.8);
+        y += 4;
+      }
+      y += 2;
+      return true;
+    };
+
+    const drawCompositionBar = (title, segments, denominator) => {
+      const total = Number(denominator);
+      const items = list(segments).map((segment) => ({
+        label: chartText(segment.label),
+        value: Math.max(0, Number(segment.value) || 0),
+        color: segment.color,
+      })).filter((segment) => Number.isFinite(segment.value));
+      if (!items.length || !Number.isFinite(total) || total <= 0) return false;
+      const segmentTotal = items.reduce((sum, item) => sum + item.value, 0);
+      if (segmentTotal <= 0) return false;
+
+      ensureSpace(50);
+      sectionTitle(title);
+      const x = margin + 1;
+      const width = contentWidth - 2;
+      const barY = y + 5;
+      const barHeight = 10;
+      let offset = 0;
+      items.forEach((item, index) => {
+        const segmentWidth = index === items.length - 1
+          ? Math.max(0, width - offset)
+          : width * item.value / segmentTotal;
+        if (segmentWidth > 0) {
+          doc.setFillColor(...(item.color || chartPalette[index % chartPalette.length]));
+          doc.rect(x + offset, barY, segmentWidth, barHeight, "F");
+          offset += segmentWidth;
+        }
+      });
+      items.forEach((item, index) => {
+        const column = index % 2;
+        const row = Math.floor(index / 2);
+        const legendX = x + column * (width / 2);
+        const legendY = barY + barHeight + 6 + row * 6;
+        doc.setFillColor(...(item.color || chartPalette[index % chartPalette.length]));
+        doc.rect(legendX, legendY - 2.4, 3.2, 3.2, "F");
+        const share = total > 0 ? `${((item.value / total) * 100).toFixed(1)}%` : "—";
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.2);
+        doc.setTextColor(...ink);
+        doc.text(`${item.label}: ${chartInteger(item.value)} (${share})`, legendX + 5, legendY);
+      });
+      y = barY + barHeight + 8 + Math.ceil(items.length / 2) * 6;
+      y += 3;
+      return true;
+    };
+
+    const groupTable = (title, rows, keyFn, headers = ["Grupo", "Registros", "% do total"]) => {
+      const grouped = countBy(rows, keyFn);
+      drawTable(title, headers, grouped.map(([key, total]) => [key, total, percent(total, rows.length)]));
+    };
+    const drawTypeStatusTables = () => {
+      const groups = countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia));
+      const records = groups.map(([tipo, total]) => {
+        const rows = occurrences.filter((o) => this.getTipoLabel(o.tipo_ocorrencia) === tipo);
+        const synced = rows.filter((o) => o.status === "synced").length;
+        const pending = rows.filter((o) => o.status === "pending_sync").length;
+        const cancelled = rows.filter((o) => o.status === "cancelled").length;
+        const rectified = rows.filter((o) => o.status === "rectified").length;
+        const rectPending = rows.filter((o) => o.status === "pending_rectification").length;
+        const rectRejected = rows.filter((o) => o.status === "rectification_rejected").length;
+        const others = Math.max(0, total - synced - pending - cancelled - rectified - rectPending - rectRejected);
+        return { tipo, total, synced, pending, cancelled, rectified, rectPending, rectRejected, others };
+      });
+      drawTable("Distribuição, sincronização e cancelamentos por tipo", ["Tipo", "Total", "% do total", "Sincronizadas", "Pend. sincronização", "Canceladas", "Rascunhos / outros", "Taxa de sincronização"], records.map((r) => [r.tipo, r.total, percent(r.total, occurrences.length), r.synced, r.pending, r.cancelled, r.others, percent(r.synced, r.total)]));
+      drawTable("Retificações por tipo", ["Tipo", "Aplicadas", "Pendentes", "Rejeitadas"], records.map((r) => [r.tipo, r.rectified, r.rectPending, r.rectRejected]));
+    };
+    const occurrenceRows = (rows) => rows.map((o) => [
+      safe(o.numero_ocorrencia || o.numero_temporario),
+      formatDateTime(o.criado_em),
+      safe(this.getTipoLabel(o.tipo_ocorrencia)),
+      safe(o.bairro_ocorrencia || o.local_ocorrencia),
+      labelStatus(o.status),
+    ]);
+    const localParts = (value) => {
+      const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(parseDate(value));
+      return Object.fromEntries(p.filter((x) => x.type !== "literal").map((x) => [x.type, Number(x.value)]));
+    };
+    const daysInPeriod = (start, end) => {
+      const a = String(start || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const b = String(end || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!a || !b) return 0;
+      const startUTC = Date.UTC(+a[1], +a[2]-1, +a[3]);
+      const endUTC = Date.UTC(+b[1], +b[2]-1, +b[3]);
+      return endUTC >= startUTC ? Math.floor((endUTC-startUTC)/86400000)+1 : 0;
+    };
+    const monthBins = (rows, start, end) => {
+      const counts = new Map();
+      rows.forEach((o) => {
+        const d = localParts(o.criado_em);
+        if (Number.isFinite(d.year) && Number.isFinite(d.month)) {
+          const key = `${d.year}-${String(d.month).padStart(2,"0")}`;
+          counts.set(key, (counts.get(key)||0)+1);
+        }
+      });
+      const a = String(start || "").match(/^(\d{4})-(\d{2})-\d{2}$/);
+      const b = String(end || "").match(/^(\d{4})-(\d{2})-\d{2}$/);
+      if (a && b) {
+        let year=+a[1], month=+a[2], guard=0;
+        const last=+b[1]*12+(+b[2]-1);
+        while (year*12+(month-1)<=last && guard++<240) {
+          const key=`${year}-${String(month).padStart(2,"0")}`;
+          if (!counts.has(key)) counts.set(key,0);
+          month++; if (month>12) { month=1; year++; }
+        }
+      }
+      return [...counts.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([key,n])=>[`${key.slice(5,7)}/${key.slice(0,4)}`,n]);
+    };
+    const validCoordinate = (lat, lng) => {
+      if (lat === null || lat === undefined || String(lat).trim() === "" || lng === null || lng === undefined || String(lng).trim() === "") return false;
+      const a=Number(lat), b=Number(lng);
+      return Number.isFinite(a) && Number.isFinite(b) && a>=-90 && a<=90 && b>=-180 && b<=180;
+    };
+    const median = (values) => {
+      const arr=values.filter(Number.isFinite).sort((a,b)=>a-b);
+      if (!arr.length) return null;
+      const mid=Math.floor(arr.length/2);
+      return arr.length%2 ? arr[mid] : (arr[mid-1]+arr[mid])/2;
+    };
+
+
+
+    drawHeader(page);
+    sectionTitle(isApproachDetail ? "Identificação do registro" : "Resumo do período");
+    const finalizadas = occurrences.filter((o) => o.status === "synced").length;
+    const pendentes = occurrences.filter((o) => o.status === "pending_sync").length;
+    const canceladas = occurrences.filter((o) => o.status === "cancelled").length;
+    const totalRegistrosPeriodo = Number.isFinite(Number(dados.totalRegistrosPeriodo)) ? Number(dados.totalRegistrosPeriodo) : occurrences.length;
+    const summary = [["Registros consultados", reportType === "cancelamentos" ? totalRegistrosPeriodo : occurrences.length], ["Sincronizadas no sistema", finalizadas], ["Pendentes de sincronização", pendentes], ["Canceladas", canceladas]];
+    if (dados.comparacaoPeriodo) {
+      const c = dados.comparacaoPeriodo;
+      const pct = c.status === "unavailable" ? "Indisponível" : c.anterior > 0 ? `${((c.atual - c.anterior) / c.anterior * 100).toFixed(1)}%` : "Sem base comparável";
+      summary.push(["Período anterior equivalente", c.anterior], ["Variação observada", pct]);
+    }
+    if (reportType === "cancelamentos") {
+      summary.splice(0, summary.length, ["Registros consultados no intervalo", totalRegistrosPeriodo], ["Canceladas", canceladas], ["Proporção cancelada do total", percent(canceladas, totalRegistrosPeriodo)]);
+    }
+    if (reportType === "previsao") {
+      summary.splice(0, summary.length, ["Registros históricos no período", occurrences.length]);
+    }
+    if (reportType === "eficiencia") {
+      summary.splice(0, summary.length,
+        ["Ocorrências criadas", occurrences.length],
+        ["Abordagens de veículos", Number(dados.abordagensVeiculos || 0)],
+        ["Abordagens de pessoas", Number(dados.abordagensPessoas || 0)],
+        ["Conversão abordagem → BO", "Não calculada — sem vínculo verificável"]);
+    }
+    if (reportType === "retificacoes") {
+      const rows = list(dados.retificacoes);
+      summary.splice(0, summary.length,
+        ["Eventos no período", rows.length],
+        ["Aplicadas", rows.filter((r) => r.status === "rectified").length],
+        ["Pendentes", rows.filter((r) => r.status === "pending_rectification").length],
+        ["Rejeitadas", rows.filter((r) => r.status === "rectification_rejected").length]);
+    }
+    if (isApproachReport) {
+      const veiculos = list(dados.veiculos), pessoas = list(dados.pessoas);
+      if (reportType === "abordagens-veiculos") {
+        summary.splice(0, summary.length, ["Abordagens de veículos", veiculos.length], ["Total de abordagens", veiculos.length]);
+      } else if (reportType === "abordagens-pessoas") {
+        summary.splice(0, summary.length, ["Abordagens de pessoas", pessoas.length], ["Total de abordagens", pessoas.length]);
+      } else {
+        summary.splice(0, summary.length, ["Abordagens de veículos", veiculos.length], ["Abordagens de pessoas", pessoas.length], ["Total de abordagens", veiculos.length + pessoas.length]);
+      }
+    }
+    if (isApproachDetail) {
+      const record = list(isApproachDetailVehicle ? dados.veiculos : dados.pessoas)[0];
+      const photosCount = approachPhotos(record).length;
+      summary.splice(0, summary.length,
+        ["Tipo de abordagem", isApproachDetailVehicle ? "Veículo" : "Pessoa"],
+        ["Fotos anexadas", photosCount]);
+    }
+    drawFields(summary);
+    if (dados.notaMetodologica) drawFields([["Nota metodológica", dados.notaMetodologica]]);
+
+    switch (reportType) {
+      case "executivo": {
+        const dias = daysInPeriod(dados.dataInicio, dados.dataFim);
+        const comparacao = dados.comparacaoPeriodo;
+        const situacaoComparacao = !comparacao || comparacao.status === "unavailable" ? "Indisponível" : comparacao.anterior > 0 ? `${comparacao.dias} dias equivalentes; sem sobreposição` : "Sem base comparável";
+        drawFields([["Taxa de sincronização", percent(finalizadas, occurrences.length)], ["Média registrada por dia", dias ? (occurrences.length / dias).toFixed(1) : "—"]]);
+        drawHorizontalBars("Distribuição por tipo de ocorrência", countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia)), { limit: 8 });
+        const monthly = monthBins(occurrences, dados.dataInicio, dados.dataFim);
+        drawColumnBars("Evolução mensal observada", monthly, { limit: 12 });
+        drawTypeStatusTables();
+        drawTable("Evolução mensal observada", ["Mês", "Registros"], monthly);
+        break;
+      }
+      case "por-tipo":
+        drawHorizontalBars("Distribuição por tipo de ocorrência", countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia)), { limit: 10 });
+        drawTypeStatusTables();
+        break;
+
+
+      case "por-local": {
+        const locations = countBy(occurrences, (o) => o.bairro_ocorrencia || o.local_ocorrencia);
+        drawHorizontalBars("Localidades com maior volume", locations, { limit: 10 });
+        drawTable("Ocorrências por localidade", ["Bairro / localidade", "Registros", "% do total"], locations.map(([local, n]) => [local, n, percent(n, occurrences.length)]));
+        break;
+      }
+      case "atendimento": {
+        const valid = occurrences.map((o) => {
+          const start = parseDate(o.data_hora_inicio);
+          const end = parseDate(o.data_hora_encerramento || o.data_hora_finalizacao);
+          return { o, minutes: Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && end > start ? (end - start) / 60000 : null };
+        }).filter((x) => x.minutes !== null);
+        const mean = valid.length ? valid.reduce((a, x) => a + x.minutes, 0) / valid.length : null;
+        const quick = valid.filter((x) => x.minutes < 15).length;
+        const slow = valid.filter((x) => x.minutes > 45).length;
+        const totalsByType = countBy(valid, (x) => this.getTipoLabel(x.o.tipo_ocorrencia));
+        drawFields([["Amostras com duração válida", valid.length], ["Sem duração válida", occurrences.length - valid.length], ["Média (minutos)", mean === null ? "—" : mean.toFixed(1)], ["Rápidos (< 15 min)", quick], ["Lentos (> 45 min)", slow]]);
+        if (valid.length) {
+          const durationMeans = totalsByType.map(([tipo]) => {
+            const values = valid.filter((x) => this.getTipoLabel(x.o.tipo_ocorrencia) === tipo).map((x) => x.minutes);
+            return { label: tipo, value: values.reduce((sum, value) => sum + value, 0) / values.length };
+          });
+          drawHorizontalBars("Duração média por tipo (minutos)", durationMeans, {
+            limit: 10,
+            valueFormatter: (value) => `${value.toFixed(1)} min`,
+            tickFormatter: (value) => value.toFixed(0),
+          });
+        }
+        drawTable("Duração por tipo", ["Tipo", "Amostras", "Média (min)", "Mediana (min)", "Rápidos (<15)", "Lentos (>45)"], totalsByType.map(([tipo]) => {
+          const values = valid.filter((x) => this.getTipoLabel(x.o.tipo_ocorrencia) === tipo).map((x) => x.minutes);
+          const med = median(values);
+          return [tipo, values.length, (values.reduce((a,b) => a+b,0)/values.length).toFixed(1), med === null ? "—" : med.toFixed(1), values.filter((v)=>v<15).length, values.filter((v)=>v>45).length];
+        }));
+
+        break;
+      }
+      case "desempenho": {
+        const ranking = list(dados.ranking);
+        const totalAbordagens = Number(dados.totalAbordagens || 0);
+        drawFields([["Responsáveis pelo cadastro", ranking.filter((r) => r.total_atendimentos > 0).length], ["Abordagens cadastradas", totalAbordagens]]);
+        drawTable("Contagem por responsável pelo cadastro", ["Usuário", "Ocorrências", "Sincronizadas", "Pend. sincronização", "Canceladas", "Abord. veículos", "Abord. pessoas", "Total"], ranking.map((r) => [r.nome, r.ocorrencias?.total || 0, r.ocorrencias?.finalizadas || 0, r.ocorrencias?.pendentes || 0, r.ocorrencias?.canceladas || 0, r.abordagens?.veiculos || 0, r.abordagens?.pessoas || 0, r.total_atendimentos || 0]));
+        break;
+      }
+      case "retificacoes": {
+        const rows = list(dados.retificacoes);
+        drawHorizontalBars("Situação dos eventos de retificação", [
+          { label: "Aplicadas", value: rows.filter((r) => r.status === "rectified").length },
+          { label: "Pendentes", value: rows.filter((r) => r.status === "pending_rectification").length },
+          { label: "Rejeitadas", value: rows.filter((r) => r.status === "rectification_rejected").length },
+        ], { sort: false, colors: [[0, 132, 61], [245, 158, 11], [220, 38, 38]] });
+        drawTable("Eventos de retificação", ["Nº GM", "Data do evento", "Tipo", "Situação atual", "Justificativa", "Motivo da rejeição"], rows.map((r) => [r.numero_ocorrencia || r.numero_temporario || r.numero, formatDateTime(r.data_evento || r.data_solicitacao || r.criado_em), this.getTipoLabel(r.tipo_ocorrencia || r.tipo), labelStatus(r.status), r.solicitacao_retificacao_justificativa || r.justificativa_retificacao || r.justificativa, r.motivo_rejeicao]));
+        break;
+      }
+      case "cancelamentos": {
+        const cancelledRows = occurrences.filter((o) => o.status === "cancelled");
+        const demaisRegistros = Math.max(0, totalRegistrosPeriodo - cancelledRows.length);
+        drawCompositionBar("Composição dos registros consultados", [
+          { label: "Canceladas", value: cancelledRows.length, color: [220, 38, 38] },
+          { label: "Demais registros", value: demaisRegistros, color: [0, 63, 135] },
+        ], totalRegistrosPeriodo);
+        drawTable("Ocorrências canceladas", ["Nº GM", "Data", "Tipo", "Localidade", "Motivo"], occurrenceRows(cancelledRows).map((row, i) => [row[0], row[1], row[2], row[3], safe(cancelledRows[i].motivo_cancelamento)]));
+        break;
+      }
+      case "tendencias": {
+        const days = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+        const byDay = new Map(days.map((d) => [d, 0]));
+        const byHour = new Map(Array.from({ length: 24 }, (_, h) => [`${String(h).padStart(2,"0")}:00`, 0]));
+        occurrences.forEach((o) => {
+          const p = localParts(o.criado_em);
+          const day = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", weekday: "long" }).format(new Date(Date.UTC(p.year, p.month - 1, p.day)));
+          if (byDay.has(day)) byDay.set(day, byDay.get(day)+1);
+          const hour = `${String(p.hour).padStart(2,"0")}:00`;
+          if (byHour.has(hour)) byHour.set(hour, byHour.get(hour)+1);
+        });
+        const monthly = monthBins(occurrences, dados.dataInicio, dados.dataFim);
+        const dayRows = [...byDay];
+        const hourRows = [...byHour];
+        drawColumnBars("Evolução mensal observada", monthly, { limit: 12 });
+        drawHorizontalBars("Ocorrências por dia da semana", dayRows, { sort: false });
+        drawColumnBars("Ocorrências por hora local", hourRows, { limit: 24, labelEvery: 3, showValues: true });
+        newPage();
+        drawTable("Evolução mensal observada", ["Mês", "Registros"], monthly);
+        drawTable("Ocorrências por dia da semana", ["Dia", "Registros", "% do total"], dayRows.map(([d, n]) => [d, n, percent(n, occurrences.length)]));
+        
+        break;
+      }
+      case "mapa": {
+        const points = occurrences.filter((o) => validCoordinate(o.latitude, o.longitude));
+        drawTable("Registros com coordenadas válidas", ["Nº GM", "Data", "Tipo", "Latitude", "Longitude", "Local"], points.map((o) => [o.numero_ocorrencia || o.numero_temporario, formatDateTime(o.criado_em), this.getTipoLabel(o.tipo_ocorrencia), Number(o.latitude).toFixed(6), Number(o.longitude).toFixed(6), o.bairro_ocorrencia || o.local_ocorrencia]));
+        break;
+      }
+      case "abordagem-detalhe-veiculo":
+      case "abordagem-detalhe-pessoa": {
+        const isVehicle = reportType === "abordagem-detalhe-veiculo";
+        const record = list(isVehicle ? dados.veiculos : dados.pessoas)[0];
+        if (!record) {
+          drawFields([["Registro", "Abordagem não encontrada ou indisponível."]]);
+          break;
+        }
+        const phaseLabel = (value) => ({ advertencia: "Advertência", multa: "Multa" }[value] || safe(value, "Não informada"));
+        const statusLabel = (value) => ({ ativa: "Ativa", encerrada: "Encerrada", finalizada: "Finalizada", cancelada: "Cancelada" }[value] || safe(value, "Não informada"));
+        const identificationLabel = (value) => ({ identificado: "Identificado", parcial: "Parcial", nao_identificado: "Não identificado" }[value] || safe(value, "Não informada"));
+        const attendanceLabel = (value) => value === "legado_nao_classificado" ? "Legado — contexto não classificado" : safe(value, "Não informado");
+        sectionTitle("Dados do atendimento");
+        drawFields([
+          ["Data/hora de início", formatDateTime(record.data_hora_inicio || record.criado_em)],
+          ["Data/hora de encerramento", formatDateTime(record.data_hora_encerramento || record.data_hora_finalizacao)],
+          ["Situação", statusLabel(record.status_abordagem)],
+          ["Fase", phaseLabel(record.fase)],
+          ["Tipo de atendimento", attendanceLabel(record.tipo_atendimento)],
+          ["Responsável pelo registro", record.usuarios?.nome_completo || record.nome_responsavel],
+        ]);
+        sectionTitle(isVehicle ? "Identificação do veículo" : "Identificação da pessoa");
+        if (isVehicle) {
+          drawFields([
+            ["Situação da identificação", identificationLabel(record.identificacao_status)],
+            ["Placa", record.placa],
+            ["Marca/modelo", record.marca_modelo],
+            ["Cor", record.cor],
+            ["Condutor", record.condutor_nome],
+            ["Local da abordagem", record.local_abordagem],
+          ]);
+        } else {
+          drawFields([
+            ["Situação da identificação", identificationLabel(record.identificacao_status)],
+            ["Nome", record.nome],
+            ["Alcunha", record.alcunha],
+            ["RG", record.rg],
+            ["CPF", record.cpf],
+            ["Local da abordagem", record.local_abordagem],
+            ["Situação de regularização", record.status_regularizacao],
+            ["Prazo", formatDate(record.prazo_data || record.prazo)],
+            ["Reincidências", record.reincidencia_count],
+          ]);
+        }
+        if (record.descricao_identificacao) drawParagraphSection("Descrição complementar da identificação", record.descricao_identificacao);
+        sectionTitle("Contexto e providências");
+        drawFields([
+          ["Coordenadas", record.latitude !== null && record.latitude !== undefined && record.longitude !== null && record.longitude !== undefined ? `${record.latitude}, ${record.longitude}` : "Não registradas"],
+        ]);
+        drawParagraphSection("Motivo objetivo do atendimento", record.motivo);
+        drawParagraphSection("Providências adotadas", record.providencia);
+        drawParagraphSection("Observações complementares", record.observacoes);
+        await drawApproachPhotos(record, options.attachmentColumns);
+        break;
+      }
+      case "abordagens":
+      case "abordagens-veiculos":
+      case "abordagens-pessoas":
+      case "abordagens-geral": {
+        const vehicles = list(dados.veiculos), people = list(dados.pessoas);
+        const phaseLabel = (v) => ({ advertencia: "Advertência", multa: "Multa" }[v] || safe(v));
+        const approachStatus = (v) => ({ ativa: "Ativa", encerrada: "Encerrada", finalizada: "Finalizada", cancelada: "Cancelada" }[v] || safe(v));
+        const attendanceType = (v) => v === "legado_nao_classificado" ? "Legado — contexto não classificado" : safe(v);
+        if (reportType === "abordagens-geral" || reportType === "abordagens") {
+          drawHorizontalBars("Abordagens por categoria", [
+            { label: "Veículos", value: vehicles.length },
+            { label: "Pessoas", value: people.length },
+          ], { sort: false, colors: [[0, 63, 135], [0, 132, 61]] });
+        } else {
+          const selected = reportType === "abordagens-veiculos" ? vehicles : people;
+          drawHorizontalBars("Abordagens por fase", [
+            { label: "Advertência", value: selected.filter((item) => item.fase === "advertencia").length },
+            { label: "Multa", value: selected.filter((item) => item.fase === "multa").length },
+            { label: "Outra / não informada", value: selected.filter((item) => !["advertencia", "multa"].includes(item.fase)).length },
+          ], { sort: false, colors: [[0, 132, 61], [220, 38, 38], [71, 85, 105]] });
+        }
+        if (reportType !== "abordagens-pessoas") {
+          groupTable("Abordagens de veículos por motivo", vehicles, (v) => v.motivo, ["Motivo informado", "Registros", "% das abordagens"]);
+          drawTable("Veículos — identificação e local", ["Data", "Placa / descrição", "Marca / modelo / cor", "Local", "Identificação"], vehicles.map((v) => [formatDateTime(v.criado_em), v.placa || v.descricao_identificacao, [v.marca_modelo, v.cor].filter(Boolean).join(" / "), v.local_abordagem, safe(v.identificacao_status)]));
+          drawTable("Veículos — contexto e providências", ["Data", "Tipo de atendimento", "Motivo", "Providência", "Fase", "Situação", "Responsável"], vehicles.map((v) => [formatDateTime(v.criado_em), attendanceType(v.tipo_atendimento), v.motivo, v.providencia, phaseLabel(v.fase), approachStatus(v.status_abordagem), v.usuarios?.nome_completo]));
+        }
+        if (reportType !== "abordagens-veiculos") {
+          groupTable("Abordagens de pessoas por motivo", people, (v) => v.motivo, ["Motivo informado", "Registros", "% das abordagens"]);
+          drawTable("Pessoas — identificação e local", ["Data", "Nome / alcunha", "RG", "CPF", "Local", "Reincidências"], people.map((v) => [formatDateTime(v.criado_em), [v.nome, v.alcunha].filter(Boolean).join(" / "), v.rg, v.cpf, v.local_abordagem, v.reincidencia_count ?? "—"]));
+          drawTable("Pessoas — contexto e providências", ["Data", "Tipo de atendimento", "Motivo", "Providência", "Fase", "Situação / regularização", "Prazo", "Responsável"], people.map((v) => [formatDateTime(v.criado_em), attendanceType(v.tipo_atendimento), v.motivo, v.providencia, phaseLabel(v.fase), [approachStatus(v.status_abordagem), v.status_regularizacao ? safe(v.status_regularizacao) : ""].filter(Boolean).join(" / ") || "—", formatDate(v.prazo_data || v.prazo), v.usuarios?.nome_completo]));
+        }
+
+        break;
+      }
+      case "produtividade": {
+        const days = daysInPeriod(dados.dataInicio, dados.dataFim);
+        const byDate = new Map();
+        occurrences.forEach((o) => {
+          const p = localParts(o.criado_em);
+          if (!Number.isFinite(p.year) || !Number.isFinite(p.month) || !Number.isFinite(p.day)) return;
+          const key = `${p.year}-${String(p.month).padStart(2,"0")}-${String(p.day).padStart(2,"0")}`;
+          byDate.set(key, (byDate.get(key) || 0) + 1);
+        });
+        const topDays = [...byDate.entries()].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0])).slice(0,10);
+        const peak = topDays[0];
+        drawFields([["Média por dia corrido", days ? (occurrences.length / days).toFixed(1) : "—"], ["Dias com registro", byDate.size], ["Maior volume em um dia", peak ? peak[1] : "—"], ["Data local de pico", peak ? formatDate(peak[0]) : "—"]]);
+        const monthly = monthBins(occurrences, dados.dataInicio, dados.dataFim);
+        drawColumnBars("Volume mensal registrado", monthly, { limit: 12 });
+        drawTable("Volume mensal observado", ["Mês", "Registros criados"], monthly);
+        drawTable("Dias com maior volume de registros", ["Data local", "Registros"], topDays.map(([date,count]) => [formatDate(date), count]));
+        break;
+      }
+      case "previsao":
+        drawFields([["Projeção", "Não gerada — não há método preditivo validado"], ["Orientação", "Consultar tendências históricas observadas"]]);
+        break;
+      case "eficiencia":
+        drawFields([["Conversão abordagem → BO", "Não calculada"], ["Critério", "Sem vínculo verificável entre uma abordagem específica e um BO"]]);
+        break;
+      case "detalhado":
+        drawTable("Registros do período — campos principais", ["Nº GM", "BO externo", "Data/hora", "Tipo", "Gravidade", "Localidade", "Situação"], occurrences.map((o) => [o.numero_ocorrencia || o.numero_temporario || "Rascunho", o.numero_bo, formatDateTime(o.criado_em), this.getTipoLabel(o.tipo_ocorrencia), o.gravidade, o.bairro_ocorrencia || o.local_ocorrencia, labelStatus(o.status)]));
+        break;
+
+
+      default:
+        drawTable("Registros do período — campos principais", ["Nº GM", "BO externo", "Data/hora", "Tipo", "Gravidade", "Localidade", "Situação"], occurrences.map((o) => [o.numero_ocorrencia || o.numero_temporario || "Rascunho", o.numero_bo, formatDateTime(o.criado_em), this.getTipoLabel(o.tipo_ocorrencia), o.gravidade, o.bairro_ocorrencia || o.local_ocorrencia, labelStatus(o.status)]));
+        break;
+    }
+
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) drawFooter(i, totalPages);
+    return doc;
+  }
+
   async exportarRelatorio(tipo, dados, options = {}) {
     try {
       await this.init();
 
       const opts = { ...this.defaultOptions, ...options };
-
-      let doc;
-      switch (tipo) {
-        case "desempenho":
-          doc = await this.gerarPDFDesempenho(dados, opts);
-          break;
-        case "ocorrencias":
-          doc = await this.gerarPDFListaOcorrencias(dados, opts);
-          break;
-        case "abordagens":
-          doc = await this.gerarPDFAbordagens(dados, opts);
-          break;
-        case "retificacoes":
-          doc = await this.gerarPDFRetificacoes(dados, opts);
-          break;
-        default:
-          throw new Error(`Tipo de relatório não suportado: ${tipo}`);
-      }
-
-      const nomeArquivo = `Relatorio_${tipo}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const reportType = options.reportType || dados?.tipoRelatorio || tipo;
+      const doc = await this.gerarPDFRelatorioInstitucional({ ...dados, tipoRelatorio: reportType }, opts);
+      const slug = String(reportType).toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
+      const nomeArquivo = `Relatorio_${slug}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(nomeArquivo);
-      console.log(`✅ Relatório ${tipo} exportado com sucesso`);
+      console.log(`✅ Relatório ${reportType} exportado com sucesso`);
       return { success: true, fileName: nomeArquivo };
     } catch (error) {
       console.error("❌ Erro ao exportar relatório:", error);
@@ -1578,7 +2571,7 @@ class PDFExport {
     const map = {
       draft: "Rascunho",
       pending_sync: "Pendente",
-      synced: "Finalizada",
+      synced: "Sincronizada",
       cancelled: "Cancelada",
       rectified: "Retificada",
       pending_rectification: "Retificação Pendente",

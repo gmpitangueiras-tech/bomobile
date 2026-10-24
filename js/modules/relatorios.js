@@ -98,6 +98,7 @@ const TIPOS_OCORRENCIA = [
     icon: "fa-hand-holding-heart",
     cor: "#06b6d4",
   },
+  { value: "flagrante", label: "Flagrante", icon: "fa-eye", cor: "#1d4ed8" },
   { value: "outro", label: "Outro", icon: "fa-ellipsis-h", cor: "#6b7280" },
 ];
 
@@ -116,6 +117,7 @@ let estado = {
   previsaoCarregando: false,
   dadosCache: null,
   abordagensCache: null,
+  comparacaoCache: null,
   isLoading: false,
 };
 
@@ -123,11 +125,49 @@ let estado = {
 // FUNÇÕES AUXILIARES - FORMATAÇÃO
 // ============================================
 
+function obterPartesDataSP(valor = new Date()) {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(valor);
+  return Object.fromEntries(partes.filter((p) => p.type !== "literal").map((p) => [p.type, Number(p.value)]));
+}
+
+function criarDateBanco(valor) {
+  if (!valor) return new Date(NaN);
+  if (valor instanceof Date) return new Date(valor.getTime());
+  const raw = String(valor).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T00:00:00Z`);
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(raw)) {
+    return new Date(`${raw.replace(' ', 'T')}Z`);
+  }
+  return new Date(raw);
+}
+
 function formatarData(date) {
   if (!date) return "";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("pt-BR");
+  const raw = String(date);
+  const somenteData = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (somenteData) return `${somenteData[3]}/${somenteData[2]}/${somenteData[1]}`;
+  const d = criarDateBanco(date);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo" }).format(d);
+}
+
+function formatarDataHoraSP(valor) {
+  const d = criarDateBanco(valor);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short",
+  }).format(d);
+}
+
+
+function escaparHTML(valor) {
+  return String(valor ?? "").replace(/[&<>"']/g, (caractere) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[caractere]);
 }
 
 function getTipoLabel(value) {
@@ -168,58 +208,92 @@ function calcularEstatisticas(ocorrencias) {
     pendentes: ocorrencias.filter((o) => o.status === "pending_sync").length,
     canceladas: ocorrencias.filter((o) => o.status === "cancelled").length,
     retificadas: ocorrencias.filter((o) => o.status === "rectified").length,
+    retificacoesPendentes: ocorrencias.filter((o) => o.status === "pending_rectification").length,
+    retificacoesRejeitadas: ocorrencias.filter((o) => o.status === "rectification_rejected").length,
   };
 }
 
-function agruparPorTipo(ocorrencias) {
-  const tipos = {};
-  const total = ocorrencias.length || 1;
 
+function agruparPorTipo(ocorrencias) {
+  const tipos = Object.create(null);
+  const total = ocorrencias.length;
   ocorrencias.forEach((o) => {
     const tipo = o.tipo_ocorrencia || "Não informado";
-    if (!tipos[tipo]) {
-      tipos[tipo] = { total: 0, finalizadas: 0, pendentes: 0 };
-    }
-    tipos[tipo].total++;
-    if (o.status === "synced") tipos[tipo].finalizadas++;
-    if (o.status === "pending_sync") tipos[tipo].pendentes++;
+    if (!tipos[tipo]) tipos[tipo] = {
+      total: 0, finalizadas: 0, pendentes: 0, canceladas: 0,
+      retificadas: 0, retificacoesPendentes: 0, retificacoesRejeitadas: 0,
+    };
+    const item = tipos[tipo];
+    item.total++;
+    if (o.status === "synced") item.finalizadas++;
+    if (o.status === "pending_sync") item.pendentes++;
+    if (o.status === "cancelled") item.canceladas++;
+    if (o.status === "rectified") item.retificadas++;
+    if (o.status === "pending_rectification") item.retificacoesPendentes++;
+    if (o.status === "rectification_rejected") item.retificacoesRejeitadas++;
   });
-
-  return Object.keys(tipos)
-    .map((key) => ({
-      tipo: getTipoLabel(key),
-      total: tipos[key].total,
-      finalizadas: tipos[key].finalizadas,
-      pendentes: tipos[key].pendentes,
-      percentual: ((tipos[key].total / total) * 100).toFixed(1),
-    }))
-    .sort((a, b) => b.total - a.total);
+  return Object.keys(tipos).map((key) => ({
+    tipo: getTipoLabel(key), ...tipos[key],
+    outros: Math.max(0, tipos[key].total - tipos[key].finalizadas - tipos[key].pendentes - tipos[key].canceladas - tipos[key].retificadas - tipos[key].retificacoesPendentes - tipos[key].retificacoesRejeitadas),
+    percentual: (total > 0 ? (tipos[key].total / total) * 100 : 0).toFixed(1),
+  })).sort((a, b) => b.total - a.total || a.tipo.localeCompare(b.tipo, "pt-BR"));
 }
 
-function agruparPorMes(ocorrencias) {
-  const meses = {};
+
+function renderTabelasPorTipoHTML(porTipo, incluirTaxa = false) {
+  const th = (label) => `<th>${label}</th>`;
+  const statusHeaders = ["Tipo", "Total", "% do total", "Sincronizadas", "Pend. sincronização", "Canceladas", "Rascunhos / outros"];
+  if (incluirTaxa) statusHeaders.push("Taxa de sincronização");
+  const statusRows = porTipo.map((t) => `<tr><td>${escaparHTML(t.tipo)}</td><td>${t.total}</td><td>${t.percentual}%</td><td>${t.finalizadas}</td><td>${t.pendentes}</td><td>${t.canceladas}</td><td>${t.outros}</td>${incluirTaxa ? `<td>${t.total ? `${(t.finalizadas / t.total * 100).toFixed(1)}%` : "—"}</td>` : ""}</tr>`).join("");
+  const rectRows = porTipo.map((t) => `<tr><td>${escaparHTML(t.tipo)}</td><td>${t.retificadas}</td><td>${t.retificacoesPendentes}</td><td>${t.retificacoesRejeitadas}</td></tr>`).join("");
+  const emptyStatus = incluirTaxa ? 8 : 7;
+  return `
+    <div class="report-content-card"><h3>Distribuição, sincronização e cancelamentos</h3>
+      <div class="table-wrapper report-table-wide"><table><thead><tr>${statusHeaders.map(th).join("")}</tr></thead><tbody>${statusRows || `<tr><td colspan="${emptyStatus}">Nenhum registro no período.</td></tr>`}</tbody></table></div>
+    </div>
+    <div class="report-content-card"><h3>Retificações por tipo</h3>
+      <div class="table-wrapper"><table><thead><tr><th>Tipo</th><th>Aplicadas</th><th>Pendentes</th><th>Rejeitadas</th></tr></thead><tbody>${rectRows || `<tr><td colspan="4">Nenhuma retificação no período.</td></tr>`}</tbody></table></div>
+    </div>
+  `;
+}
+
+function agruparPorMes(ocorrencias, dataInicio, dataFim) {
+  const meses = new Map();
   ocorrencias.forEach((o) => {
-    const data = new Date(o.criado_em);
-    const mes = `${String(data.getMonth() + 1).padStart(2, "0")}/${data.getFullYear()}`;
-    if (!meses[mes]) meses[mes] = 0;
-    meses[mes]++;
+    const d = obterPartesDataSP(criarDateBanco(o.criado_em));
+    if (!Number.isFinite(d.year) || !Number.isFinite(d.month)) return;
+    const chave = `${d.year}-${String(d.month).padStart(2, "0")}`;
+    meses.set(chave, (meses.get(chave) || 0) + 1);
   });
-
-  return Object.keys(meses)
-    .sort((a, b) => {
-      const [mesA, anoA] = a.split("/");
-      const [mesB, anoB] = b.split("/");
-      return `${anoA}${mesA}`.localeCompare(`${anoB}${mesB}`);
-    })
-    .map((mes) => ({ label: mes, value: meses[mes] }));
+  const inicio = dataISOValida(dataInicio), fim = dataISOValida(dataFim);
+  if (inicio && fim && fim.utc >= inicio.utc) {
+    let year = inicio.y, month = inicio.mes;
+    const endKey = fim.y * 12 + (fim.mes - 1);
+    while (year * 12 + (month - 1) <= endKey) {
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+      if (!meses.has(key)) meses.set(key, 0);
+      month++;
+      if (month > 12) { month = 1; year++; }
+    }
+  }
+  return [...meses.entries()].sort(([a],[b]) => a.localeCompare(b))
+    .map(([key, value]) => ({ label: `${key.slice(5,7)}/${key.slice(0,4)}`, value }));
 }
+
+function medianaNumerica(valores) {
+  const ordenados = valores.filter(Number.isFinite).sort((a,b) => a-b);
+  if (!ordenados.length) return null;
+  const meio = Math.floor(ordenados.length / 2);
+  return ordenados.length % 2 ? ordenados[meio] : (ordenados[meio - 1] + ordenados[meio]) / 2;
+}
+
 
 function agruparPorBairro(ocorrencias) {
   const bairros = {};
-  const total = ocorrencias.length || 1;
+  const total = ocorrencias.length;
 
   ocorrencias.forEach((o) => {
-    const bairro = o.bairro_ocorrencia || "Não informado";
+    const bairro = o.bairro_ocorrencia || o.local_ocorrencia || "Não informado";
     if (!bairros[bairro]) bairros[bairro] = 0;
     bairros[bairro]++;
   });
@@ -228,7 +302,7 @@ function agruparPorBairro(ocorrencias) {
     .map((key) => ({
       bairro: key,
       total: bairros[key],
-      percentual: ((bairros[key] / total) * 100).toFixed(1),
+      percentual: (total > 0 ? (bairros[key] / total) * 100 : 0).toFixed(1),
     }))
     .sort((a, b) => b.total - a.total);
 }
@@ -238,32 +312,71 @@ function calcularMediaDiaria(ocorrencias, dataInicio, dataFim) {
   return dias > 0 ? (ocorrencias.length / dias).toFixed(1) : 0;
 }
 
+function dataISOValida(valor) {
+  const m = String(valor || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]), mes = Number(m[2]), dia = Number(m[3]);
+  const t = Date.UTC(y, mes - 1, dia);
+  const d = new Date(t);
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return null;
+  return { y, mes, dia, utc: t };
+}
+
 function calcularDiasPeriodo(dataInicio, dataFim) {
-  const inicio = new Date(dataInicio);
-  const fim = new Date(dataFim);
-  return Math.ceil((fim - inicio) / (1000 * 60 * 60 * 24)) + 1;
+  const inicio = dataISOValida(dataInicio);
+  const fim = dataISOValida(dataFim);
+  if (!inicio || !fim || fim.utc < inicio.utc) return 0;
+  return Math.floor((fim.utc - inicio.utc) / 86400000) + 1;
+}
+
+function dataCalendarioISO(utc) {
+  return new Date(utc).toISOString().slice(0, 10);
 }
 
 function calcularDataAnterior(dataInicio, dataFim) {
-  const inicio = new Date(dataInicio);
-  const fim = new Date(dataFim);
-  const diff = fim - inicio;
-  const data = new Date(inicio);
-  data.setTime(data.getTime() - diff);
-  return data.toISOString().slice(0, 10);
+  const inicio = dataISOValida(dataInicio);
+  const dias = calcularDiasPeriodo(dataInicio, dataFim);
+  if (!inicio || !dias) return null;
+  const fimAnterior = inicio.utc - 86400000;
+  const inicioAnterior = fimAnterior - (dias - 1) * 86400000;
+  return { dataInicio: dataCalendarioISO(inicioAnterior), dataFim: dataCalendarioISO(fimAnterior) };
+}
+
+function dataLocalSPParaISO(valor, fimDoDia = false) {
+  const data = dataISOValida(valor);
+  if (!data) throw new Error(`Data inválida no filtro: ${valor || "vazia"}`);
+  const hora = fimDoDia ? 23 : 0;
+  const minuto = fimDoDia ? 59 : 0;
+  const segundo = fimDoDia ? 59 : 0;
+  const milissegundo = fimDoDia ? 999 : 0;
+  const alvoUTC = Date.UTC(data.y, data.mes - 1, data.dia, hora, minuto, segundo, milissegundo);
+  let candidato = alvoUTC;
+  for (let i = 0; i < 3; i++) {
+    const partes = obterPartesDataSP(new Date(candidato));
+    const localComoUTC = Date.UTC(partes.year, partes.month - 1, partes.day, partes.hour, partes.minute, partes.second, new Date(candidato).getUTCMilliseconds());
+    const ajuste = alvoUTC - localComoUTC;
+    if (!ajuste) break;
+    candidato += ajuste;
+  }
+  return new Date(candidato).toISOString();
+}
+
+
+function coordenadaValida(latitude, longitude) {
+  if (latitude === null || latitude === undefined || String(latitude).trim() === "" ||
+      longitude === null || longitude === undefined || String(longitude).trim() === "") return false;
+  const lat = Number(latitude), lng = Number(longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 function calcularCentroMapa(dados) {
   if (!dados || dados.length === 0) return [-23.456, -47.123];
-  let lat = 0,
-    lng = 0;
-  let count = 0;
+  let lat = 0, lng = 0, count = 0;
   dados.forEach((p) => {
-    if (p.latitude && p.longitude) {
-      lat += parseFloat(p.latitude);
-      lng += parseFloat(p.longitude);
-      count++;
-    }
+    if (!coordenadaValida(p.latitude, p.longitude)) return;
+    lat += Number(p.latitude);
+    lng += Number(p.longitude);
+    count++;
   });
   return count > 0 ? [lat / count, lng / count] : [-23.456, -47.123];
 }
@@ -272,54 +385,123 @@ function calcularCentroMapa(dados) {
 // FUNÇÕES DE BUSCA DE DADOS
 // ============================================
 
-async function buscarOcorrenciasPeriodo(dataInicio, dataFim) {
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return [];
+const TAMANHO_PAGINA_RELATORIOS = 1000;
 
-    const { data, error } = await client
+async function buscarTodasPaginasRelatorio(criarConsulta, descricao) {
+  const acumulado = [];
+  for (let inicio = 0; ; inicio += TAMANHO_PAGINA_RELATORIOS) {
+    const { data, error } = await criarConsulta().range(inicio, inicio + TAMANHO_PAGINA_RELATORIOS - 1);
+    if (error) throw new Error(`Falha ao consultar ${descricao}: ${error.message || "erro de comunicação"}`);
+    const pagina = Array.isArray(data) ? data : [];
+    acumulado.push(...pagina);
+    if (pagina.length < TAMANHO_PAGINA_RELATORIOS) return acumulado;
+  }
+}
+
+function limitesPeriodoSP(dataInicio, dataFim) {
+  if (!dataISOValida(dataInicio) || !dataISOValida(dataFim) || dataFim < dataInicio) {
+    throw new Error("Período inválido: confira as datas inicial e final.");
+  }
+  // As colunas consultadas são timestamp without time zone; a sessão do banco é UTC.
+  // Mantemos os componentes UTC correspondentes ao instante de São Paulo, sem sufixo Z,
+  // para o PostgREST não interpretar um fuso sobre uma coluna sem fuso.
+  return {
+    inicio: dataLocalSPParaISO(dataInicio, false).replace(/Z$/, ""),
+    fim: dataLocalSPParaISO(dataFim, true).replace(/Z$/, ""),
+  };
+}
+
+async function buscarOcorrenciasPeriodo(dataInicio, dataFim) {
+  const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) throw new Error("Cliente de dados indisponível; não foi possível consultar ocorrências.");
+  const limites = limitesPeriodoSP(dataInicio, dataFim);
+  try {
+    const rows = await buscarTodasPaginasRelatorio(() => client
       .from("ocorrencias")
       .select("*")
-      .gte("criado_em", dataInicio)
-      .lte("criado_em", dataFim + "T23:59:59");
-
-    if (error) throw error;
-    return data || [];
+      .is("deleted_at", null)
+      .gte("criado_em", limites.inicio)
+      .lte("criado_em", limites.fim)
+      .order("criado_em", { ascending: true })
+      .order("id", { ascending: true }), "ocorrências");
+    return rows.filter((o) => o.deleted_at == null && o.esta_ativa !== false);
   } catch (error) {
     console.error("Erro ao buscar ocorrências:", error);
-    return [];
+    throw error;
   }
+}
+
+
+function obterDataEventoRetificacao(o) {
+  if (o.status === "pending_rectification") return o.solicitada_em || o.criado_em || null;
+  if (o.status === "rectified") return o.retificado_em || o.aprovada_em || o.solicitada_em || o.criado_em || null;
+  if (o.status === "rectification_rejected") return o.rejeitada_em || o.solicitada_em || o.criado_em || null;
+  return null;
+}
+
+function dentroDoPeriodoBanco(valor, limites) {
+  const instante = criarDateBanco(valor).getTime();
+  return Number.isFinite(instante) && instante >= criarDateBanco(limites.inicio).getTime() && instante <= criarDateBanco(limites.fim).getTime();
+}
+
+function normalizarCamposAlterados(valor) {
+  let campos = valor;
+  if (typeof campos === "string") {
+    try { campos = JSON.parse(campos); } catch (e) { return []; }
+  }
+  if (Array.isArray(campos)) return campos;
+  if (campos && typeof campos === "object") {
+    return Object.entries(campos).map(([campo, detalhe]) => ({
+      campo,
+      label: detalhe && typeof detalhe === "object" ? detalhe.label : undefined,
+    }));
+  }
+  return [];
+}
+
+async function buscarRetificacoesPeriodo(dataInicio, dataFim) {
+  const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) throw new Error("Cliente de dados indisponível; não foi possível consultar retificações.");
+  const limites = limitesPeriodoSP(dataInicio, dataFim);
+  const status = ["pending_rectification", "rectified", "rectification_rejected"];
+  const camposEvento = ["solicitada_em", "retificado_em", "aprovada_em", "rejeitada_em", "criado_em"];
+  const paginas = await Promise.all(camposEvento.map((campo) => buscarTodasPaginasRelatorio(
+    () => client.from("ocorrencias").select("*").is("deleted_at", null).in("status", status)
+      .gte(campo, limites.inicio).lte(campo, limites.fim)
+      .order(campo, { ascending: true }).order("id", { ascending: true }),
+    `retificações por ${campo}`,
+  )));
+  const unicos = new Map();
+  paginas.flat().forEach((o) => { if (o?.id) unicos.set(o.id, o); });
+  return [...unicos.values()]
+    .filter((o) => o.deleted_at == null && o.esta_ativa !== false)
+    .filter((o) => dentroDoPeriodoBanco(obterDataEventoRetificacao(o), limites))
+    .sort((a, b) => criarDateBanco(obterDataEventoRetificacao(b)) - criarDateBanco(obterDataEventoRetificacao(a)));
 }
 
 async function buscarAbordagensPeriodo(dataInicio, dataFim) {
+  const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  if (!client) throw new Error("Cliente de dados indisponível; não foi possível consultar abordagens.");
+  const limites = limitesPeriodoSP(dataInicio, dataFim);
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return { veiculos: [], pessoas: [] };
-
-    const [veiculosResult, pessoasResult] = await Promise.all([
-      client
-        .from("abordagens_veiculos")
+    const [veiculos, pessoas] = await Promise.all([
+      buscarTodasPaginasRelatorio(() => client.from("abordagens_veiculos")
         .select("*, usuarios(nome_completo)")
-        .gte("criado_em", dataInicio)
-        .lte("criado_em", dataFim + "T23:59:59"),
-      client
-        .from("abordagens_pessoas")
+        .gte("criado_em", limites.inicio).lte("criado_em", limites.fim)
+        .order("criado_em", { ascending: true }).order("id", { ascending: true }), "abordagens de veículos"),
+      buscarTodasPaginasRelatorio(() => client.from("abordagens_pessoas")
         .select("*, usuarios(nome_completo)")
-        .gte("criado_em", dataInicio)
-        .lte("criado_em", dataFim + "T23:59:59"),
+        .gte("criado_em", limites.inicio).lte("criado_em", limites.fim)
+        .order("criado_em", { ascending: true }).order("id", { ascending: true }), "abordagens de pessoas"),
     ]);
-
-    return {
-      veiculos: veiculosResult.data || [],
-      pessoas: pessoasResult.data || [],
-    };
+    const somenteAtivas = (rows) => rows.filter((a) => a.esta_ativa !== false);
+    return { veiculos: somenteAtivas(veiculos), pessoas: somenteAtivas(pessoas) };
   } catch (error) {
     console.error("Erro ao buscar abordagens:", error);
-    return { veiculos: [], pessoas: [] };
+    throw error;
   }
 }
+
 
 async function buscarDadosUsuariosEmLote(ids) {
   if (!ids || ids.length === 0) return {};
@@ -345,14 +527,13 @@ async function buscarDadosUsuariosEmLote(ids) {
   }
 }
 
-async function obterPrimeiroDiaMes() {
-  const data = new Date();
-  data.setDate(1);
-  return data.toISOString().slice(0, 10);
+function obterDataAtual() {
+  const p = obterPartesDataSP();
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
-async function obterDataAtual() {
-  return new Date().toISOString().slice(0, 10);
+function obterPrimeiroDiaMes() {
+  return `${obterDataAtual().slice(0, 7)}-01`;
 }
 
 // ============================================
@@ -546,6 +727,10 @@ export async function renderRelatorios(container, appInstance) {
     return;
   }
 
+  if (estado.relatorioAtivo === "produtividade") estado.relatorioAtivo = "executivo";
+  if (estado.relatorioAtivo === "por-guarda") estado.relatorioAtivo = "desempenho";
+  if (["eficiencia", "previsao"].includes(estado.relatorioAtivo)) estado.relatorioAtivo = null;
+
   if (estado.relatorioAtivo) {
     await renderRelatorioDetalhado(
       container,
@@ -559,119 +744,26 @@ export async function renderRelatorios(container, appInstance) {
   const dataFim = estado.filtros.dataFim || (await obterDataAtual());
 
   const relatorios = [
-    {
-      id: "executivo",
-      nome: "Relatório Executivo",
-      descricao: "Visão geral completa das ocorrências",
-      icon: "fa-chart-pie",
-      cor: "azul",
-      destaque: true,
-    },
-    {
-      id: "por-tipo",
-      nome: "Ocorrências por Tipo",
-      descricao: "Análise detalhada por natureza",
-      icon: "fa-tag",
-      cor: "verde",
-    },
-    {
-      id: "por-local",
-      nome: "Ocorrências por Localidade",
-      descricao: "Distribuição geográfica dos eventos",
-      icon: "fa-map-marker-alt",
-      cor: "vermelho",
-    },
-    {
-      id: "atendimento",
-      nome: "Tempo Médio de Atendimento",
-      descricao: "Eficiência operacional",
-      icon: "fa-clock",
-      cor: "amarelo",
-    },
-    {
-      id: "desempenho",
-      nome: "Desempenho por Guarda",
-      descricao: "Produtividade com ocorrências e abordagens",
-      icon: "fa-user-tie",
-      cor: "roxo",
-    },
-    {
-      id: "retificacoes",
-      nome: "Retificações",
-      descricao: "Acompanhamento de correções",
-      icon: "fa-sync-alt",
-      cor: "azul",
-    },
-    {
-      id: "cancelamentos",
-      nome: "Cancelamentos",
-      descricao: "Análise de ocorrências canceladas",
-      icon: "fa-times-circle",
-      cor: "vermelho",
-    },
-    {
-      id: "tendencias",
-      nome: "Tendências",
-      descricao: "Padrões temporais e sazonalidade",
-      icon: "fa-chart-line",
-      cor: "verde",
-    },
-    {
-      id: "produtividade",
-      nome: "Produtividade",
-      descricao: "Eficiência e capacidade",
-      icon: "fa-rocket",
-      cor: "azul",
-    },
-    {
-      id: "detalhado",
-      nome: "Lista Detalhada",
-      descricao: "Todas as ocorrências",
-      icon: "fa-list-ul",
-      cor: "cinza",
-    },
-    {
-      id: "mapa",
-      nome: "Mapa de Ocorrências",
-      descricao: "Visualização geográfica",
-      icon: "fa-map-marked-alt",
-      cor: "azul",
-    },
-    {
-      id: "previsao",
-      nome: "Previsão",
-      descricao: "Projeção baseada em histórico",
-      icon: "fa-brain",
-      cor: "verde",
-    },
-    {
-      id: "abordagens-veiculos",
-      nome: "Abordagens Veículos",
-      descricao: "Análise de abordagens de veículos",
-      icon: "fa-motorcycle",
-      cor: "azul",
-    },
-    {
-      id: "abordagens-pessoas",
-      nome: "Abordagens Pessoas",
-      descricao: "Análise de abordagens de pessoas",
-      icon: "fa-user-friends",
-      cor: "verde",
-    },
-    {
-      id: "abordagens-geral",
-      nome: "Abordagens Geral",
-      descricao: "Consolidado de todas as abordagens",
-      icon: "fa-chart-bar",
-      cor: "roxo",
-    },
-    {
-      id: "eficiencia",
-      nome: "Eficiência Operacional",
-      descricao: "Taxa de conversão abordagens em BOs",
-      icon: "fa-rocket",
-      cor: "amarelo",
-    },
+    { id: "executivo", grupo: "visao", nome: "Resumo executivo", descricao: "Volume, situação, média diária e comparação com período equivalente", icon: "fa-chart-pie", cor: "azul", destaque: true },
+    { id: "tendencias", grupo: "visao", nome: "Tendências observadas", descricao: "Distribuição histórica por mês, dia da semana e hora", icon: "fa-chart-line", cor: "verde" },
+    { id: "atendimento", grupo: "visao", nome: "Tempo de atendimento", descricao: "Tempos válidos entre início e encerramento registrados", icon: "fa-clock", cor: "amarelo" },
+    { id: "por-tipo", grupo: "ocorrencias", nome: "Ocorrências por tipo", descricao: "Contagens e situação por natureza registrada", icon: "fa-tag", cor: "verde" },
+    { id: "por-local", grupo: "ocorrencias", nome: "Ocorrências por localidade", descricao: "Distribuição por bairro ou localidade informada", icon: "fa-map-marker-alt", cor: "vermelho" },
+    { id: "cancelamentos", grupo: "ocorrencias", nome: "Cancelamentos", descricao: "Registros cancelados e motivos informados", icon: "fa-times-circle", cor: "vermelho" },
+    { id: "retificacoes", grupo: "ocorrencias", nome: "Retificações", descricao: "Solicitações, decisões e justificativas registradas", icon: "fa-sync-alt", cor: "azul" },
+    { id: "detalhado", grupo: "ocorrencias", nome: "Lista detalhada", descricao: "Registros individuais do período selecionado", icon: "fa-list-ul", cor: "cinza" },
+    { id: "mapa", grupo: "ocorrencias", nome: "Mapa de ocorrências", descricao: "Registros com coordenadas disponíveis", icon: "fa-map-marked-alt", cor: "azul" },
+    { id: "desempenho", grupo: "equipe", nome: "Registros por responsável pelo cadastro", descricao: "Contagens de ocorrências e abordagens pelo usuário que cadastrou; não medem participação ou qualidade individual", icon: "fa-user-tie", cor: "roxo" },
+    { id: "abordagens-geral", grupo: "abordagens", nome: "Abordagens — visão geral", descricao: "Totais separados de abordagens de pessoas e veículos", icon: "fa-chart-bar", cor: "roxo" },
+    { id: "abordagens-veiculos", grupo: "abordagens", nome: "Abordagens de veículos", descricao: "Registros, motivos e fases informadas para veículos", icon: "fa-motorcycle", cor: "azul" },
+    { id: "abordagens-pessoas", grupo: "abordagens", nome: "Abordagens de pessoas", descricao: "Registros, motivos e fases informadas para pessoas", icon: "fa-user-friends", cor: "verde" },
+  ];
+
+  const gruposRelatorios = [
+    { id: "visao", titulo: "Visão geral", descricao: "Indicadores agregados e padrões observados." },
+    { id: "ocorrencias", titulo: "Ocorrências", descricao: "Distribuições, situação e consulta dos registros." },
+    { id: "equipe", titulo: "Atividade da equipe", descricao: "Volume por usuário responsável pelo cadastro, sem ranking de desempenho." },
+    { id: "abordagens", titulo: "Abordagens", descricao: "Registros de pessoas e veículos; sem inferir vínculo com BO." },
   ];
 
   const coresMap = {
@@ -700,88 +792,63 @@ export async function renderRelatorios(container, appInstance) {
   };
 
   let html = `
-    <div class="container" style="padding-bottom:120px;">
-      <!-- Cabeçalho -->
-      <div style="margin-bottom:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-          <div>
-            <h2 style="color:var(--azul-bandeira);margin:0;font-size:20px;font-weight:800;">
-              <i class="fas fa-chart-pie" style="margin-right:10px;color:var(--verde-bandeira);"></i>
-              Centro de Análise
-            </h2>
-            <p style="color:var(--cinza-medio);margin:4px 0 0 0;font-size:13px;">
-              Relatórios gerenciais para tomada de decisão
-            </p>
+    <div class="container report-page" style="padding-bottom:120px;">
+      <header class="report-page-header">
+        <div>
+          <p class="report-eyebrow">GUARDA MUNICIPAL · PITANGUEIRAS/PR</p>
+          <h2><i class="fas fa-chart-pie" aria-hidden="true"></i> Relatórios</h2>
+          <p class="report-page-subtitle">Consulte registros por período. Os indicadores descrevem dados registrados e não substituem avaliação operacional.</p>
+        </div>
+        <div class="report-period-panel" aria-label="Período do relatório">
+          <div class="report-period-field">
+            <label for="relatorioDataInicio">De</label>
+            <input type="date" id="relatorioDataInicio" value="${dataInicio}">
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <div style="display:flex;gap:4px;background:var(--branco);padding:4px;border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-              <input type="date" id="relatorioDataInicio" value="${dataInicio}" 
-                style="padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;width:120px;">
-              <span style="display:flex;align-items:center;color:var(--cinza-medio);font-size:12px;">→</span>
-              <input type="date" id="relatorioDataFim" value="${dataFim}" 
-                style="padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;width:120px;">
-              <button onclick="window._relatoriosAplicarFiltros()" class="btn-primary" 
-                style="padding:4px 10px;font-size:11px;min-height:32px;width:auto;border-radius:8px;background:var(--gradiente-principal);">
-                <i class="fas fa-search"></i>
-              </button>
-            </div>
+          <span class="report-period-separator" aria-hidden="true">até</span>
+          <div class="report-period-field">
+            <label for="relatorioDataFim">Até</label>
+            <input type="date" id="relatorioDataFim" value="${dataFim}">
           </div>
+          <button type="button" onclick="window._relatoriosAplicarFiltros()" class="btn-primary" aria-label="Aplicar período" title="Aplicar período">
+            <i class="fas fa-filter" aria-hidden="true"></i><span>Aplicar</span>
+          </button>
         </div>
-      </div>
+      </header>
 
-      <!-- Cards de Resumo Rápido -->
-      <div id="resumoRapido" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px;">
-        <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:10px 8px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;" id="resumoTotal">-</div>
-          <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Total</div>
-        </div>
-        <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px 8px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;" id="resumoFinalizadas">-</div>
-          <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Finalizadas</div>
-        </div>
-        <div style="background:var(--aviso);border-radius:var(--border-radius);padding:10px 8px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;" id="resumoPendentes">-</div>
-          <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Pendentes</div>
-        </div>
-        <div style="background:var(--roxo);border-radius:var(--border-radius);padding:10px 8px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;" id="resumoTaxa">-</div>
-          <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Resolutividade</div>
-        </div>
-      </div>
-
-      <!-- Grid de relatórios -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));gap:10px;">
+      <section class="report-summary" aria-label="Resumo do período selecionado" aria-live="polite">
+        <div class="report-summary-card"><span class="report-summary-label">Registros</span><strong id="resumoTotal">—</strong></div>
+        <div class="report-summary-card"><span class="report-summary-label">Sincronizadas</span><strong id="resumoFinalizadas">—</strong></div>
+        <div class="report-summary-card"><span class="report-summary-label">Pendentes</span><strong id="resumoPendentes">—</strong></div>
+        <div class="report-summary-card"><span class="report-summary-label">Taxa de sincronização</span><strong id="resumoTaxa">—</strong></div>
+      </section>
+      <p id="resumoErro" class="report-summary-error" role="status" aria-live="polite"></p>
   `;
 
-  relatorios.forEach((rel) => {
-    const cor = coresMap[rel.cor] || coresMap.azul;
-    const isDestaque = rel.destaque || false;
+  for (const grupo of gruposRelatorios) {
+    const itens = relatorios.filter((rel) => rel.grupo === grupo.id);
     html += `
-      <div class="relatorio-card" onclick="window._relatoriosAbrir('${rel.id}')" 
-        style="background:var(--branco);border-radius:var(--border-radius);padding:14px 12px;box-shadow:var(--sombra-suave);cursor:pointer;transition:all 0.2s ease;border-left:4px solid ${cor.border};display:flex;flex-direction:column;gap:4px;position:relative;${isDestaque ? "border-top:3px solid var(--azul-bandeira);" : ""}">
-        ${isDestaque ? `<span style="position:absolute;top:-6px;right:-6px;background:var(--azul-bandeira);color:white;font-size:8px;padding:2px 10px;border-radius:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px;">Destaque</span>` : ""}
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div style="width:36px;height:36px;border-radius:50%;background:${cor.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <i class="fas ${rel.icon}" style="color:${cor.color};font-size:14px;"></i>
-          </div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:700;font-size:13px;color:var(--cinza-escuro);line-height:1.2;">${rel.nome}</div>
-            <div style="font-size:10px;color:var(--cinza-medio);line-height:1.2;">${rel.descricao}</div>
-          </div>
-          <i class="fas fa-chevron-right" style="color:var(--cinza-claro);font-size:12px;flex-shrink:0;"></i>
-        </div>
-      </div>
+      <section class="report-group" aria-labelledby="grupo-rel-${grupo.id}">
+        <header class="report-group-heading">
+          <div><h3 id="grupo-rel-${grupo.id}">${grupo.titulo}</h3><p>${grupo.descricao}</p></div>
+          <span class="report-group-count">${itens.length} ${itens.length === 1 ? "relatório" : "relatórios"}</span>
+        </header>
+        <div class="report-grid">
     `;
-  });
+    for (const rel of itens) {
+      const cor = coresMap[rel.cor] || coresMap.azul;
+      html += `
+        <button type="button" class="relatorio-card report-catalog-card" onclick="window._relatoriosAbrir('${rel.id}')">
+          <span class="report-card-icon" style="background:${cor.bg};color:${cor.color}"><i class="fas ${rel.icon}" aria-hidden="true"></i></span>
+          <span class="report-card-copy"><strong>${rel.nome}</strong><span>${rel.descricao}</span></span>
+          <i class="fas fa-chevron-right report-card-arrow" aria-hidden="true"></i>
+        </button>
+      `;
+    }
+    html += `</div></section>`;
+  }
 
   html += `
-      </div>
-
-      <!-- Rodapé -->
-      <div style="text-align:center;padding:16px 0;color:var(--cinza-medio);font-size:10px;margin-top:8px;">
-        <i class="fas fa-database" style="margin-right:4px;"></i>
-        Dados atualizados em tempo real
-      </div>
+      <p class="report-data-note"><i class="fas fa-info-circle" aria-hidden="true"></i> Resumo calculado para registros criados no período exibido; problemas de consulta são informados separadamente de períodos sem registros.</p>
     </div>
   `;
 
@@ -793,38 +860,34 @@ export async function renderRelatorios(container, appInstance) {
     renderRelatorios(container, appInstance);
   };
 
-  window._relatoriosAbrir = (tipo) => {
-    estado.relatorioAtivo = tipo;
-    const dataInicio =
-      document.getElementById("relatorioDataInicio")?.value ||
-      obterPrimeiroDiaMes();
-    const dataFim =
-      document.getElementById("relatorioDataFim")?.value || obterDataAtual();
-    estado.filtros = { dataInicio, dataFim };
-    renderRelatorios(container, appInstance);
-  };
-
-  window._relatoriosAplicarFiltros = () => {
-    const dataInicio = document.getElementById("relatorioDataInicio")?.value;
-    const dataFim = document.getElementById("relatorioDataFim")?.value;
-    if (dataInicio && dataFim && dataFim < dataInicio) {
-      if (appInstance && appInstance.showToast) {
-        appInstance.showToast(
-          "Data final deve ser maior ou igual à data inicial",
-          "warning",
-        );
-      }
+  window._relatoriosAbrir = async (tipo) => {
+    if (tipo === "eficiencia") {
+      appInstance?.showToast?.("A conversão abordagem→BO foi suspensa: não há vínculo verificável entre os registros.", "warning");
       return;
     }
-    estado.filtros = {
-      dataInicio: dataInicio || obterPrimeiroDiaMes(),
-      dataFim: dataFim || obterDataAtual(),
-    };
-    if (estado.relatorioAtivo) {
-      renderRelatorios(container, appInstance);
-    } else {
-      carregarResumoRapido(appInstance);
+    if (tipo === "previsao") {
+      appInstance?.showToast?.("O catálogo apresenta dados observados; a projeção linear não é uma previsão validada.", "warning");
+      return;
     }
+    const aliases = { produtividade: "executivo", "por-guarda": "desempenho" };
+    tipo = aliases[tipo] || tipo;
+    estado.relatorioAtivo = tipo;
+    const dataInicio = document.getElementById("relatorioDataInicio")?.value || await obterPrimeiroDiaMes();
+    const dataFim = document.getElementById("relatorioDataFim")?.value || await obterDataAtual();
+    estado.filtros = { dataInicio, dataFim };
+    await renderRelatorios(container, appInstance);
+  };
+
+  window._relatoriosAplicarFiltros = async () => {
+    const dataInicio = document.getElementById("relatorioDataInicio")?.value || await obterPrimeiroDiaMes();
+    const dataFim = document.getElementById("relatorioDataFim")?.value || await obterDataAtual();
+    if (dataFim < dataInicio) {
+      appInstance?.showToast?.("Data final deve ser maior ou igual à data inicial", "warning");
+      return;
+    }
+    estado.filtros = { dataInicio, dataFim };
+    if (estado.relatorioAtivo) await renderRelatorios(container, appInstance);
+    else await carregarResumoRapido(appInstance);
   };
 
   window._relatoriosExportarAtual = () => {
@@ -847,22 +910,23 @@ export async function renderRelatorios(container, appInstance) {
 // ============================================
 
 async function carregarResumoRapido(appInstance) {
+  const ids = ["resumoTotal", "resumoFinalizadas", "resumoPendentes", "resumoTaxa"];
+  const erroEl = document.getElementById("resumoErro");
+  if (erroEl) erroEl.textContent = "";
   try {
-    const dataInicio =
-      estado.filtros.dataInicio || (await obterPrimeiroDiaMes());
-    const dataFim = estado.filtros.dataFim || (await obterDataAtual());
+    const dataInicio = estado.filtros.dataInicio || await obterPrimeiroDiaMes();
+    const dataFim = estado.filtros.dataFim || await obterDataAtual();
     const ocorrencias = await buscarOcorrenciasPeriodo(dataInicio, dataFim);
     const stats = calcularEstatisticas(ocorrencias);
-    const total = stats.total || 1;
-    const taxa = ((stats.finalizadas / total) * 100).toFixed(1);
-
-    document.getElementById("resumoTotal").textContent = total;
-    document.getElementById("resumoFinalizadas").textContent =
-      stats.finalizadas;
-    document.getElementById("resumoPendentes").textContent = stats.pendentes;
-    document.getElementById("resumoTaxa").textContent = `${taxa}%`;
+    const taxa = stats.total > 0 ? ((stats.finalizadas / stats.total) * 100).toFixed(1) : "—";
+    document.getElementById("resumoTotal").textContent = String(stats.total);
+    document.getElementById("resumoFinalizadas").textContent = String(stats.finalizadas);
+    document.getElementById("resumoPendentes").textContent = String(stats.pendentes);
+    document.getElementById("resumoTaxa").textContent = taxa === "—" ? "—" : `${taxa}%`;
   } catch (error) {
     console.warn("Erro ao carregar resumo rápido:", error);
+    ids.forEach((id) => { const el = document.getElementById(id); if (el) el.textContent = "—"; });
+    if (erroEl) erroEl.textContent = "Resumo indisponível: falha ao consultar os dados. Tente novamente ou ajuste o período.";
   }
 }
 
@@ -900,17 +964,26 @@ function renderAcessoNegado(appInstance) {
 // ============================================
 
 export async function renderRelatorioDetalhado(container, tipo, appInstance) {
+  if (tipo === "produtividade") tipo = "executivo";
+  if (tipo === "por-guarda") tipo = "desempenho";
+  // Eficiência e previsão permanecem consultáveis/exportáveis, mas sem métricas inventadas.
   const dataInicio = estado.filtros.dataInicio || (await obterPrimeiroDiaMes());
   const dataFim = estado.filtros.dataFim || (await obterDataAtual());
 
   estado.isLoading = true;
+  estado.dadosCache = null;
+  estado.abordagensCache = null;
   container.innerHTML = renderLoader("Carregando relatório...");
 
   try {
-    const ocorrencias = await buscarOcorrenciasPeriodo(dataInicio, dataFim);
-    const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
+    const ocorrencias = tipo === "retificacoes"
+      ? await buscarRetificacoesPeriodo(dataInicio, dataFim)
+      : await buscarOcorrenciasPeriodo(dataInicio, dataFim);
+    estado.comparacaoCache = null;
+    const precisaAbordagens = tipo === "desempenho" || tipo === "eficiencia" || tipo.startsWith("abordagens-");
+    const abordagens = precisaAbordagens ? await buscarAbordagensPeriodo(dataInicio, dataFim) : { veiculos: [], pessoas: [] };
     estado.dadosCache = ocorrencias;
-    estado.abordagensCache = abordagens;
+    estado.abordagensCache = precisaAbordagens ? abordagens : null;
 
     const titulos = {
       executivo: {
@@ -934,7 +1007,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#F59E0B",
       },
       desempenho: {
-        nome: "Desempenho por Guarda",
+        nome: "Registros por Responsável pelo Cadastro",
         icone: "fa-user-tie",
         cor: "#8b5cf6",
       },
@@ -974,7 +1047,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#8b5cf6",
       },
       previsao: {
-        nome: "Previsão de Ocorrências",
+        nome: "Projeção de Ocorrências (indisponível)",
         icone: "fa-brain",
         cor: "#00843D",
       },
@@ -994,7 +1067,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#8b5cf6",
       },
       eficiencia: {
-        nome: "Eficiência Operacional",
+        nome: "Conversão abordagem → BO (não calculada)",
         icone: "fa-rocket",
         cor: "#F59E0B",
       },
@@ -1007,32 +1080,43 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
     };
 
     let html = `
-      <div class="container" style="padding-bottom:120px;">
-        <!-- Cabeçalho com botão de exportação -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div style="width:40px;height:40px;border-radius:50%;background:${info.cor}20;display:flex;align-items:center;justify-content:center;">
-              <i class="fas ${info.icone}" style="color:${info.cor};font-size:18px;"></i>
-            </div>
-            <div>
-              <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;font-weight:700;">${info.nome}</h2>
-              <p style="color:var(--cinza-medio);margin:0;font-size:12px;">
-                <i class="fas fa-calendar" style="margin-right:4px;"></i>
-                ${formatarData(dataInicio)} até ${formatarData(dataFim)}
-              </p>
+      <div class="container report-detail-page" style="padding-bottom:120px;">
+        <header class="report-detail-header">
+          <div class="report-detail-heading">
+            <span class="report-detail-icon" style="--report-accent:${escaparHTML(info.cor)}"><i class="fas ${escaparHTML(info.icone)}"></i></span>
+            <div class="report-detail-copy">
+              <h2>${escaparHTML(info.nome)}</h2>
+              <p><i class="fas fa-calendar" aria-hidden="true"></i> ${escaparHTML(formatarData(dataInicio))} até ${escaparHTML(formatarData(dataFim))}</p>
             </div>
           </div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button onclick="window._relatoriosExportarAtual()" class="btn-primary" 
-              style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--verde-bandeira);">
-              <i class="fas fa-file-pdf" style="margin-right:6px;"></i> Exportar PDF
-            </button>
-            <button onclick="window._relatoriosVoltar()" class="btn-secondary" 
-              style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-              <i class="fas fa-arrow-left"></i> Voltar
+          <div class="report-detail-actions">
+            <button onclick="window._relatoriosVoltar()" class="btn-secondary report-back-button"><i class="fas fa-arrow-left" aria-hidden="true"></i> Voltar</button>
+          </div>
+        </header>
+        <section class="report-detail-period-block" aria-labelledby="relatorioPeriodoDetalheTitulo">
+          <div class="report-detail-period-heading">
+            <h3 id="relatorioPeriodoDetalheTitulo"><i class="fas fa-calendar-alt" aria-hidden="true"></i> Período do relatório</h3>
+            <p>Escolha as datas que serão consultadas e incluídas no PDF. O intervalo é aplicado automaticamente ao exportar.</p>
+          </div>
+          <div class="report-period-panel report-detail-period-panel" role="group" aria-label="Selecionar período personalizado">
+            <div class="report-period-field">
+              <label for="relatorioDetalheDataInicio">De</label>
+              <input type="date" id="relatorioDetalheDataInicio" value="${escaparHTML(dataInicio)}">
+            </div>
+            <span class="report-period-separator" aria-hidden="true">até</span>
+            <div class="report-period-field">
+              <label for="relatorioDetalheDataFim">Até</label>
+              <input type="date" id="relatorioDetalheDataFim" value="${escaparHTML(dataFim)}">
+            </div>
+            <button type="button" onclick="window._relatoriosAplicarPeriodoDetalhe()" class="btn-primary" aria-label="Aplicar período personalizado">
+              <i class="fas fa-filter" aria-hidden="true"></i><span>Aplicar período</span>
             </button>
           </div>
-        </div>
+          <div class="report-detail-period-actions">
+            <p id="relatorioPeriodoDetalheStatus" role="status" aria-live="polite">Se alterar as datas, clique em “Aplicar período” para atualizar os dados; a exportação também aplica as alterações pendentes.</p>
+            <button type="button" onclick="window._relatoriosExportarAtual()" class="btn-primary report-export-button"><i class="fas fa-file-pdf" aria-hidden="true"></i> Exportar PDF</button>
+          </div>
+        </section>
     `;
 
     let conteudo = "";
@@ -1059,6 +1143,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
           ocorrencias,
           dataInicio,
           dataFim,
+          abordagens,
         );
         break;
       case "retificacoes":
@@ -1068,7 +1153,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         conteudo = await renderConteudoCancelamentos(ocorrencias);
         break;
       case "tendencias":
-        conteudo = await renderConteudoTendencias(ocorrencias);
+        conteudo = await renderConteudoTendencias(ocorrencias, dataInicio, dataFim);
         break;
       case "produtividade":
         conteudo = await renderConteudoProdutividade(
@@ -1104,31 +1189,21 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         break;
       case "abordagens-veiculos":
         conteudo = await renderConteudoAbordagensVeiculos(
-          ocorrencias,
-          dataInicio,
-          dataFim,
+          ocorrencias, dataInicio, dataFim, abordagens,
         );
         break;
       case "abordagens-pessoas":
         conteudo = await renderConteudoAbordagensPessoas(
-          ocorrencias,
-          dataInicio,
-          dataFim,
+          ocorrencias, dataInicio, dataFim, abordagens,
         );
         break;
       case "abordagens-geral":
         conteudo = await renderConteudoAbordagensGeral(
-          ocorrencias,
-          dataInicio,
-          dataFim,
+          ocorrencias, dataInicio, dataFim, abordagens,
         );
         break;
       case "eficiencia":
-        conteudo = await renderConteudoEficiencia(
-          ocorrencias,
-          dataInicio,
-          dataFim,
-        );
+        conteudo = await renderConteudoEficiencia(ocorrencias, abordagens);
         break;
       default:
         conteudo = `<p style="text-align:center;padding:40px;color:var(--cinza-medio);">Relatório não encontrado</p>`;
@@ -1137,6 +1212,50 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
     html += conteudo;
     html += `</div>`;
     container.innerHTML = html;
+
+    const aplicarPeriodoDetalhe = async ({ forcarAtualizacao = false } = {}) => {
+      const novaDataInicio = document.getElementById("relatorioDetalheDataInicio")?.value || "";
+      const novaDataFim = document.getElementById("relatorioDetalheDataFim")?.value || "";
+      const statusEl = document.getElementById("relatorioPeriodoDetalheStatus");
+      const informarErro = (mensagem, focoId) => {
+        if (statusEl) statusEl.textContent = mensagem;
+        appInstance?.showToast?.(mensagem, "warning");
+        document.getElementById(focoId)?.focus?.();
+        return false;
+      };
+
+      if (!dataISOValida(novaDataInicio)) {
+        return informarErro("Informe uma data inicial válida para o relatório.", "relatorioDetalheDataInicio");
+      }
+      if (!dataISOValida(novaDataFim)) {
+        return informarErro("Informe uma data final válida para o relatório.", "relatorioDetalheDataFim");
+      }
+      if (novaDataFim < novaDataInicio) {
+        return informarErro("A data final deve ser igual ou posterior à data inicial.", "relatorioDetalheDataFim");
+      }
+
+      const periodoMudou = estado.filtros.dataInicio !== novaDataInicio || estado.filtros.dataFim !== novaDataFim;
+      estado.filtros = { dataInicio: novaDataInicio, dataFim: novaDataFim };
+      if (statusEl) statusEl.textContent = "Período válido. Atualizando os dados do relatório…";
+
+      if (periodoMudou || forcarAtualizacao) {
+        await renderRelatorios(container, appInstance);
+        return estado.dadosCache !== null;
+      }
+      if (statusEl) statusEl.textContent = "Período aplicado. O PDF usará os dados exibidos.";
+      return true;
+    };
+
+    window._relatoriosAplicarPeriodoDetalhe = () => aplicarPeriodoDetalhe({ forcarAtualizacao: true });
+    window._relatoriosExportarAtual = async () => {
+      const periodoValido = await aplicarPeriodoDetalhe();
+      if (!periodoValido || estado.dadosCache === null) return;
+      await exportarRelatorioPDF(tipo, appInstance);
+    };
+    window._relatoriosVoltar = () => {
+      estado.relatorioAtivo = null;
+      renderRelatorios(container, appInstance);
+    };
 
     estado.isLoading = false;
 
@@ -1152,7 +1271,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
           <i class="fas fa-exclamation-triangle"></i>
         </div>
         <h3>Erro ao carregar relatório</h3>
-        <p style="color:var(--cinza-medio);">${error.message}</p>
+        <p style="color:var(--cinza-medio);">${escaparHTML(error?.message || "Falha de comunicação com o serviço de dados.")}</p>
         <button onclick="window._relatoriosVoltar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
           Voltar
         </button>
@@ -1168,123 +1287,43 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
 async function renderConteudoExecutivo(ocorrencias, dataInicio, dataFim) {
   const stats = calcularEstatisticas(ocorrencias);
   const porTipo = agruparPorTipo(ocorrencias);
-  const porMes = agruparPorMes(ocorrencias);
-  const total = stats.total || 1;
-  const taxaResolutividade = ((stats.finalizadas / total) * 100).toFixed(1);
+  const porMes = agruparPorMes(ocorrencias, dataInicio, dataFim);
+  const taxaSincronizacao = stats.total > 0 ? ((stats.finalizadas / stats.total) * 100).toFixed(1) : "—";
   const mediaDiaria = calcularMediaDiaria(ocorrencias, dataInicio, dataFim);
-
-  const topTipos = porTipo.slice(0, 5);
-
+  const periodoAnterior = calcularDataAnterior(dataInicio, dataFim);
+  let anteriores = [];
+  let comparacaoDisponivel = Boolean(periodoAnterior);
+  if (periodoAnterior) {
+    try { anteriores = await buscarOcorrenciasPeriodo(periodoAnterior.dataInicio, periodoAnterior.dataFim); }
+    catch (error) { comparacaoDisponivel = false; console.warn("Comparação com o período anterior indisponível:", error); }
+  }
+  const variacao = comparacaoDisponivel && anteriores.length > 0 ? ((stats.total - anteriores.length) / anteriores.length * 100).toFixed(1) : null;
+  estado.comparacaoCache = {
+    dataInicio, dataFim, atual: stats.total, anterior: anteriores.length,
+    dias: calcularDiasPeriodo(dataInicio, dataFim),
+    status: !comparacaoDisponivel ? "unavailable" : anteriores.length ? "available" : "no-base",
+  };
+  const variacaoTexto = !comparacaoDisponivel
+    ? "Comparação indisponível: falha ao consultar o período anterior."
+    : variacao === null
+      ? `Sem base comparável (${anteriores.length} registros no período anterior).`
+      : `${variacao > 0 ? "+" : ""}${variacao}% (${stats.total} agora; ${anteriores.length} no período anterior)`;
   return `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;">
-      <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:12px 8px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${total}</div>
-        <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Total de Ocorrências</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:12px 8px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${stats.finalizadas}</div>
-        <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Finalizadas</div>
-      </div>
-      <div style="background:var(--aviso);border-radius:var(--border-radius);padding:12px 8px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${stats.pendentes}</div>
-        <div style="font-size:9px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">Pendentes</div>
-      </div>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${stats.total}</strong><span>Registros no período</span></div>
+      <div class="report-kpi"><strong>${stats.finalizadas}</strong><span>Sincronizadas no sistema</span></div>
+      <div class="report-kpi"><strong>${stats.pendentes}</strong><span>Pendentes de sincronização</span></div>
+      <div class="report-kpi"><strong>${stats.canceladas}</strong><span>Canceladas</span></div>
+      <div class="report-kpi"><strong>${taxaSincronizacao === "—" ? "—" : `${taxaSincronizacao}%`}</strong><span>Taxa de sincronização</span></div>
+      <div class="report-kpi"><strong>${mediaDiaria}</strong><span>Média registrada por dia</span></div>
+      <div class="report-kpi report-kpi-wide"><strong>${variacao === null ? "—" : `${variacao > 0 ? "+" : ""}${variacao}%`}</strong><span>Variação em relação aos ${calcularDiasPeriodo(dataInicio, dataFim)} dias equivalentes anteriores</span><small>${variacaoTexto}</small></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);text-align:center;">
-        <div style="font-size:20px;font-weight:800;color:var(--verde-bandeira);">${taxaResolutividade}%</div>
-        <div style="font-size:10px;color:var(--cinza-medio);font-weight:500;">Taxa de Resolutividade</div>
-        <div style="font-size:9px;color:var(--cinza-medio);margin-top:2px;">
-          ${taxaResolutividade >= 70 ? "✅ Excelente" : taxaResolutividade >= 50 ? "⚠️ Moderada" : "❌ Baixa"}
-        </div>
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);text-align:center;">
-        <div style="font-size:20px;font-weight:800;color:var(--azul-bandeira);">${mediaDiaria}</div>
-        <div style="font-size:10px;color:var(--cinza-medio);font-weight:500;">Média Diária</div>
-        <div style="font-size:9px;color:var(--cinza-medio);margin-top:2px;">
-          ${mediaDiaria > 10 ? "📈 Alta demanda" : mediaDiaria > 5 ? "📊 Demanda média" : "📉 Baixa demanda"}
-        </div>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h4 style="color:var(--azul-bandeira);margin:0;font-size:13px;font-weight:700;">
-          <i class="fas fa-chart-pie" style="margin-right:6px;"></i>
-          Distribuição por Tipo
-        </h4>
-        <span style="font-size:10px;color:var(--cinza-medio);">${porTipo.length} tipos</span>
-      </div>
-      <p style="font-size:11px;color:var(--cinza-medio);margin-bottom:10px;">
-        Os tipos mais frequentes de ocorrências registradas no período.
-      </p>
-      <div style="height:180px;">
-        <canvas id="chartExecutivoPizza"></canvas>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">
-        ${topTipos
-          .map(
-            (t) => `
-          <span style="background:var(--azul-muito-claro);color:var(--azul-bandeira);padding:2px 10px;border-radius:12px;font-size:9px;font-weight:600;">
-            ${t.tipo}: ${t.total} (${t.percentual}%)
-          </span>
-        `,
-          )
-          .join("")}
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h4 style="color:var(--azul-bandeira);margin:0;font-size:13px;font-weight:700;">
-          <i class="fas fa-chart-bar" style="margin-right:6px;"></i>
-          Evolução Mensal
-        </h4>
-        <span style="font-size:10px;color:var(--cinza-medio);">${porMes.length} meses</span>
-      </div>
-      <p style="font-size:11px;color:var(--cinza-medio);margin-bottom:10px;">
-        Tendência de ocorrências ao longo dos meses analisados.
-      </p>
-      <div style="height:150px;">
-        <canvas id="chartExecutivoMensal"></canvas>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-table" style="margin-right:6px;"></i>
-        Detalhamento por Tipo
-      </h4>
-      <div class="table-wrapper" style="max-height:200px;overflow-y:auto;">
-        <table style="font-size:12px;width:100%;">
-          <thead>
-            <tr style="background:var(--cinza-claro);">
-              <th style="padding:6px 8px;text-align:left;">Tipo</th>
-              <th style="padding:6px 8px;text-align:center;">Total</th>
-              <th style="padding:6px 8px;text-align:center;">%</th>
-              <th style="padding:6px 8px;text-align:center;">Finalizadas</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${porTipo
-              .map(
-                (t) => `
-              <tr style="border-bottom:1px solid var(--cinza-claro);">
-                <td style="padding:4px 8px;font-size:11px;">${t.tipo}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:600;">${t.total}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--verde-bandeira);">${t.finalizadas}</td>
-              </tr>
-            `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <p class="report-method-note">“Sincronizadas” indica que o registro foi enviado ao sistema; não significa encerramento, qualidade do atendimento ou desfecho da ocorrência. A taxa usa todos os registros retornados no período como denominador; se não houver registros, é “—”.</p>
+    ${renderTabelasPorTipoHTML(porTipo, true)}
+    <div class="report-content-card"><h3>Evolução mensal observada</h3><div class="report-chart-wrap"><canvas id="chartExecutivoMensal"></canvas></div></div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO POR TIPO
@@ -1292,67 +1331,17 @@ async function renderConteudoExecutivo(ocorrencias, dataInicio, dataFim) {
 
 async function renderConteudoPorTipo(ocorrencias) {
   const porTipo = agruparPorTipo(ocorrencias);
-
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Análise detalhada da distribuição das ocorrências por tipo, mostrando quantitativos e taxas de finalização.
-        </p>
-      </div>
+    <p class="report-method-note">Percentuais usam todos os registros válidos no período. “Sincronizada” descreve o envio ao sistema, não o encerramento do atendimento. “Rascunhos / outros” reúne estados não listados; retificações aparecem em quadro separado para facilitar conferência.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact">
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros no período</span></div>
+      <div class="report-kpi"><strong>${porTipo.length}</strong><span>Tipos observados</span></div>
+      <div class="report-kpi"><strong>${porTipo.reduce((sum, t) => sum + t.retificadas + t.retificacoesPendentes + t.retificacoesRejeitadas, 0)}</strong><span>Eventos de retificação</span></div>
     </div>
-
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-      ${porTipo
-        .map(
-          (t) => `
-        <span style="background:${t.percentual > 20 ? "var(--azul-bandeira)" : "var(--azul-muito-claro)"};color:${t.percentual > 20 ? "white" : "var(--azul-bandeira)"};padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;">
-          ${t.tipo}: ${t.total} (${t.percentual}%)
-        </span>
-      `,
-        )
-        .join("")}
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-table" style="margin-right:6px;"></i>
-        Detalhamento Completo
-      </h4>
-      <div class="table-wrapper">
-        <table style="font-size:12px;width:100%;">
-          <thead>
-            <tr style="background:var(--cinza-claro);">
-              <th style="padding:6px 8px;text-align:left;">Tipo</th>
-              <th style="padding:6px 8px;text-align:center;">Total</th>
-              <th style="padding:6px 8px;text-align:center;">%</th>
-              <th style="padding:6px 8px;text-align:center;">Finalizadas</th>
-              <th style="padding:6px 8px;text-align:center;">Pendentes</th>
-              <th style="padding:6px 8px;text-align:center;">Taxa</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${porTipo
-              .map(
-                (t) => `
-              <tr style="border-bottom:1px solid var(--cinza-claro);">
-                <td style="padding:4px 8px;font-weight:500;">${t.tipo}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:600;">${t.total}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--cinza-medio);">${t.percentual}%</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--verde-bandeira);">${t.finalizadas}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--aviso);">${t.pendentes}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:600;color:${(t.finalizadas / t.total) * 100 >= 70 ? "var(--verde-bandeira)" : "var(--aviso)"};">${((t.finalizadas / t.total) * 100).toFixed(0)}%</td>
-              </tr>
-            `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    ${renderTabelasPorTipoHTML(porTipo, true)}
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO POR LOCAL
@@ -1361,415 +1350,169 @@ async function renderConteudoPorTipo(ocorrencias) {
 async function renderConteudoPorLocal(ocorrencias) {
   const porBairro = agruparPorBairro(ocorrencias);
   const topBairros = porBairro.slice(0, 8);
-
+  const semLocal = ocorrencias.filter((o) => !(o.bairro_ocorrencia || o.local_ocorrencia)).length;
+  const primeiro = porBairro[0];
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Distribuição geográfica das ocorrências por bairro/locallidade.
-        </p>
-      </div>
+    <p class="report-method-note">Agrupamento prioriza bairro/localidade e usa o campo de local como alternativa. Registros sem ambos os campos permanecem em “Não informado”; percentuais usam todos os registros no período.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact">
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros no período</span></div>
+      <div class="report-kpi"><strong>${porBairro.length}</strong><span>Localidades agrupadas</span></div>
+      <div class="report-kpi"><strong>${semLocal}</strong><span>Sem local informado</span></div>
+      <div class="report-kpi"><strong>${primeiro ? primeiro.total : "—"}</strong><span>${primeiro ? `Maior volume: ${escaparHTML(primeiro.bairro)}` : "Sem registros"}</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      ${topBairros
-        .map(
-          (b, index) => `
-        <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);display:flex;justify-content:space-between;align-items:center;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-weight:700;color:${index < 3 ? "var(--azul-bandeira)" : "var(--cinza-medio)"};min-width:20px;font-size:12px;">${index + 1}º</span>
-            <span style="font-weight:500;font-size:12px;">${b.bairro}</span>
-          </div>
-          <span style="font-weight:700;color:var(--azul-bandeira);font-size:14px;">${b.total}</span>
-        </div>
-      `,
-        )
-        .join("")}
+    <div class="report-content-card"><h3>Distribuição por localidade</h3>
+      <div class="report-chart-wrap"><canvas id="chartLocalBairros"></canvas></div>
     </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-chart-bar" style="margin-right:6px;"></i>
-        Distribuição por Bairro
-      </h4>
-      <p style="font-size:11px;color:var(--cinza-medio);margin-bottom:10px;">
-        Concentração de ocorrências por localidade.
-      </p>
-      <div style="height:200px;">
-        <canvas id="chartLocalBairros"></canvas>
-      </div>
+    <div class="report-content-card"><h3>Todas as localidades</h3>
+      <div class="table-wrapper"><table><thead><tr><th>Localidade</th><th>Registros</th><th>% do período</th></tr></thead><tbody>
+      ${porBairro.map((b) => `<tr><td>${escaparHTML(b.bairro)}</td><td>${b.total}</td><td>${b.percentual}%</td></tr>`).join("") || `<tr><td colspan="3">Nenhum registro no período.</td></tr>`}
+      </tbody></table></div>
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE ATENDIMENTO
 // ============================================
 
 async function renderConteudoAtendimento(ocorrencias) {
-  const comTempo = ocorrencias.filter(
-    (o) => o.data_hora_inicio && o.data_hora_encerramento,
-  );
-  const tempos = comTempo
-    .map((o) => {
-      const inicio = new Date(o.data_hora_inicio);
-      const fim = new Date(o.data_hora_encerramento);
-      return { ...o, tempoMinutos: (fim - inicio) / (1000 * 60) };
-    })
-    .filter((t) => t.tempoMinutos > 0);
-
-  const mediaGeral =
-    tempos.length > 0
-      ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length
-      : 0;
-
-  const porTipo = {};
-  tempos.forEach((t) => {
-    const tipo = t.tipo_ocorrencia || "Não informado";
-    if (!porTipo[tipo]) porTipo[tipo] = [];
-    porTipo[tipo].push(t.tempoMinutos);
-  });
-
-  const mediaPorTipo = Object.keys(porTipo)
-    .map((key) => ({
-      tipo: getTipoLabel(key),
-      media: porTipo[key].reduce((s, v) => s + v, 0) / porTipo[key].length,
-      total: porTipo[key].length,
-      rapido: porTipo[key].filter((t) => t < 15).length,
-      lento: porTipo[key].filter((t) => t > 60).length,
-    }))
-    .sort((a, b) => b.media - a.media);
-
+  const tempos = ocorrencias.map((o) => {
+    const inicio = criarDateBanco(o.data_hora_inicio);
+    const fim = criarDateBanco(o.data_hora_encerramento || o.data_hora_finalizacao);
+    const minutos = Number.isFinite(inicio.getTime()) && Number.isFinite(fim.getTime())
+      ? (fim - inicio) / 60000 : NaN;
+    return { ...o, tempoMinutos: minutos };
+  }).filter((o) => Number.isFinite(o.tempoMinutos) && o.tempoMinutos > 0);
+  const mediaGeral = tempos.length ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length : NaN;
   const formatarTempo = (minutos) => {
+    if (!Number.isFinite(minutos)) return "—";
     if (minutos < 1) return "< 1 min";
     if (minutos < 60) return `${Math.round(minutos)} min`;
-    const horas = Math.floor(minutos / 60);
-    const mins = Math.round(minutos % 60);
+    const horas = Math.floor(minutos / 60), mins = Math.round(minutos % 60);
     return `${horas}h ${mins}min`;
   };
-
+  const porTipo = new Map();
+  tempos.forEach((t) => {
+    const key = t.tipo_ocorrencia || "Não informado";
+    if (!porTipo.has(key)) porTipo.set(key, []);
+    porTipo.get(key).push(t.tempoMinutos);
+  });
+  const mediaPorTipo = [...porTipo.entries()].map(([key, valores]) => ({
+    tipo: getTipoLabel(key),
+    media: valores.reduce((s,v) => s+v, 0) / valores.length,
+    mediana: medianaNumerica(valores), total: valores.length,
+    rapido: valores.filter((v) => v < 15).length,
+    lento: valores.filter((v) => v > 45).length,
+  })).sort((a,b) => b.media-a.media);
   const rapido = tempos.filter((t) => t.tempoMinutos < 15).length;
-  const medio = tempos.filter(
-    (t) => t.tempoMinutos >= 15 && t.tempoMinutos <= 45,
-  ).length;
   const lento = tempos.filter((t) => t.tempoMinutos > 45).length;
-
+  const semDuracao = ocorrencias.length - tempos.length;
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Análise do tempo médio de atendimento das ocorrências, indicando eficiência operacional.
-        </p>
-      </div>
+    <p class="report-method-note">Tempo entre início e encerramento. Quando o encerramento não foi informado, usa-se a finalização registrada. ${tempos.length} amostra(s) positiva(s) e válida(s); ${semDuracao} registro(s) sem duração válida. Tempos não positivos são excluídos; faixas: rápido &lt; 15 min, lento &gt; 45 min.</p>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${formatarTempo(mediaGeral)}</strong><span>Média das durações válidas</span></div>
+      <div class="report-kpi"><strong>${rapido}</strong><span>Atendimentos abaixo de 15 min</span></div>
+      <div class="report-kpi"><strong>${lento}</strong><span>Atendimentos acima de 45 min</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:18px;font-weight:800;">${formatarTempo(mediaGeral)}</div>
-        <div style="font-size:9px;opacity:0.8;">Tempo Médio</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:18px;font-weight:800;">${rapido}</div>
-        <div style="font-size:9px;opacity:0.8;">Rápidos (<15min)</div>
-      </div>
-      <div style="background:var(--erro);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:18px;font-weight:800;">${lento}</div>
-        <div style="font-size:9px;opacity:0.8;">Lentos (>45min)</div>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-chart-bar" style="margin-right:6px;"></i>
-        Tempo Médio por Tipo
-      </h4>
-      <div class="table-wrapper">
-        <table style="font-size:12px;width:100%;">
-          <thead>
-            <tr style="background:var(--cinza-claro);">
-              <th style="padding:6px 8px;text-align:left;">Tipo</th>
-              <th style="padding:6px 8px;text-align:center;">Média</th>
-              <th style="padding:6px 8px;text-align:center;">Total</th>
-              <th style="padding:6px 8px;text-align:center;">Rápidos</th>
-              <th style="padding:6px 8px;text-align:center;">Lentos</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${mediaPorTipo
-              .map(
-                (t) => `
-              <tr style="border-bottom:1px solid var(--cinza-claro);">
-                <td style="padding:4px 8px;">${t.tipo}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:600;color:var(--azul-bandeira);">${formatarTempo(t.media)}</td>
-                <td style="padding:4px 8px;text-align:center;">${t.total}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--verde-bandeira);">${t.rapido}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--erro);">${t.lento}</td>
-              </tr>
-            `,
-              )
-              .join("")}
-            ${
-              mediaPorTipo.length === 0
-                ? `
-              <tr>
-                <td colspan="5" style="text-align:center;color:var(--cinza-medio);padding:16px;">
-                  Nenhuma ocorrência com tempo registrado
-                </td>
-              </tr>
-            `
-                : ""
-            }
-          </tbody>
-        </table>
-      </div>
+    <div class="report-content-card"><h3>Tempo por tipo de ocorrência</h3>
+      <div class="table-wrapper"><table><thead><tr><th>Tipo</th><th>Amostras</th><th>Média</th><th>Mediana</th><th>Rápidos (&lt; 15 min)</th><th>Lentos (&gt; 45 min)</th></tr></thead><tbody>
+      ${mediaPorTipo.map((t) => `<tr><td>${escaparHTML(t.tipo)}</td><td>${t.total}</td><td>${escaparHTML(formatarTempo(t.media))}</td><td>${escaparHTML(formatarTempo(t.mediana))}</td><td>${t.rapido}</td><td>${t.lento}</td></tr>`).join("") || `<tr><td colspan="6">Nenhuma duração válida no período.</td></tr>`}
+      </tbody></table></div>
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE DESEMPENHO
 // ============================================
 
-async function renderConteudoDesempenho(ocorrencias, dataInicio, dataFim) {
-  const client =
-    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-  let usuarios = [];
-  if (client) {
-    const { data, error } = await client
-      .from("usuarios")
-      .select("id, nome_completo, matricula, perfil")
-      .eq("status", "ativo");
-    if (!error) usuarios = data || [];
-  }
-
-  const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
-  const todasAbordagens = [
-    ...abordagens.veiculos.map((v) => ({ ...v, tipo_abordagem: "veiculo" })),
-    ...abordagens.pessoas.map((p) => ({ ...p, tipo_abordagem: "pessoa" })),
-  ];
-
-  const desempenho = {};
-  usuarios.forEach((u) => {
-    desempenho[u.id] = {
-      id: u.id,
-      nome: u.nome_completo,
-      matricula: u.matricula || "-",
-      perfil: u.perfil,
-      ocorrencias: { total: 0, finalizadas: 0, pendentes: 0, canceladas: 0 },
-      abordagens: { total: 0, veiculos: 0, pessoas: 0 },
-      taxa_resolucao: 0,
-      total_atendimentos: 0,
-    };
-  });
-
+async function renderConteudoDesempenho(ocorrencias, dataInicio, dataFim, abordagensDados = null) {
+  const abordagens = abordagensDados || estado.abordagensCache || await buscarAbordagensPeriodo(dataInicio, dataFim);
+  const ids = [...new Set([
+    ...ocorrencias.map((o) => o.criado_por).filter(Boolean),
+    ...(abordagens.veiculos || []).map((a) => a.criado_por).filter(Boolean),
+    ...(abordagens.pessoas || []).map((a) => a.criado_por).filter(Boolean),
+  ])];
+  const usuarios = await buscarDadosUsuariosEmLote(ids);
+  const porResponsavel = new Map();
+  const garantir = (id, nestedName = "") => {
+    const key = id || "sem-identificador";
+    if (!porResponsavel.has(key)) porResponsavel.set(key, {
+      nome: usuarios[id]?.nome_completo || nestedName || (id ? `Usuário ${String(id).slice(0, 8)}` : "Usuário não identificado"),
+      ocorrencias: 0, finalizadas: 0, pendentes: 0, canceladas: 0, abordagensVeiculos: 0, abordagensPessoas: 0,
+    });
+    return porResponsavel.get(key);
+  };
   ocorrencias.forEach((o) => {
-    const id = o.criado_por;
-    if (desempenho[id]) {
-      desempenho[id].ocorrencias.total++;
-      if (o.status === "synced") desempenho[id].ocorrencias.finalizadas++;
-      if (o.status === "pending_sync") desempenho[id].ocorrencias.pendentes++;
-      if (o.status === "cancelled") desempenho[id].ocorrencias.canceladas++;
-    }
+    const item = garantir(o.criado_por);
+    item.ocorrencias++;
+    if (o.status === "synced") item.finalizadas++;
+    if (o.status === "pending_sync") item.pendentes++;
+    if (o.status === "cancelled") item.canceladas++;
   });
-
-  todasAbordagens.forEach((a) => {
-    const id = a.criado_por;
-    if (desempenho[id]) {
-      desempenho[id].abordagens.total++;
-      if (a.tipo_abordagem === "veiculo") desempenho[id].abordagens.veiculos++;
-      else desempenho[id].abordagens.pessoas++;
-    }
-  });
-
-  Object.values(desempenho).forEach((d) => {
-    d.taxa_resolucao =
-      d.ocorrencias.total > 0
-        ? ((d.ocorrencias.finalizadas / d.ocorrencias.total) * 100).toFixed(1)
-        : 0;
-    d.total_atendimentos = d.ocorrencias.total + d.abordagens.total;
-  });
-
-  const ranking = Object.values(desempenho).sort(
-    (a, b) => b.total_atendimentos - a.total_atendimentos,
-  );
-  const top5 = ranking.slice(0, 5);
-
+  (abordagens.veiculos || []).forEach((a) => garantir(a.criado_por, a.usuarios?.nome_completo).abordagensVeiculos++);
+  (abordagens.pessoas || []).forEach((a) => garantir(a.criado_por, a.usuarios?.nome_completo).abordagensPessoas++);
+  const linhas = [...porResponsavel.values()].map((item) => ({
+    ...item, total: item.ocorrencias + item.abordagensVeiculos + item.abordagensPessoas,
+  })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const totalRegistros = linhas.reduce((soma, item) => soma + item.total, 0);
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Ranking de desempenho dos guardas, considerando ocorrências e abordagens realizadas.
-        </p>
-      </div>
+    <p class="report-method-note">Contagem pelo usuário que cadastrou o registro. Não identifica todos os participantes da ocorrência nem mede escala, esforço, qualidade ou resultado individual.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact">
+      <div class="report-kpi"><strong>${linhas.length}</strong><span>Responsáveis com registros</span></div>
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Ocorrências cadastradas</span></div>
+      <div class="report-kpi"><strong>${(abordagens.veiculos || []).length + (abordagens.pessoas || []).length}</strong><span>Abordagens cadastradas</span></div>
+      <div class="report-kpi"><strong>${totalRegistros}</strong><span>Total de registros listados</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      ${top5
-        .map(
-          (d, i) => `
-        <div style="background:${i === 0 ? "var(--gradiente-principal)" : i === 1 ? "var(--azul-bandeira)" : "var(--azul-escuro)"};border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;">${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}º`}</div>
-          <div style="font-size:11px;font-weight:600;margin-top:2px;">${d.nome}</div>
-          <div style="font-size:14px;font-weight:800;margin-top:4px;">${d.total_atendimentos}</div>
-          <div style="font-size:8px;opacity:0.7;">atendimentos</div>
-        </div>
-      `,
-        )
-        .join("")}
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-trophy" style="margin-right:6px;"></i>
-        Ranking Completo
-      </h4>
-      <div class="table-wrapper">
-        <table style="font-size:12px;width:100%;">
-          <thead>
-            <tr style="background:var(--cinza-claro);">
-              <th style="padding:6px 8px;text-align:center;">#</th>
-              <th style="padding:6px 8px;text-align:left;">Guarda</th>
-              <th style="padding:6px 8px;text-align:center;">Ocorr.</th>
-              <th style="padding:6px 8px;text-align:center;">Final.</th>
-              <th style="padding:6px 8px;text-align:center;">Taxa</th>
-              <th style="padding:6px 8px;text-align:center;">Abord.</th>
-              <th style="padding:6px 8px;text-align:center;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${ranking
-              .map(
-                (d, i) => `
-              <tr style="border-bottom:1px solid var(--cinza-claro);">
-                <td style="padding:4px 8px;text-align:center;font-weight:700;color:${i < 3 ? "var(--azul-bandeira)" : "var(--cinza-medio)"};">${i + 1}</td>
-                <td style="padding:4px 8px;font-weight:500;">${d.nome}</td>
-                <td style="padding:4px 8px;text-align:center;">${d.ocorrencias.total}</td>
-                <td style="padding:4px 8px;text-align:center;color:var(--verde-bandeira);">${d.ocorrencias.finalizadas}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:600;color:${d.taxa_resolucao >= 70 ? "var(--verde-bandeira)" : "var(--aviso)"};">${d.taxa_resolucao}%</td>
-                <td style="padding:4px 8px;text-align:center;">${d.abordagens.total}</td>
-                <td style="padding:4px 8px;text-align:center;font-weight:700;color:var(--azul-bandeira);">${d.total_atendimentos}</td>
-              </tr>
-            `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
+    <div class="report-content-card"><h3>Contagem por responsável pelo cadastro</h3>
+      <div class="table-wrapper"><table><thead><tr><th>Usuário</th><th>Ocorrências</th><th>Sincronizadas</th><th>Pendentes</th><th>Canceladas</th><th>Abord. veículos</th><th>Abord. pessoas</th><th>Total</th></tr></thead><tbody>
+      ${linhas.map((item) => `<tr><td>${escaparHTML(item.nome)}</td><td>${item.ocorrencias}</td><td>${item.finalizadas}</td><td>${item.pendentes}</td><td>${item.canceladas}</td><td>${item.abordagensVeiculos}</td><td>${item.abordagensPessoas}</td><td>${item.total}</td></tr>`).join("") || `<tr><td colspan="8">Nenhum registro no período.</td></tr>`}
+      </tbody></table></div>
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE RETIFICAÇÕES
 // ============================================
 
 async function renderConteudoRetificacoes(ocorrencias) {
-  const retificacoes = ocorrencias.filter((o) => o.status === "rectified");
-  const pendentes = ocorrencias.filter(
-    (o) => o.status === "pending_rectification",
-  );
-  const rejeitadas = ocorrencias.filter(
-    (o) => o.status === "rectification_rejected",
-  );
-
-  const camposMaisAlterados = {};
-  retificacoes.forEach((r) => {
-    if (r.campos_alterados) {
-      try {
-        JSON.parse(r.campos_alterados).forEach((c) => {
-          const label = c.label || c.campo;
-          if (!camposMaisAlterados[label]) camposMaisAlterados[label] = 0;
-          camposMaisAlterados[label]++;
-        });
-      } catch (e) {}
-    }
-  });
-
-  const topCampos = Object.keys(camposMaisAlterados)
-    .map((key) => ({ campo: key, total: camposMaisAlterados[key] }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5);
-
+  const retificacoes = ocorrencias
+    .filter((o) => ["rectified", "pending_rectification", "rectification_rejected"].includes(o.status))
+    .sort((a, b) => criarDateBanco(obterDataEventoRetificacao(b)) - criarDateBanco(obterDataEventoRetificacao(a)));
+  const aplicadas = retificacoes.filter((o) => o.status === "rectified");
+  const pendentes = retificacoes.filter((o) => o.status === "pending_rectification");
+  const rejeitadas = retificacoes.filter((o) => o.status === "rectification_rejected");
+  const contagemCampos = new Map();
+  aplicadas.forEach((r) => normalizarCamposAlterados(r.campos_alterados).forEach((campo) => {
+    const label = campo?.label || campo?.campo || campo?.name;
+    if (label) contagemCampos.set(String(label), (contagemCampos.get(String(label)) || 0) + 1);
+  }));
+  const topCampos = [...contagemCampos.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const rotuloStatus = {
+    rectified: "Aplicada", pending_rectification: "Pendente", rectification_rejected: "Rejeitada",
+  };
+  const classeStatus = (status) => `report-status-pill report-status-${getStatusClass(status)}`;
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Acompanhamento das solicitações de retificação, com status e campos mais alterados.
-        </p>
-      </div>
+    <p class="report-method-note">O período considera o evento vigente: solicitação pendente, aplicação ou rejeição. Registros legados sem data específica usam a data de criação como aproximação.</p>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${aplicadas.length}</strong><span>Retificações aplicadas</span></div>
+      <div class="report-kpi"><strong>${pendentes.length}</strong><span>Solicitações pendentes</span></div>
+      <div class="report-kpi"><strong>${rejeitadas.length}</strong><span>Solicitações rejeitadas</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${retificacoes.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Aprovadas</div>
-      </div>
-      <div style="background:var(--aviso);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${pendentes.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Pendentes</div>
-      </div>
-      <div style="background:var(--erro);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${rejeitadas.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Rejeitadas</div>
-      </div>
-    </div>
-
-    ${
-      topCampos.length > 0
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 6px 0;font-size:13px;font-weight:700;">
-          <i class="fas fa-edit" style="margin-right:6px;"></i>
-          Campos Mais Alterados
-        </h4>
-        ${topCampos
-          .map(
-            (c) => `
-          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-            <span>${c.campo}</span>
-            <span style="font-weight:700;color:var(--azul-bandeira);">${c.total} vez(es)</span>
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
-    `
-        : ""
-    }
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-list" style="margin-right:6px;"></i>
-        Últimas Retificações
-      </h4>
-      ${retificacoes
-        .slice(0, 10)
-        .map(
-          (r) => `
-        <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-          <span>#${r.numero_ocorrencia || r.numero_temporario || "N/A"}</span>
-          <span style="color:var(--cinza-medio);">${formatarData(r.criado_em)}</span>
-          <span style="color:var(--verde-bandeira);font-weight:600;">✓ Aprovada</span>
-        </div>
-      `,
-        )
-        .join("")}
-      ${
-        retificacoes.length === 0
-          ? `
-        <p style="text-align:center;color:var(--cinza-medio);padding:16px;font-size:13px;">
-          Nenhuma retificação no período
-        </p>
-      `
-          : ""
-      }
+    ${topCampos.length ? `<div class="report-content-card"><h3>Campos alterados nas retificações aplicadas</h3>${topCampos.map(([campo, total]) => `<div class="report-inline-stat"><span>${escaparHTML(campo)}</span><strong>${total}</strong></div>`).join("")}</div>` : ""}
+    <div class="report-content-card"><h3>Eventos de retificação</h3>
+      <div class="table-wrapper"><table><thead><tr><th>Nº GM</th><th>Data do evento</th><th>Tipo</th><th>Situação atual</th><th>Justificativa</th><th>Motivo de rejeição</th></tr></thead><tbody>
+        ${retificacoes.slice(0, 100).map((r) => `<tr><td>${escaparHTML(r.numero_ocorrencia || r.numero_temporario || "Sem número")}</td><td>${escaparHTML(formatarDataHoraSP(obterDataEventoRetificacao(r)))}</td><td>${escaparHTML(getTipoLabel(r.tipo_ocorrencia))}</td><td><span class="${classeStatus(r.status)}">${rotuloStatus[r.status] || "Não informado"}</span></td><td>${escaparHTML(r.solicitacao_retificacao_justificativa || r.justificativa_retificacao || "—")}</td><td>${escaparHTML(r.motivo_rejeicao || "—")}</td></tr>`).join("") || `<tr><td colspan="6">Nenhum evento de retificação no período.</td></tr>`}
+      </tbody></table></div>
+      ${retificacoes.length > 100 ? `<p>Mostrando os 100 eventos mais recentes de ${retificacoes.length}; o PDF exporta o conjunto completo filtrado.</p>` : ""}
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE CANCELAMENTOS
@@ -1778,24 +1521,26 @@ async function renderConteudoRetificacoes(ocorrencias) {
 async function renderConteudoCancelamentos(ocorrencias) {
   const canceladas = ocorrencias.filter((o) => o.status === "cancelled");
 
-  const motivos = {};
+  const motivos = Object.create(null);
   canceladas.forEach((o) => {
     const motivo = o.motivo_cancelamento || "Não informado";
-    if (!motivos[motivo]) motivos[motivo] = 0;
-    motivos[motivo]++;
+    motivos[motivo] = (motivos[motivo] || 0) + 1;
   });
 
   const topMotivos = Object.keys(motivos)
     .map((key) => ({ motivo: key, total: motivos[key] }))
     .sort((a, b) => b.total - a.total)
     .slice(0, 5);
+  const taxaCancelamento = ocorrencias.length > 0
+    ? `${((canceladas.length / ocorrencias.length) * 100).toFixed(1)}%`
+    : "—";
 
   return `
     <div style="margin-bottom:12px;">
       <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
         <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
           <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Análise das ocorrências canceladas e principais motivos.
+          O período considera a data de criação da ocorrência: o schema não possui timestamp de cancelamento. A proporção é canceladas ÷ total de ocorrências consultadas no intervalo (inclusive canceladas); sem base, exibimos “—”.
         </p>
       </div>
     </div>
@@ -1803,11 +1548,11 @@ async function renderConteudoCancelamentos(ocorrencias) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
       <div style="background:var(--erro);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
         <div style="font-size:22px;font-weight:800;">${canceladas.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Total Canceladas</div>
+        <div style="font-size:9px;opacity:0.8;">Ocorrências canceladas</div>
       </div>
       <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${ocorrencias.length > 0 ? ((canceladas.length / ocorrencias.length) * 100).toFixed(1) : 0}%</div>
-        <div style="font-size:9px;opacity:0.8;">Taxa de Cancelamento</div>
+        <div style="font-size:22px;font-weight:800;">${taxaCancelamento}</div>
+        <div style="font-size:9px;opacity:0.8;">Proporção cancelada do total</div>
       </div>
     </div>
 
@@ -1823,7 +1568,7 @@ async function renderConteudoCancelamentos(ocorrencias) {
           .map(
             (m) => `
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-            <span>${m.motivo}</span>
+            <span>${escaparHTML(m.motivo)}</span>
             <span style="font-weight:700;color:var(--erro);">${m.total}</span>
           </div>
         `,
@@ -1840,167 +1585,69 @@ async function renderConteudoCancelamentos(ocorrencias) {
 // CONTEÚDO - RELATÓRIO DE TENDÊNCIAS
 // ============================================
 
-async function renderConteudoTendencias(ocorrencias) {
-  const porDiaSemana = {};
-  const porHora = {};
-  const porMes = agruparPorMes(ocorrencias);
-
+async function renderConteudoTendencias(ocorrencias, dataInicio, dataFim) {
+  const porDiaSemana = Object.fromEntries(DIAS_SEMANA.map((_, index) => [index, 0]));
+  const porHora = Object.fromEntries(Array.from({ length: 24 }, (_, index) => [index, 0]));
   ocorrencias.forEach((o) => {
-    const data = new Date(o.criado_em);
-    const diaSemana = data.getDay();
-    const hora = data.getHours();
-    if (!porDiaSemana[diaSemana]) porDiaSemana[diaSemana] = 0;
-    porDiaSemana[diaSemana]++;
-    if (!porHora[hora]) porHora[hora] = 0;
-    porHora[hora]++;
+    const instante = criarDateBanco(o.criado_em);
+    if (Number.isNaN(instante.getTime())) return;
+    const data = obterPartesDataSP(instante);
+    const diaSemana = new Date(Date.UTC(data.year, data.month - 1, data.day)).getUTCDay();
+    if (diaSemana >= 0 && diaSemana < 7) porDiaSemana[diaSemana]++;
+    if (data.hour >= 0 && data.hour < 24) porHora[data.hour]++;
   });
-
-  const dadosDiaSemana = Object.keys(porDiaSemana)
-    .map((key) => ({
-      dia: DIAS_SEMANA[parseInt(key)],
-      total: porDiaSemana[key],
-    }))
-    .sort((a, b) => DIAS_SEMANA.indexOf(a.dia) - DIAS_SEMANA.indexOf(b.dia));
-
-  const dadosHora = Object.keys(porHora)
-    .map((key) => ({ hora: parseInt(key), total: porHora[key] }))
-    .sort((a, b) => a.hora - b.hora);
-
-  const diaPico =
-    dadosDiaSemana.length > 0
-      ? dadosDiaSemana.reduce((a, b) => (a.total > b.total ? a : b))
-      : null;
-  const horaPico =
-    dadosHora.length > 0
-      ? dadosHora.reduce((a, b) => (a.total > b.total ? a : b))
-      : null;
-
+  const dadosDiaSemana = DIAS_SEMANA.map((dia, index) => ({ dia, total: porDiaSemana[index] }));
+  const dadosHora = Array.from({ length: 24 }, (_, hora) => ({ hora, total: porHora[hora] }));
+  const dadosMes = agruparPorMes(ocorrencias, dataInicio, dataFim);
+  const diaPico = ocorrencias.length ? dadosDiaSemana.reduce((a,b) => a.total > b.total ? a : b) : null;
+  const horaPico = ocorrencias.length ? dadosHora.reduce((a,b) => a.total > b.total ? a : b) : null;
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Padrões temporais das ocorrências: dias da semana e horários de maior incidência.
-        </p>
-      </div>
+    <p class="report-method-note">Distribuição usa o instante de criação convertido para America/Sao_Paulo. Dias da semana e horas incluem categorias com zero registros; os meses seguem o intervalo selecionado.</p>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${diaPico ? escaparHTML(diaPico.dia) : "—"}</strong><span>Dia mais frequente</span><small>${diaPico ? `${diaPico.total} registro(s)` : "Sem registros no período"}</small></div>
+      <div class="report-kpi"><strong>${horaPico ? `${String(horaPico.hora).padStart(2, "0")}:00` : "—"}</strong><span>Faixa horária mais frequente</span><small>${horaPico ? `${horaPico.total} registro(s)` : "Sem registros no período"}</small></div>
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros observados</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:16px;font-weight:800;">${diaPico ? diaPico.dia : "-"}</div>
-        <div style="font-size:9px;opacity:0.8;">Dia de Pico</div>
-        ${diaPico ? `<div style="font-size:9px;opacity:0.7;">${diaPico.total} ocorrências</div>` : ""}
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:16px;font-weight:800;">${horaPico ? `${String(horaPico.hora).padStart(2, "0")}:00h` : "-"}</div>
-        <div style="font-size:9px;opacity:0.8;">Horário de Pico</div>
-        ${horaPico ? `<div style="font-size:9px;opacity:0.7;">${horaPico.total} ocorrências</div>` : ""}
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-chart-bar" style="margin-right:6px;"></i>
-        Evolução Mensal
-      </h4>
-      <div style="height:140px;">
-        <canvas id="chartTendenciasMensal"></canvas>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:12px;font-weight:700;">
-          <i class="fas fa-calendar-week"></i> Dias da Semana
-        </h4>
-        <div style="height:110px;">
-          <canvas id="chartTendenciasDiaSemana"></canvas>
-        </div>
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:12px;font-weight:700;">
-          <i class="fas fa-clock"></i> Horas do Dia
-        </h4>
-        <div style="height:110px;">
-          <canvas id="chartTendenciasHora"></canvas>
-        </div>
-      </div>
+    <div class="report-content-card"><h3>Evolução mensal observada</h3><div class="report-chart-wrap"><canvas id="chartTendenciasMensal"></canvas></div></div>
+    <div class="report-kpi-grid report-kpi-grid-compact">
+      <div class="report-content-card"><h3>Distribuição por dia da semana</h3><div class="report-chart-wrap"><canvas id="chartTendenciasDiaSemana"></canvas></div></div>
+      <div class="report-content-card"><h3>Distribuição por hora local</h3><div class="report-chart-wrap"><canvas id="chartTendenciasHora"></canvas></div></div>
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE PRODUTIVIDADE
 // ============================================
 
 async function renderConteudoProdutividade(ocorrencias, dataInicio, dataFim) {
-  const total = ocorrencias.length;
-  const finalizadas = ocorrencias.filter((o) => o.status === "synced").length;
-  const totalDias = calcularDiasPeriodo(dataInicio, dataFim);
-  const mediaDiaria = totalDias > 0 ? total / totalDias : 0;
-  const projecaoMensal = mediaDiaria * 30;
-
-  const dataAnteriorInicio = calcularDataAnterior(dataInicio, dataFim);
-  const ocorrenciasAnterior = await buscarOcorrenciasPeriodo(
-    dataAnteriorInicio,
-    dataInicio,
-  );
-  const totalAnterior = ocorrenciasAnterior.length;
-  const variacao =
-    totalAnterior > 0
-      ? (((total - totalAnterior) / totalAnterior) * 100).toFixed(1)
-      : 0;
-
+  const dias = calcularDiasPeriodo(dataInicio, dataFim);
+  const media = dias ? ocorrencias.length / dias : null;
+  const porDia = new Map();
+  ocorrencias.forEach((o) => {
+    const d = obterPartesDataSP(criarDateBanco(o.criado_em));
+    if (!Number.isFinite(d.year) || !Number.isFinite(d.month) || !Number.isFinite(d.day)) return;
+    const key = `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+    porDia.set(key, (porDia.get(key) || 0) + 1);
+  });
+  const diasAtivos = porDia.size;
+  const topDias = [...porDia.entries()].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0])).slice(0, 10);
+  const maiorDia = topDias[0];
+  const porMes = agruparPorMes(ocorrencias, dataInicio, dataFim);
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Métricas de produtividade: volume de ocorrências, média diária e projeções.
-        </p>
-      </div>
+    <p class="report-method-note">Este relatório mede volume de registros criados no período — não produtividade individual, esforço operacional, qualidade ou resultado. A média diária divide o total por todos os dias corridos do intervalo, inclusive dias sem registro. Datas convertidas para America/Sao_Paulo.</p>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros criados</span></div>
+      <div class="report-kpi"><strong>${media === null ? "—" : media.toFixed(1)}</strong><span>Média por dia corrido</span></div>
+      <div class="report-kpi"><strong>${diasAtivos}</strong><span>Dias com ao menos um registro</span></div>
+      <div class="report-kpi"><strong>${maiorDia ? maiorDia[1] : "—"}</strong><span>${maiorDia ? `Maior volume em ${formatarData(maiorDia[0])}` : "Sem registros no período"}</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${total}</div>
-        <div style="font-size:9px;opacity:0.8;">Total de Ocorrências</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${mediaDiaria.toFixed(1)}</div>
-        <div style="font-size:9px;opacity:0.8;">Média Diária</div>
-      </div>
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${projecaoMensal.toFixed(0)}</div>
-        <div style="font-size:9px;opacity:0.8;">Projeção Mensal</div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);text-align:center;">
-        <div style="font-size:18px;font-weight:800;color:${variacao >= 0 ? "var(--verde-bandeira)" : "var(--erro)"};">${variacao >= 0 ? "+" : ""}${variacao}%</div>
-        <div style="font-size:10px;color:var(--cinza-medio);">Variação vs Período Anterior</div>
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);text-align:center;">
-        <div style="font-size:18px;font-weight:800;color:var(--verde-bandeira);">${totalDias}</div>
-        <div style="font-size:10px;color:var(--cinza-medio);">Dias Analisados</div>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-info-circle" style="margin-right:6px;"></i>
-        Resumo do Período
-      </h4>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px;">
-        <div><span style="color:var(--cinza-medio);">Finalizadas:</span> <strong>${finalizadas}</strong></div>
-        <div><span style="color:var(--cinza-medio);">Pendentes:</span> <strong>${ocorrencias.filter((o) => o.status === "pending_sync").length}</strong></div>
-        <div><span style="color:var(--cinza-medio);">Canceladas:</span> <strong>${ocorrencias.filter((o) => o.status === "cancelled").length}</strong></div>
-        <div><span style="color:var(--cinza-medio);">Taxa Resolução:</span> <strong>${total > 0 ? ((finalizadas / total) * 100).toFixed(1) : 0}%</strong></div>
-      </div>
-    </div>
+    <div class="report-content-card"><h3>Volume mensal observado</h3><div class="table-wrapper"><table><thead><tr><th>Mês</th><th>Registros criados</th></tr></thead><tbody>${porMes.map((m) => `<tr><td>${escaparHTML(m.label)}</td><td>${m.value}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
+    <div class="report-content-card"><h3>Dias com maior volume de registros</h3><div class="table-wrapper"><table><thead><tr><th>Data local</th><th>Registros</th></tr></thead><tbody>${topDias.map(([date,count]) => `<tr><td>${escaparHTML(formatarData(date))}</td><td>${count}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DETALHADO
@@ -2008,83 +1655,20 @@ async function renderConteudoProdutividade(ocorrencias, dataInicio, dataFim) {
 
 async function renderConteudoDetalhado(ocorrencias) {
   const porTipo = agruparPorTipo(ocorrencias);
-
+  const tiposResumo = porTipo.slice(0, 5);
+  const restantes = Math.max(0, porTipo.length - tiposResumo.length);
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Listagem completa de todas as ocorrências do período, com todos os campos.
-        </p>
-      </div>
-    </div>
-
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
-      ${porTipo
-        .slice(0, 5)
-        .map(
-          (t) => `
-        <span class="badge" style="background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:10px;padding:2px 12px;">
-          ${t.tipo}: ${t.total}
-        </span>
-      `,
-        )
-        .join("")}
-      <span style="font-size:10px;color:var(--cinza-medio);">+ ${porTipo.length - 5} outros tipos</span>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:10px;box-shadow:var(--sombra-suave);">
-      <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
-        <table style="font-size:11px;width:100%;">
-          <thead>
-            <tr style="background:var(--cinza-claro);position:sticky;top:0;z-index:1;">
-              <th style="padding:6px 8px;text-align:left;">Nº</th>
-              <th style="padding:6px 8px;text-align:left;">Data</th>
-              <th style="padding:6px 8px;text-align:left;">Tipo</th>
-              <th style="padding:6px 8px;text-align:left;">Local</th>
-              <th style="padding:6px 8px;text-align:center;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${ocorrencias
-              .map(
-                (o) => `
-              <tr onclick="window._relatoriosVerDetalhes('${o.id}')" style="border-bottom:1px solid var(--cinza-claro);cursor:pointer;">
-                <td style="padding:4px 8px;font-weight:600;color:var(--azul-bandeira);">${o.numero_ocorrencia || o.numero_temporario || "Rascunho"}</td>
-                <td style="padding:4px 8px;font-size:10px;color:var(--cinza-medio);">${formatarData(o.criado_em)}</td>
-                <td style="padding:4px 8px;">${getTipoLabel(o.tipo_ocorrencia)}</td>
-                <td style="padding:4px 8px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.local_ocorrencia || "-"}</td>
-                <td style="padding:4px 8px;text-align:center;"><span class="badge badge-${getStatusClass(o.status)}" style="font-size:9px;">${getStatusLabel(o.status)}</span></td>
-              </tr>
-            `,
-              )
-              .join("")}
-            ${
-              ocorrencias.length === 0
-                ? `
-              <tr>
-                <td colspan="5" style="text-align:center;color:var(--cinza-medio);padding:20px;">
-                  Nenhuma ocorrência no período
-                </td>
-              </tr>
-            `
-                : ""
-            }
-          </tbody>
-        </table>
-      </div>
-      ${
-        ocorrencias.length > 0
-          ? `
-        <div style="padding:8px 0;font-size:11px;color:var(--cinza-medio);text-align:center;">
-          Total: ${ocorrencias.length} ocorrência(s)
-        </div>
-      `
-          : ""
-      }
+    <p class="report-method-note">Lista dos principais campos operacionais. Selecione uma linha para abrir o registro completo; o número do BO externo é separado do número interno GM.</p>
+    ${tiposResumo.length ? `<div class="report-type-chips">${tiposResumo.map((t) => `<span class="report-type-chip">${escaparHTML(t.tipo)}: ${t.total}</span>`).join("")}${restantes ? `<span class="report-type-chip report-type-chip-muted">+ ${restantes} outros tipos</span>` : ""}</div>` : ""}
+    <div class="report-content-card"><h3>Registros do período (${ocorrencias.length})</h3>
+      <div class="table-wrapper report-detail-table-wrap"><table><thead><tr><th>Nº GM</th><th>BO externo</th><th>Data/hora</th><th>Tipo</th><th>Gravidade</th><th>Localidade</th><th>Situação</th></tr></thead><tbody>
+        ${ocorrencias.map((o) => `<tr data-relatorio-id="${escaparHTML(o.id)}" onclick="window._relatoriosVerDetalhes(this.dataset.relatorioId)" tabindex="0" role="button" aria-label="Abrir ocorrência ${escaparHTML(o.numero_ocorrencia || o.numero_temporario || "sem número")}"><td>${escaparHTML(o.numero_ocorrencia || o.numero_temporario || "Rascunho")}</td><td>${escaparHTML(o.numero_bo || "—")}</td><td>${escaparHTML(formatarDataHoraSP(o.criado_em))}</td><td>${escaparHTML(getTipoLabel(o.tipo_ocorrencia))}</td><td>${escaparHTML(o.gravidade || "—")}</td><td>${escaparHTML(o.bairro_ocorrencia || o.local_ocorrencia || "—")}</td><td><span class="badge badge-${getStatusClass(o.status)}">${escaparHTML(getStatusLabel(o.status))}</span></td></tr>`).join("") || `<tr><td colspan="7">Nenhuma ocorrência no período.</td></tr>`}
+      </tbody></table></div>
+      <p class="report-table-footnote">Total: ${ocorrencias.length} registro(s). Role horizontalmente para consultar todas as colunas em telas estreitas.</p>
     </div>
   `;
 }
+
 
 // ============================================
 // CONTEÚDO - RELATÓRIO MAPA
@@ -2097,7 +1681,7 @@ async function renderConteudoMapa(
   appInstance,
 ) {
   const dadosMapa = ocorrencias
-    .filter((o) => o.latitude && o.longitude)
+    .filter((o) => coordenadaValida(o.latitude, o.longitude))
     .map((o) => ({
       id: o.id,
       latitude: o.latitude,
@@ -2153,9 +1737,7 @@ async function renderConteudoMapa(
       dadosMapa.length > 0
         ? `
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;padding:6px 10px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);">
-        <span style="font-size:9px;color:var(--cinza-medio);"><i class="fas fa-circle" style="color:#00ff00;"></i> Baixa</span>
-        <span style="font-size:9px;color:var(--cinza-medio);"><i class="fas fa-circle" style="color:#ffff00;"></i> Média</span>
-        <span style="font-size:9px;color:var(--cinza-medio);"><i class="fas fa-circle" style="color:#ff0000;"></i> Alta</span>
+        <span style="font-size:9px;color:var(--cinza-medio);">Marcadores: cor por tipo. Clusters: azul (até 10), âmbar (11–20), vermelho (acima de 20).</span>
         <span style="font-size:9px;color:var(--cinza-medio);margin-left:auto;">${dadosMapa.length} ocorrências</span>
       </div>
     `
@@ -2302,412 +1884,96 @@ async function renderConteudoPorGuarda(ocorrencias, dataInicio, dataFim) {
 // CONTEÚDO - RELATÓRIO DE PREVISÃO
 // ============================================
 
-async function renderConteudoPrevisao(ocorrencias, dataInicio, dataFim) {
-  const total = ocorrencias.length;
-  const dias = calcularDiasPeriodo(dataInicio, dataFim);
-  const mediaDiaria = dias > 0 ? total / dias : 0;
-  const projecaoMensal = mediaDiaria * 30;
-  const projecaoSemanal = mediaDiaria * 7;
-
-  const porDiaSemana = {};
-  const porHora = {};
-  ocorrencias.forEach((o) => {
-    const data = new Date(o.criado_em);
-    const diaSemana = data.getDay();
-    const hora = data.getHours();
-    if (!porDiaSemana[diaSemana]) porDiaSemana[diaSemana] = 0;
-    porDiaSemana[diaSemana]++;
-    if (!porHora[hora]) porHora[hora] = 0;
-    porHora[hora]++;
-  });
-
-  const diasOrdenados = Object.keys(porDiaSemana)
-    .map((key) => ({
-      dia: DIAS_SEMANA[parseInt(key)],
-      total: porDiaSemana[key],
-    }))
-    .sort((a, b) => b.total - a.total);
-  const diaPico = diasOrdenados.length > 0 ? diasOrdenados[0] : null;
-
-  const horasOrdenadas = Object.keys(porHora)
-    .map((key) => ({ hora: parseInt(key), total: porHora[key] }))
-    .sort((a, b) => b.total - a.total);
-  const horaPico = horasOrdenadas.length > 0 ? horasOrdenadas[0] : null;
-
-  const tendencia = mediaDiaria > 0 ? ((mediaDiaria / 30) * 100).toFixed(1) : 0;
-
-  return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Previsão baseada no histórico de ocorrências, com projeções e identificação de padrões.
-        </p>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${mediaDiaria.toFixed(1)}</div>
-        <div style="font-size:9px;opacity:0.8;">Média Diária</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${projecaoSemanal.toFixed(0)}</div>
-        <div style="font-size:9px;opacity:0.8;">Projeção Semanal</div>
-      </div>
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${projecaoMensal.toFixed(0)}</div>
-        <div style="font-size:9px;opacity:0.8;">Projeção Mensal</div>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:12px;">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-lightbulb" style="margin-right:6px;"></i>
-        Insights e Padrões
-      </h4>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <div style="background:var(--azul-muito-claro);border-radius:var(--border-radius);padding:10px;">
-          <div style="font-size:10px;color:var(--cinza-medio);">📊 Dia de Pico</div>
-          <div style="font-size:18px;font-weight:700;color:var(--azul-bandeira);">${diaPico ? diaPico.dia : "-"}</div>
-          <div style="font-size:10px;color:var(--cinza-medio);">${diaPico ? `${diaPico.total} ocorrências` : ""}</div>
-        </div>
-        <div style="background:var(--verde-muito-claro);border-radius:var(--border-radius);padding:10px;">
-          <div style="font-size:10px;color:var(--cinza-medio);">⏰ Horário de Pico</div>
-          <div style="font-size:18px;font-weight:700;color:var(--verde-bandeira);">${horaPico ? `${String(horaPico.hora).padStart(2, "0")}:00h` : "-"}</div>
-          <div style="font-size:10px;color:var(--cinza-medio);">${horaPico ? `${horaPico.total} ocorrências` : ""}</div>
-        </div>
-      </div>
-      <div style="margin-top:8px;padding:8px 12px;background:var(--cinza-claro);border-radius:var(--border-radius);font-size:12px;color:var(--cinza-escuro);">
-        <i class="fas fa-chart-line" style="color:var(--azul-bandeira);margin-right:6px;"></i>
-        <strong>Tendência:</strong> ${tendencia >= 0 ? "📈 Crescente" : "📉 Decrescente"} (${Math.abs(tendencia)}% de variação)
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-chart-line" style="margin-right:6px;"></i>
-        Projeção para os Próximos 30 Dias
-      </h4>
-      <div style="height:150px;">
-        <canvas id="chartPrevisao"></canvas>
-      </div>
-      <div style="margin-top:6px;font-size:10px;color:var(--cinza-medio);text-align:center;">
-        Baseado na média diária de ${mediaDiaria.toFixed(1)} ocorrências/dia
-      </div>
-    </div>
-  `;
+async function renderConteudoPrevisao() {
+  return `<div class="report-method-note">Projeção indisponível: extrapolação linear não é uma previsão validada. Use o relatório de tendências observadas para consultar contagens históricas.</div>`;
 }
 
 // ============================================
 // CONTEÚDO - RELATÓRIO DE ABORDAGENS
 // ============================================
 
-async function renderConteudoAbordagens(
-  veiculos,
-  pessoas,
-  dataInicio,
-  dataFim,
-  tipo,
-) {
-  const isVeiculos = tipo === "veiculos";
-  const isPessoas = tipo === "pessoas";
-  const isGeral = tipo === "geral";
+async function renderConteudoAbordagens(veiculos, pessoas, dataInicio, dataFim, tipo) {
+  const incluiVeiculos = tipo !== "pessoas";
+  const incluiPessoas = tipo !== "veiculos";
+  const listaVeiculos = incluiVeiculos ? (veiculos || []) : [];
+  const listaPessoas = incluiPessoas ? (pessoas || []) : [];
+  const total = listaVeiculos.length + listaPessoas.length;
+  const naoClassificados = [...listaVeiculos, ...listaPessoas]
+    .filter((item) => item.tipo_atendimento === "legado_nao_classificado").length;
+  const esc = (valor) => escaparHTML(valor === null || valor === undefined || String(valor).trim() === "" ? "—" : String(valor));
+  const dataHora = (valor) => valor ? esc(formatarDataHoraSP(valor)) : "—";
+  const faseLabel = (valor) => ({ advertencia: "Advertência", multa: "Multa" }[valor] || esc(valor));
+  const statusLabel = (valor) => ({ ativa: "Ativa", encerrada: "Encerrada", finalizada: "Finalizada", cancelada: "Cancelada" }[valor] || esc(valor));
+  const atendimentoLabel = (valor) => valor === "legado_nao_classificado" ? "Legado — contexto não classificado" : esc(valor);
+  const agruparMotivos = (lista) => {
+    const contagem = new Map();
+    lista.forEach((item) => {
+      const motivo = String(item.motivo || "Não informado");
+      contagem.set(motivo, (contagem.get(motivo) || 0) + 1);
+    });
+    return [...contagem.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR"));
+  };
+  const tabelaMotivos = (titulo, lista) => {
+    const motivos = agruparMotivos(lista);
+    return `<section class="report-content-card"><h3>${titulo}</h3><div class="table-wrapper"><table><thead><tr><th>Motivo informado</th><th>Registros</th><th>% do grupo</th></tr></thead><tbody>${motivos.map(([motivo, quantidade]) => `<tr><td>${esc(motivo)}</td><td>${quantidade}</td><td>${lista.length ? ((quantidade / lista.length) * 100).toFixed(1) + "%" : "—"}</td></tr>`).join("") || `<tr><td colspan="3">Nenhum motivo registrado no período.</td></tr>`}</tbody></table></div></section>`;
+  };
 
-  const dados = isVeiculos
-    ? veiculos
-    : isPessoas
-      ? pessoas
-      : [...veiculos, ...pessoas];
-  const total = dados.length;
-  const totalVeiculos = veiculos.length;
-  const totalPessoas = pessoas.length;
+  let html = `<p class="report-method-note">Contagem de abordagens registradas no período selecionado. Pessoas e veículos permanecem em grupos separados; este relatório não infere vínculo entre abordagem e boletim de ocorrência. ${naoClassificados} registro(s) legado(s) sem classificação de atendimento.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact">
+      <div class="report-kpi"><strong>${total}</strong><span>Total de abordagens</span></div>
+      ${incluiVeiculos ? `<div class="report-kpi"><strong>${listaVeiculos.length}</strong><span>Abordagens de veículos</span></div>` : ""}
+      ${incluiPessoas ? `<div class="report-kpi"><strong>${listaPessoas.length}</strong><span>Abordagens de pessoas</span></div>` : ""}
+      <div class="report-kpi"><strong>${naoClassificados}</strong><span>Legado sem classificação</span></div>
+    </div>`;
 
-  const porIdentificador = {};
-  const porMotivo = {};
-  const porFase = {};
-
-  dados.forEach((item) => {
-    const id = isVeiculos
-      ? item.placa
-      : isPessoas
-        ? item.nome
-        : item.placa || item.nome || "Não identificado";
-    if (!porIdentificador[id]) porIdentificador[id] = 0;
-    porIdentificador[id]++;
-    const motivo = item.motivo || "Não informado";
-    if (!porMotivo[motivo]) porMotivo[motivo] = 0;
-    porMotivo[motivo]++;
-    const fase = item.fase || "advertencia";
-    if (!porFase[fase]) porFase[fase] = 0;
-    porFase[fase]++;
-  });
-
-  const topIdentificadores = Object.keys(porIdentificador)
-    .map((key) => ({ id: key, total: porIdentificador[key] }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10);
-
-  const topMotivos = Object.keys(porMotivo)
-    .map((key) => ({ motivo: key, total: porMotivo[key] }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5);
-
-  let titulo = "";
-  let icone = "";
-  let cor = "";
-  if (isVeiculos) {
-    titulo = "Abordagens de Veículos";
-    icone = "fa-motorcycle";
-    cor = "#003F87";
-  } else if (isPessoas) {
-    titulo = "Abordagens de Pessoas";
-    icone = "fa-user-friends";
-    cor = "#00843D";
-  } else {
-    titulo = "Abordagens Geral";
-    icone = "fa-chart-bar";
-    cor = "#8b5cf6";
+  if (incluiVeiculos) {
+    html += tabelaMotivos("Motivos informados — veículos", listaVeiculos);
+    html += `<section class="report-content-card"><h3>Veículos — identificação e local</h3><div class="table-wrapper"><table><thead><tr><th>Data</th><th>Placa / descrição</th><th>Marca / modelo / cor</th><th>Identificação</th><th>Local</th></tr></thead><tbody>${listaVeiculos.map((v) => `<tr><td>${dataHora(v.criado_em)}</td><td>${esc(v.placa || v.descricao_identificacao)}</td><td>${esc([v.marca_modelo, v.cor].filter(Boolean).join(" / "))}</td><td>${esc(v.identificacao_status)}</td><td>${esc(v.local_abordagem)}</td></tr>`).join("") || `<tr><td colspan="5">Nenhuma abordagem de veículo no período.</td></tr>`}</tbody></table></div></section>`;
+    html += `<section class="report-content-card"><h3>Veículos — contexto e providências</h3><div class="table-wrapper"><table><thead><tr><th>Data</th><th>Tipo de atendimento</th><th>Motivo</th><th>Providência</th><th>Fase</th><th>Situação</th><th>Responsável pelo cadastro</th></tr></thead><tbody>${listaVeiculos.map((v) => `<tr><td>${dataHora(v.criado_em)}</td><td>${atendimentoLabel(v.tipo_atendimento)}</td><td>${esc(v.motivo)}</td><td>${esc(v.providencia)}</td><td>${faseLabel(v.fase)}</td><td>${statusLabel(v.status_abordagem)}</td><td>${esc(v.usuarios?.nome_completo)}</td></tr>`).join("") || `<tr><td colspan="7">Nenhuma abordagem de veículo no período.</td></tr>`}</tbody></table></div></section>`;
   }
 
-  return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:${cor};margin-right:4px;"></i>
-          ${isGeral ? "Consolidado de todas as abordagens de veículos e pessoas." : isVeiculos ? "Análise detalhada de abordagens de veículos." : "Análise detalhada de abordagens de pessoas."}
-        </p>
-      </div>
-    </div>
+  if (incluiPessoas) {
+    html += tabelaMotivos("Motivos informados — pessoas", listaPessoas);
+    html += `<section class="report-content-card"><h3>Pessoas — identificação e local</h3><div class="table-wrapper"><table><thead><tr><th>Data</th><th>Nome / alcunha</th><th>RG</th><th>CPF</th><th>Local</th><th>Reincidências registradas</th></tr></thead><tbody>${listaPessoas.map((p) => `<tr><td>${dataHora(p.criado_em)}</td><td>${esc([p.nome, p.alcunha].filter(Boolean).join(" / "))}</td><td>${esc(p.rg)}</td><td>${esc(p.cpf)}</td><td>${esc(p.local_abordagem)}</td><td>${esc(p.reincidencia_count)}</td></tr>`).join("") || `<tr><td colspan="6">Nenhuma abordagem de pessoa no período.</td></tr>`}</tbody></table></div></section>`;
+    html += `<section class="report-content-card"><h3>Pessoas — contexto e providências</h3><div class="table-wrapper"><table><thead><tr><th>Data</th><th>Tipo de atendimento</th><th>Motivo</th><th>Providência</th><th>Fase</th><th>Situação / regularização</th><th>Prazo</th><th>Responsável pelo cadastro</th></tr></thead><tbody>${listaPessoas.map((p) => `<tr><td>${dataHora(p.criado_em)}</td><td>${atendimentoLabel(p.tipo_atendimento)}</td><td>${esc(p.motivo)}</td><td>${esc(p.providencia)}</td><td>${faseLabel(p.fase)}</td><td>${esc([statusLabel(p.status_abordagem), p.status_regularizacao].filter(Boolean).join(" / "))}</td><td>${p.prazo_data || p.prazo ? esc(formatarData(p.prazo_data || p.prazo)) : "—"}</td><td>${esc(p.usuarios?.nome_completo)}</td></tr>`).join("") || `<tr><td colspan="8">Nenhuma abordagem de pessoa no período.</td></tr>`}</tbody></table></div></section>`;
+  }
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:${cor};border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${total}</div>
-        <div style="font-size:9px;opacity:0.8;">Total</div>
-      </div>
-      ${
-        isGeral
-          ? `
-        <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;">${totalVeiculos}</div>
-          <div style="font-size:9px;opacity:0.8;">Veículos</div>
-        </div>
-        <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;">${totalPessoas}</div>
-          <div style="font-size:9px;opacity:0.8;">Pessoas</div>
-        </div>
-      `
-          : `
-        <div style="background:${cor === "#003F87" ? "var(--verde-bandeira)" : "var(--azul-bandeira)"};border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;">${porFase.advertencia || 0}</div>
-          <div style="font-size:9px;opacity:0.8;">Advertências</div>
-        </div>
-        <div style="background:var(--erro);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:20px;font-weight:800;">${porFase.multa || 0}</div>
-          <div style="font-size:9px;opacity:0.8;">Multas</div>
-        </div>
-      `
-      }
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 6px 0;font-size:12px;font-weight:700;">
-          <i class="fas fa-trophy"></i> Top 10 ${isVeiculos ? "Placas" : isPessoas ? "Pessoas" : "Identificadores"}
-        </h4>
-        ${topIdentificadores
-          .map(
-            (item, i) => `
-          <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:11px;">
-            <span>${i + 1}. ${item.id}</span>
-            <span style="font-weight:600;color:${cor};">${item.total}</span>
-          </div>
-        `,
-          )
-          .join("")}
-        ${topIdentificadores.length === 0 ? '<p style="font-size:11px;color:var(--cinza-medio);text-align:center;padding:8px;">Nenhum registro</p>' : ""}
-      </div>
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 6px 0;font-size:12px;font-weight:700;">
-          <i class="fas fa-list"></i> Principais Motivos
-        </h4>
-        ${topMotivos
-          .map(
-            (m) => `
-          <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--cinza-claro);font-size:11px;">
-            <span>${m.motivo.length > 30 ? m.motivo.slice(0, 28) + "..." : m.motivo}</span>
-            <span style="font-weight:600;color:${cor};">${m.total}</span>
-          </div>
-        `,
-          )
-          .join("")}
-        ${topMotivos.length === 0 ? '<p style="font-size:11px;color:var(--cinza-medio);text-align:center;padding:8px;">Nenhum motivo registrado</p>' : ""}
-      </div>
-    </div>
-
-    ${
-      !isGeral
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-          <i class="fas fa-chart-bar"></i> Distribuição por Fase
-        </h4>
-        <div style="height:120px;">
-          <canvas id="chartAbordagensFases"></canvas>
-        </div>
-      </div>
-    `
-        : `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-          <i class="fas fa-chart-pie"></i> Distribuição por Tipo
-        </h4>
-        <div style="height:120px;">
-          <canvas id="chartAbordagensPizza"></canvas>
-        </div>
-      </div>
-    `
-    }
-  `;
+  return html;
+}
+async function renderConteudoAbordagensVeiculos(ocorrencias, dataInicio, dataFim, abordagensDados = null) {
+  const abordagens = abordagensDados || estado.abordagensCache || await buscarAbordagensPeriodo(dataInicio, dataFim);
+  return renderConteudoAbordagens(abordagens.veiculos || [], [], dataInicio, dataFim, "veiculos");
 }
 
-async function renderConteudoAbordagensVeiculos(
-  ocorrencias,
-  dataInicio,
-  dataFim,
-) {
-  const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
-  return renderConteudoAbordagens(
-    abordagens.veiculos,
-    [],
-    dataInicio,
-    dataFim,
-    "veiculos",
-  );
+async function renderConteudoAbordagensPessoas(ocorrencias, dataInicio, dataFim, abordagensDados = null) {
+  const abordagens = abordagensDados || estado.abordagensCache || await buscarAbordagensPeriodo(dataInicio, dataFim);
+  return renderConteudoAbordagens([], abordagens.pessoas || [], dataInicio, dataFim, "pessoas");
 }
 
-async function renderConteudoAbordagensPessoas(
-  ocorrencias,
-  dataInicio,
-  dataFim,
-) {
-  const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
-  return renderConteudoAbordagens(
-    [],
-    abordagens.pessoas,
-    dataInicio,
-    dataFim,
-    "pessoas",
-  );
+async function renderConteudoAbordagensGeral(ocorrencias, dataInicio, dataFim, abordagensDados = null) {
+  const abordagens = abordagensDados || estado.abordagensCache || await buscarAbordagensPeriodo(dataInicio, dataFim);
+  return renderConteudoAbordagens(abordagens.veiculos || [], abordagens.pessoas || [], dataInicio, dataFim, "geral");
 }
 
-async function renderConteudoAbordagensGeral(ocorrencias, dataInicio, dataFim) {
-  const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
-  return renderConteudoAbordagens(
-    abordagens.veiculos,
-    abordagens.pessoas,
-    dataInicio,
-    dataFim,
-    "geral",
-  );
-}
 
 // ============================================
 // CONTEÚDO - EFICIÊNCIA OPERACIONAL
 // ============================================
 
-async function renderConteudoEficiencia(ocorrencias, dataInicio, dataFim) {
-  const abordagens = await buscarAbordagensPeriodo(dataInicio, dataFim);
-  const totalOcorrencias = ocorrencias.length;
-  const totalAbordagens =
-    abordagens.veiculos.length + abordagens.pessoas.length;
-
-  const client =
-    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-  let conversoes = 0;
-  if (client) {
-    try {
-      const { data, error } = await client
-        .from("ocorrencias")
-        .select("id")
-        .not("observacoes", "is", null)
-        .ilike("observacoes", "%abordagem%")
-        .gte("criado_em", dataInicio)
-        .lte("criado_em", dataFim + "T23:59:59");
-      if (!error) conversoes = data?.length || 0;
-    } catch (e) {
-      console.warn("Erro ao buscar conversões:", e);
-    }
-  }
-
-  const taxaConversao =
-    totalAbordagens > 0 ? ((conversoes / totalAbordagens) * 100).toFixed(1) : 0;
-  const mediaOcorrencias =
-    totalAbordagens > 0 ? (totalOcorrencias / totalAbordagens).toFixed(2) : 0;
-
-  let eficienciaStatus = "";
-  let eficienciaCor = "";
-  if (taxaConversao >= 30) {
-    eficienciaStatus = "✅ Alta eficiência";
-    eficienciaCor = "var(--verde-bandeira)";
-  } else if (taxaConversao >= 15) {
-    eficienciaStatus = "⚠️ Eficiência moderada";
-    eficienciaCor = "var(--aviso)";
-  } else {
-    eficienciaStatus = "❌ Baixa eficiência";
-    eficienciaCor = "var(--erro)";
-  }
-
+async function renderConteudoEficiencia(ocorrencias = [], abordagens = { veiculos: [], pessoas: [] }) {
+  const veiculos = abordagens?.veiculos || [];
+  const pessoas = abordagens?.pessoas || [];
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Taxa de conversão de abordagens em Boletins de Ocorrência, medindo a eficiência operacional.
-        </p>
-      </div>
+    <p class="report-method-note">A taxa de conversão abordagem → BO não é calculada: não há vínculo verificável entre uma abordagem específica e um boletim. Abaixo, BOs e abordagens são contagens independentes no mesmo período; não representam conversão nem eficiência individual.</p>
+    <div class="report-kpi-grid">
+      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Ocorrências ativas criadas</span></div>
+      <div class="report-kpi"><strong>${veiculos.length}</strong><span>Abordagens de veículos ativas</span></div>
+      <div class="report-kpi"><strong>${pessoas.length}</strong><span>Abordagens de pessoas ativas</span></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${totalAbordagens}</div>
-        <div style="font-size:9px;opacity:0.8;">Total de Abordagens</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${totalOcorrencias}</div>
-        <div style="font-size:9px;opacity:0.8;">Total de Ocorrências</div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${taxaConversao}%</div>
-        <div style="font-size:9px;opacity:0.8;">Taxa de Conversão</div>
-      </div>
-      <div style="background:var(--aviso);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${conversoes}</div>
-        <div style="font-size:9px;opacity:0.8;">Abordagens → BOs</div>
-      </div>
-      <div style="background:var(--roxo);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${mediaOcorrencias}</div>
-        <div style="font-size:9px;opacity:0.8;">Média BOs/Abordagem</div>
-      </div>
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);border-left:4px solid ${eficienciaCor};">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:14px;font-weight:700;">
-        <i class="fas fa-lightbulb" style="margin-right:6px;"></i>
-        Análise de Eficiência
-      </h4>
-      <div style="font-size:13px;color:var(--cinza-escuro);">
-        <p style="margin:4px 0;"><strong>📊 Taxa de Conversão:</strong> ${taxaConversao}% das abordagens geraram Boletins de Ocorrência.</p>
-        <p style="margin:4px 0;"><strong>📈 Produtividade:</strong> Cada abordagem gerou em média ${mediaOcorrencias} ocorrências.</p>
-        <p style="margin:4px 0;"><strong>🎯 Status:</strong> <span style="color:${eficienciaCor};font-weight:700;">${eficienciaStatus}</span></p>
-        ${conversoes > 0 ? `<p style="margin:4px 0;"><strong>📋 Total de conversões:</strong> ${conversoes} abordagens convertidas em BOs.</p>` : '<p style="margin:4px 0;"><strong>📋 Nenhuma conversão identificada neste período.</strong></p>'}
-      </div>
-    </div>
+    <div class="report-content-card"><h3>Conversão não calculada</h3><p>Sem relação de dados que permita comprovar qual abordagem originou qual BO, qualquer percentual seria enganoso.</p></div>
   `;
 }
+
 
 // ============================================
 // INICIALIZAR GRÁFICOS
@@ -2728,13 +1994,6 @@ function inicializarGraficos(tipo, container) {
           break;
         case "previsao":
           inicializarGraficoPrevisao();
-          break;
-        case "abordagens-veiculos":
-        case "abordagens-pessoas":
-          inicializarGraficoAbordagensFases();
-          break;
-        case "abordagens-geral":
-          inicializarGraficoAbordagensPizza();
           break;
         case "mapa":
           inicializarMapa();
@@ -3189,11 +2448,12 @@ function inicializarMapa() {
   if (loading) loading.style.display = "none";
 
   const dadosMapa =
-    estado.dadosCache?.filter((o) => o.latitude && o.longitude) || [];
+    estado.dadosCache?.filter((o) => coordenadaValida(o.latitude, o.longitude)) || [];
   if (dadosMapa.length === 0) return;
 
   if (typeof L === "undefined") {
-    console.warn("⚠️ Leaflet não carregado");
+    console.warn("Leaflet não carregado");
+    mapaContainer.innerHTML = `<div class="report-map-error" role="alert"><strong>Mapa indisponível</strong><span>Não foi possível carregar a biblioteca cartográfica. Confira a conexão e reabra o relatório.</span></div>`;
     return;
   }
 
@@ -3205,13 +2465,7 @@ function inicializarMapa() {
   }
 
   try {
-    const dadosValidos = dadosMapa.filter(
-      (p) =>
-        p.latitude &&
-        p.longitude &&
-        !isNaN(parseFloat(p.latitude)) &&
-        !isNaN(parseFloat(p.longitude)),
-    );
+    const dadosValidos = dadosMapa.filter((p) => coordenadaValida(p.latitude, p.longitude));
 
     if (dadosValidos.length === 0) {
       mapaContainer.innerHTML = `
@@ -3296,14 +2550,14 @@ function inicializarMapa() {
       });
 
       const popupContent = `
-        <div style="font-weight:700;font-size:14px;color:#003F87;">#${p.numero_ocorrencia || p.numero_temporario || "Sem número"}</div>
+        <div style="font-weight:700;font-size:14px;color:#003F87;">#${escaparHTML(p.numero_ocorrencia || p.numero_temporario || "Sem número")}</div>
         <div style="display:inline-block;padding:1px 10px;border-radius:9999px;font-size:10px;font-weight:600;text-transform:uppercase;color:#fff;background:${cor};margin-bottom:4px;">
-          ${getTipoLabel(tipo)}
+          ${escaparHTML(getTipoLabel(tipo))}
         </div>
-        <div style="font-size:12px;color:#1e293b;">📍 ${p.local_ocorrencia || "Local não informado"}</div>
-        <div style="font-size:11px;color:#94a3b8;">👤 ${p.criador?.nome_completo || "Desconhecido"}</div>
+        <div style="font-size:12px;color:#1e293b;"><i class="fas fa-map-marker-alt" aria-hidden="true"></i> ${escaparHTML(p.local_ocorrencia || "Local não informado")}</div>
+        <div style="font-size:11px;color:#64748b;"><i class="fas fa-user" aria-hidden="true"></i> ${escaparHTML(p.criador?.nome_completo || "Desconhecido")}</div>
         <div style="margin-top:4px;">
-          <button onclick="window._relatoriosVerDetalhes('${p.id}')" style="padding:2px 10px;font-size:11px;border:none;border-radius:4px;background:#e3f2fd;color:#003F87;cursor:pointer;">
+          <button data-relatorio-id="${escaparHTML(p.id)}" onclick="window._relatoriosVerDetalhes(this.dataset.relatorioId)" style="padding:2px 10px;font-size:11px;border:none;border-radius:4px;background:#e3f2fd;color:#003F87;cursor:pointer;">
             <i class="fas fa-eye"></i> Ver detalhes
           </button>
         </div>
@@ -3340,7 +2594,7 @@ function inicializarMapa() {
     mapaContainer.innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--cinza-medio);text-align:center;padding:20px;">
         <i class="fas fa-exclamation-triangle" style="font-size:48px;color:var(--erro);margin-bottom:12px;"></i>
-        <p>Erro ao carregar mapa: ${error.message}</p>
+        <p>Erro ao carregar mapa: ${escaparHTML(error?.message || "Falha não identificada")}</p>
       </div>
     `;
   }
@@ -3379,7 +2633,8 @@ async function obterDadosGrafico(tipo) {
     case "tendencias_dia": {
       const porDia = {};
       ocorrencias.forEach((o) => {
-        const dia = new Date(o.criado_em).getDay();
+        const partes = obterPartesDataSP(criarDateBanco(o.criado_em));
+        const dia = new Date(Date.UTC(partes.year, partes.month - 1, partes.day)).getUTCDay();
         const nome = DIAS_SEMANA[dia];
         if (!porDia[nome]) porDia[nome] = 0;
         porDia[nome]++;
@@ -3389,7 +2644,7 @@ async function obterDadosGrafico(tipo) {
     case "tendencias_hora": {
       const porHora = {};
       ocorrencias.forEach((o) => {
-        const hora = new Date(o.criado_em).getHours();
+        const hora = obterPartesDataSP(criarDateBanco(o.criado_em)).hour;
         if (!porHora[hora]) porHora[hora] = 0;
         porHora[hora]++;
       });
@@ -3398,21 +2653,8 @@ async function obterDadosGrafico(tipo) {
         value: porHora[i] || 0,
       }));
     }
-    case "previsao": {
-      const total = ocorrencias.length;
-      const dias = calcularDiasPeriodo(
-        estado.filtros.dataInicio || new Date().toISOString().slice(0, 10),
-        estado.filtros.dataFim || new Date().toISOString().slice(0, 10),
-      );
-      const mediaDiaria = dias > 0 ? total / dias : 0;
-      return Array.from({ length: 30 }, (_, i) => ({
-        label: `Dia ${i + 1}`,
-        value: Math.max(
-          0,
-          mediaDiaria + (Math.random() - 0.5) * mediaDiaria * 0.4,
-        ),
-      }));
-    }
+    case "previsao":
+      return [];
     case "abordagens_fases": {
       const veiculos = abordagens.veiculos || [];
       const pessoas = abordagens.pessoas || [];
@@ -3447,6 +2689,8 @@ async function obterDadosGrafico(tipo) {
 // ============================================
 
 export async function exportarRelatorioPDF(tipo, appInstance) {
+  if (tipo === "produtividade") tipo = "executivo";
+  if (tipo === "por-guarda") tipo = "desempenho";
   try {
     if (
       typeof pdfExport === "undefined" ||
@@ -3463,47 +2707,24 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
     let dados = null;
     let titulo = "";
     let descricao = "";
-    let tipoExport = "";
+    let tipoExport = "relatorio";
 
     const ocorrencias =
       estado.dadosCache ||
       (await buscarOcorrenciasPeriodo(dataInicio, dataFim));
-    const abordagens =
-      estado.abordagensCache ||
-      (await buscarAbordagensPeriodo(dataInicio, dataFim));
+    const usaAbordagens = tipo === "desempenho" || tipo === "eficiencia" || tipo.startsWith("abordagens-");
+    const abordagens = usaAbordagens
+      ? (estado.abordagensCache || await buscarAbordagensPeriodo(dataInicio, dataFim))
+      : { veiculos: [], pessoas: [] };
 
-    // Mapear tipos para os suportados pelo pdf-export.js
-    const mapeamentoTipos = {
-      executivo: "desempenho",
-      "por-tipo": "ocorrencias",
-      "por-local": "ocorrencias",
-      atendimento: "desempenho",
-      desempenho: "desempenho",
-      retificacoes: "retificacoes",
-      cancelamentos: "ocorrencias",
-      tendencias: "desempenho",
-      produtividade: "desempenho",
-      detalhado: "ocorrencias",
-      mapa: "ocorrencias",
-      "por-guarda": "desempenho",
-      previsao: "desempenho",
-      "abordagens-veiculos": "abordagens",
-      "abordagens-pessoas": "abordagens",
-      "abordagens-geral": "abordagens",
-      eficiencia: "desempenho",
-    };
-
-    tipoExport = mapeamentoTipos[tipo] || "desempenho";
-
+    // O tipo original é mantido para que cada PDF contenha a análise correspondente.
     switch (tipo) {
       case "executivo": {
         const stats = calcularEstatisticas(ocorrencias);
         const porTipo = agruparPorTipo(ocorrencias);
         const porMes = agruparPorMes(ocorrencias);
-        const total = stats.total || 1;
-        const taxaResolutividade = ((stats.finalizadas / total) * 100).toFixed(
-          1,
-        );
+        const total = stats.total;
+        const taxaFinalizacao = total > 0 ? ((stats.finalizadas / total) * 100).toFixed(1) : "0.0";
 
         // Preparar dados para o formato esperado pelo pdf-export
         const ranking = [
@@ -3512,7 +2733,7 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
             matricula: "-",
             ocorrencias: { total: stats.total, finalizadas: stats.finalizadas },
             abordagens: { total: 0 },
-            taxa_resolucao: taxaResolutividade,
+            taxa_finalizacao: taxaFinalizacao,
             total_atendimentos: stats.total,
           },
         ];
@@ -3605,99 +2826,54 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         break;
       }
       case "desempenho": {
-        // Buscar usuários para o ranking
-        const client =
-          typeof supabaseClient !== "undefined"
-            ? supabaseClient.getClient()
-            : null;
-        let usuarios = [];
-        if (client) {
-          const { data, error } = await client
-            .from("usuarios")
-            .select("id, nome_completo, matricula, perfil")
-            .eq("status", "ativo");
-          if (!error) usuarios = data || [];
-        }
-
         const todasAbordagens = [
-          ...(abordagens.veiculos || []).map((v) => ({
-            ...v,
-            tipo_abordagem: "veiculo",
-          })),
-          ...(abordagens.pessoas || []).map((p) => ({
-            ...p,
-            tipo_abordagem: "pessoa",
-          })),
+          ...(abordagens.veiculos || []).map((a) => ({ ...a, tipo_abordagem: "veiculo" })),
+          ...(abordagens.pessoas || []).map((a) => ({ ...a, tipo_abordagem: "pessoa" })),
         ];
-
-        const desempenho = {};
-        usuarios.forEach((u) => {
-          desempenho[u.id] = {
-            id: u.id,
-            nome: u.nome_completo,
-            matricula: u.matricula || "-",
-            perfil: u.perfil,
-            ocorrencias: {
-              total: 0,
-              finalizadas: 0,
-              pendentes: 0,
-              canceladas: 0,
-            },
+        const ids = [...new Set([
+          ...ocorrencias.map((o) => o.criado_por).filter(Boolean),
+          ...todasAbordagens.map((a) => a.criado_por).filter(Boolean),
+        ])];
+        const usuarios = await buscarDadosUsuariosEmLote(ids);
+        const atividade = new Map();
+        const garantir = (id) => {
+          const key = id || "sem-identificador";
+          if (!atividade.has(key)) atividade.set(key, {
+            id: key,
+            nome: usuarios[id]?.nome_completo || (id ? `Usuário ${String(id).slice(0, 8)}` : "Usuário não identificado"),
+            ocorrencias: { total: 0, finalizadas: 0, pendentes: 0, canceladas: 0 },
             abordagens: { total: 0, veiculos: 0, pessoas: 0 },
-            taxa_resolucao: 0,
             total_atendimentos: 0,
-          };
-        });
-
+          });
+          return atividade.get(key);
+        };
         ocorrencias.forEach((o) => {
-          const id = o.criado_por;
-          if (desempenho[id]) {
-            desempenho[id].ocorrencias.total++;
-            if (o.status === "synced") desempenho[id].ocorrencias.finalizadas++;
-            if (o.status === "pending_sync")
-              desempenho[id].ocorrencias.pendentes++;
-            if (o.status === "cancelled")
-              desempenho[id].ocorrencias.canceladas++;
-          }
+          const item = garantir(o.criado_por);
+          item.ocorrencias.total++;
+          if (o.status === "synced") item.ocorrencias.finalizadas++;
+          if (o.status === "pending_sync") item.ocorrencias.pendentes++;
+          if (o.status === "cancelled") item.ocorrencias.canceladas++;
         });
-
         todasAbordagens.forEach((a) => {
-          const id = a.criado_por;
-          if (desempenho[id]) {
-            desempenho[id].abordagens.total++;
-            if (a.tipo_abordagem === "veiculo")
-              desempenho[id].abordagens.veiculos++;
-            else desempenho[id].abordagens.pessoas++;
-          }
+          const item = garantir(a.criado_por);
+          item.abordagens.total++;
+          if (a.tipo_abordagem === "veiculo") item.abordagens.veiculos++;
+          else item.abordagens.pessoas++;
         });
-
-        Object.values(desempenho).forEach((d) => {
-          d.taxa_resolucao =
-            d.ocorrencias.total > 0
-              ? (
-                  (d.ocorrencias.finalizadas / d.ocorrencias.total) *
-                  100
-                ).toFixed(1)
-              : 0;
-          d.total_atendimentos = d.ocorrencias.total + d.abordagens.total;
-        });
-
-        const ranking = Object.values(desempenho).sort(
-          (a, b) => b.total_atendimentos - a.total_atendimentos,
-        );
-
+        const ranking = [...atividade.values()].map((item) => ({
+          ...item,
+          total_atendimentos: item.ocorrencias.total + item.abordagens.total,
+          taxa_resolucao: item.ocorrencias.total ? ((item.ocorrencias.finalizadas / item.ocorrencias.total) * 100).toFixed(1) : null,
+        })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
         dados = {
           ranking,
-          totalOcorrencias: ranking.reduce(
-            (s, d) => s + d.ocorrencias.total,
-            0,
-          ),
-          totalAbordagens: ranking.reduce((s, d) => s + d.abordagens.total, 0),
+          totalOcorrencias: ocorrencias.length,
+          totalAbordagens: todasAbordagens.length,
           totalGuardas: ranking.length,
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Desempenho por Guarda";
-        descricao = "Produtividade com ocorrências e abordagens";
+        titulo = "Registros por Responsável pelo Cadastro";
+        descricao = "Contagens por autor do cadastro; não representam participação operacional ou desempenho";
         break;
       }
       case "retificacoes": {
@@ -3709,8 +2885,11 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         );
         dados = {
           retificacoes: retificacoes.map((r) => ({
+            ...r,
             numero: r.numero_ocorrencia || r.numero_temporario || "Sem número",
             tipo: getTipoLabel(r.tipo_ocorrencia),
+            tipo_ocorrencia: getTipoLabel(r.tipo_ocorrencia),
+            data_evento: obterDataEventoRetificacao(r),
             data_solicitacao: r.solicitada_em || r.criado_em,
             status: r.status,
             justificativa: r.solicitacao_retificacao_justificativa || "-",
@@ -3731,6 +2910,8 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
             tipo_ocorrencia: getTipoLabel(o.tipo_ocorrencia),
             status: o.status,
           })),
+          totalRegistrosPeriodo: ocorrencias.length,
+          notaMetodologica: "O período considera a data de criação da ocorrência. O schema não possui timestamp de cancelamento; proporção = ocorrências canceladas ÷ total de ocorrências consultadas no intervalo, inclusive canceladas.",
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
         titulo = "Relatório de Cancelamentos";
@@ -3771,38 +2952,13 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         break;
       }
       case "produtividade": {
-        const ranking = [
-          {
-            nome: "Geral",
-            matricula: "-",
-            ocorrencias: {
-              total: ocorrencias.length,
-              finalizadas: ocorrencias.filter((o) => o.status === "synced")
-                .length,
-            },
-            abordagens: { total: 0 },
-            taxa_resolucao:
-              ocorrencias.length > 0
-                ? (
-                    (ocorrencias.filter((o) => o.status === "synced").length /
-                      ocorrencias.length) *
-                    100
-                  ).toFixed(1)
-                : 0,
-            total_atendimentos: ocorrencias.length,
-          },
-        ];
-        dados = {
-          ranking,
-          totalOcorrencias: ocorrencias.length,
-          totalAbordagens: 0,
-          totalGuardas: 1,
-          periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
-        };
-        titulo = "Produtividade do Setor";
-        descricao = "Eficiência e capacidade de atendimento";
+        dados = { totalRegistrosPeriodo: ocorrencias.length, periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}` };
+        titulo = "Produtividade do Setor — volume registrado";
+        descricao = "Contagem de registros por período; não mede desempenho individual";
         break;
       }
+
+
       case "detalhado": {
         dados = {
           ocorrencias: ocorrencias.map((o) => ({
@@ -3812,12 +2968,12 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           })),
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Ocorrências Detalhado";
-        descricao = "Listagem completa com todos os campos";
+        titulo = "Ocorrências — campos principais";
+        descricao = "Lista dos principais campos operacionais; o registro individual contém os demais detalhes";
         break;
       }
       case "mapa": {
-        const pontosMapa = ocorrencias.filter((o) => o.latitude && o.longitude);
+        const pontosMapa = ocorrencias.filter((o) => coordenadaValida(o.latitude, o.longitude));
         dados = {
           ocorrencias: pontosMapa.map((o) => ({
             ...o,
@@ -3922,51 +3078,37 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           totalGuardas: ranking.length,
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Ocorrências por Guarda";
-        descricao = "Produtividade individual com abordagens";
+        titulo = "Registros por Responsável pelo Cadastro";
+        descricao = "Contagens por autor do cadastro; não representam participação operacional ou desempenho";
         break;
       }
       case "previsao": {
-        const ranking = [
-          {
-            nome: "Geral",
-            matricula: "-",
-            ocorrencias: {
-              total: ocorrencias.length,
-              finalizadas: ocorrencias.filter((o) => o.status === "synced")
-                .length,
-            },
-            abordagens: { total: 0 },
-            taxa_resolucao:
-              ocorrencias.length > 0
-                ? (
-                    (ocorrencias.filter((o) => o.status === "synced").length /
-                      ocorrencias.length) *
-                    100
-                  ).toFixed(1)
-                : 0,
-            total_atendimentos: ocorrencias.length,
-          },
-        ];
         dados = {
-          ranking,
-          totalOcorrencias: ocorrencias.length,
-          totalAbordagens: 0,
-          totalGuardas: 1,
+          totalRegistrosPeriodo: ocorrencias.length,
+          notaMetodologica: "Nenhuma projeção é gerada: não há método preditivo validado. Consulte as tendências históricas observadas; a quantidade histórica deste período não é uma previsão.",
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Previsão de Ocorrências";
-        descricao = "Previsão baseada em histórico";
+        titulo = "Projeção de Ocorrências — indisponível";
+        descricao = "Projeção não calculada por ausência de método validado";
         break;
       }
+
+
       case "abordagens-veiculos": {
         const veiculos = abordagens.veiculos || [];
         const dadosAbordagens = veiculos.map((v) => ({
-          placa: v.placa || "N/A",
-          marca_modelo: v.marca_modelo || "N/A",
-          cor: v.cor || "N/A",
-          motivo: v.motivo || "N/A",
+          ...v,
+          placa: v.placa || "Não informado",
+          marca_modelo: v.marca_modelo || "Não informado",
+          cor: v.cor || "Não informado",
+          motivo: v.motivo || "Não informado",
           fase: v.fase || "advertencia",
+          tipo_atendimento: v.tipo_atendimento || "legado_nao_classificado",
+          local_abordagem: v.local_abordagem || "Não informado",
+          descricao_identificacao: v.descricao_identificacao || "Não informado",
+          identificacao_status: v.identificacao_status || "Não informado",
+          providencia: v.providencia || "Não informado",
+          status_abordagem: v.status_abordagem || "Não informado",
           criado_em: v.criado_em,
           usuarios: v.usuarios,
         }));
@@ -3982,10 +3124,17 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
       case "abordagens-pessoas": {
         const pessoas = abordagens.pessoas || [];
         const dadosAbordagens = pessoas.map((p) => ({
-          nome: p.nome || "N/A",
-          cpf: p.cpf || "N/A",
-          motivo: p.motivo || "N/A",
+          ...p,
+          nome: p.nome || "Não informado",
+          alcunha: p.alcunha || "Não informado",
+          cpf: p.cpf || "Não informado",
+          rg: p.rg || "Não informado",
+          motivo: p.motivo || "Não informado",
           fase: p.fase || "advertencia",
+          tipo_atendimento: p.tipo_atendimento || "legado_nao_classificado",
+          local_abordagem: p.local_abordagem || "Não informado",
+          providencia: p.providencia || "Não informado",
+          status_abordagem: p.status_abordagem || "Não informado",
           criado_em: p.criado_em,
           usuarios: p.usuarios,
         }));
@@ -4002,19 +3151,33 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         const veiculos = abordagens.veiculos || [];
         const pessoas = abordagens.pessoas || [];
         const dadosVeiculos = veiculos.map((v) => ({
-          placa: v.placa || "N/A",
-          marca_modelo: v.marca_modelo || "N/A",
-          cor: v.cor || "N/A",
-          motivo: v.motivo || "N/A",
+          ...v,
+          placa: v.placa || "Não informado",
+          marca_modelo: v.marca_modelo || "Não informado",
+          cor: v.cor || "Não informado",
+          motivo: v.motivo || "Não informado",
           fase: v.fase || "advertencia",
+          tipo_atendimento: v.tipo_atendimento || "legado_nao_classificado",
+          local_abordagem: v.local_abordagem || "Não informado",
+          descricao_identificacao: v.descricao_identificacao || "Não informado",
+          identificacao_status: v.identificacao_status || "Não informado",
+          providencia: v.providencia || "Não informado",
+          status_abordagem: v.status_abordagem || "Não informado",
           criado_em: v.criado_em,
           usuarios: v.usuarios,
         }));
         const dadosPessoas = pessoas.map((p) => ({
-          nome: p.nome || "N/A",
-          cpf: p.cpf || "N/A",
-          motivo: p.motivo || "N/A",
+          ...p,
+          nome: p.nome || "Não informado",
+          alcunha: p.alcunha || "Não informado",
+          cpf: p.cpf || "Não informado",
+          rg: p.rg || "Não informado",
+          motivo: p.motivo || "Não informado",
           fase: p.fase || "advertencia",
+          tipo_atendimento: p.tipo_atendimento || "legado_nao_classificado",
+          local_abordagem: p.local_abordagem || "Não informado",
+          providencia: p.providencia || "Não informado",
+          status_abordagem: p.status_abordagem || "Não informado",
           criado_em: p.criado_em,
           usuarios: p.usuarios,
         }));
@@ -4028,44 +3191,21 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         break;
       }
       case "eficiencia": {
-        const ranking = [
-          {
-            nome: "Geral",
-            matricula: "-",
-            ocorrencias: {
-              total: ocorrencias.length,
-              finalizadas: ocorrencias.filter((o) => o.status === "synced")
-                .length,
-            },
-            abordagens: {
-              total: abordagens.veiculos.length + abordagens.pessoas.length,
-            },
-            taxa_resolucao:
-              ocorrencias.length > 0
-                ? (
-                    (ocorrencias.filter((o) => o.status === "synced").length /
-                      ocorrencias.length) *
-                    100
-                  ).toFixed(1)
-                : 0,
-            total_atendimentos:
-              ocorrencias.length +
-              abordagens.veiculos.length +
-              abordagens.pessoas.length,
-          },
-        ];
         dados = {
-          ranking,
+          totalRegistrosPeriodo: ocorrencias.length,
           totalOcorrencias: ocorrencias.length,
-          totalAbordagens:
-            abordagens.veiculos.length + abordagens.pessoas.length,
-          totalGuardas: 1,
+          abordagensVeiculos: abordagens.veiculos.length,
+          abordagensPessoas: abordagens.pessoas.length,
+          totalAbordagens: abordagens.veiculos.length + abordagens.pessoas.length,
+          notaMetodologica: "A taxa de conversão abordagem → BO não é calculada porque não há vínculo verificável entre uma abordagem específica e um boletim. As contagens de ocorrências e de abordagens são independentes.",
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Eficiência Operacional";
-        descricao = "Taxa de conversão abordagens em BOs";
+        titulo = "Conversão abordagem → BO — não calculada";
+        descricao = "Contagens independentes; sem relação verificável entre abordagem e BO";
         break;
       }
+
+
       default: {
         appInstance.showToast("Tipo de relatório não suportado", "error");
         return;
@@ -4077,21 +3217,48 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
       return;
     }
 
+    dados.tipoRelatorio = tipo;
+    dados.titulo = titulo;
+    dados.dataInicio = dataInicio;
+    dados.dataFim = dataFim;
+    dados.periodo = `${formatarData(dataInicio)} até ${formatarData(dataFim)}`;
+    if (["executivo", "atendimento", "tendencias", "produtividade", "previsao", "eficiencia"].includes(tipo)) dados.ocorrencias = ocorrencias;
+    if (tipo === "desempenho") dados.ocorrencias = ocorrencias;
+    if (tipo === "retificacoes") dados.ocorrencias = ocorrencias.filter((o) => ["rectified", "pending_rectification", "rectification_rejected"].includes(o.status));
+    if (tipo === "executivo") {
+      const cache = estado.comparacaoCache;
+      if (cache && cache.dataInicio === dataInicio && cache.dataFim === dataFim) {
+        dados.comparacaoPeriodo = { ...cache };
+      } else {
+        const anterior = calcularDataAnterior(dataInicio, dataFim);
+        if (!anterior) {
+          dados.comparacaoPeriodo = { atual: ocorrencias.length, anterior: 0, dias: 0, status: "unavailable" };
+        } else {
+          try {
+            const registrosAnteriores = await buscarOcorrenciasPeriodo(anterior.dataInicio, anterior.dataFim);
+            dados.comparacaoPeriodo = {
+              atual: ocorrencias.length,
+              anterior: registrosAnteriores.length,
+              dias: calcularDiasPeriodo(dataInicio, dataFim),
+              status: registrosAnteriores.length ? "available" : "no-base",
+            };
+          } catch (error) {
+            dados.comparacaoPeriodo = { atual: ocorrencias.length, anterior: 0, dias: calcularDiasPeriodo(dataInicio, dataFim), status: "unavailable" };
+            appInstance?.showToast?.("Comparação com o período anterior indisponível; o relatório atual será mantido.", "warning");
+            console.warn("Falha na comparação anterior para PDF:", error);
+          }
+        }
+      }
+    }
+
     appInstance.showToast(`Gerando PDF: ${titulo}...`, "info");
 
-    // Usar o tipo mapeado para o pdf-export
     const result = await pdfExport.exportarRelatorio(tipoExport, dados, {
-      title: `${titulo} - Guarda Municipal`,
+      title: titulo,
+      reportType: tipo,
       author: "Guarda Municipal de Pitangueiras - PR",
       subject: descricao,
       keywords: `Guarda Municipal, ${titulo}, Relatório`,
-      watermark: {
-        text: "CÓPIA OFICIAL - GUARDA MUNICIPAL DE PITANGUEIRAS/PR",
-        opacity: 0.08,
-        fontSize: 32,
-        color: "#000000",
-        angle: 45,
-      },
     });
 
     if (result.success) {

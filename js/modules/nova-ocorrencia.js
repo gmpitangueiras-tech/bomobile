@@ -10,29 +10,11 @@
  * - Rascunho automático
  * - Geolocalização
  * - Hash pericial na finalização
- * - 🔥 NOVO: 7 etapas (separação de anexos e assinaturas)
- * - 🔥 NOVO: Assinaturas integradas com envolvidos (dropdown + auto-preenchimento)
- * - 🔥 NOVO: Data/Hora Encerramento movido para etapa de revisão
- * - 🔥 NOVO: Canvas para captura de assinatura
- * - 🔥 NOVO: Assinaturas NÃO aparecem na galeria de anexos
- * - 🔥 CORRIGIDO: Removido campo assinaturas_objeto do envio para o banco
- *
- * MELHORIAS APLICADAS:
- * - 🔥 ALTERADO: Anexos sem limite (removido MAX_ANEXOS)
- * - 🔥 NOVO: data_hora_finalizacao automática na finalização
- * - 🔥 NOVO: Validação de anexos sem limite de quantidade
- * - 🔥 NOVO: Campo data_hora_finalizacao no resumo
- * - 🔥 NOVO: Informação de finalização no modo rápido
- * - 🔥 NOVO: Assinaturas com canvas touch
- * - 🔥 NOVO: Separação entre anexos e assinaturas
- * - 🔥 NOVO: Dropdown de envolvidos na etapa de assinaturas
- * - 🔥 NOVO: Auto-preenchimento de nome/CPF ao selecionar envolvido
- * - 🔥 NOVO: Vínculo da assinatura com envolvido_id
- * - 🔥 NOVO: Data/Hora Encerramento na etapa de revisão
- * - 🔥 CORRIGIDO: Data/Hora agora usa APENAS o horário do dispositivo, SEM ajuste de fuso
- * - 🔥 CORRIGIDO: Preenchimento automático do campo data/hora no modo rápido agora usa horário LOCAL do dispositivo
- * - 🔥 CORRIGIDO: Removido assinaturas_objeto do envio para o banco
- *
+ * - Etapas do Modo Completo organizadas por tarefa: equipe, envolvidos, relato, evidências e revisão
+ * - Assinatura manuscrita opcional capturada no cadastro de cada envolvido
+ * - Equipe GM separada das pessoas relacionadas ao fato, com papel de acompanhante editável
+ * - Campos complementares da solicitação recolhidos até serem necessários
+ * - Salvamento de rascunho com confirmação de estado e preservação dos vínculos
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
  */
@@ -53,6 +35,7 @@ const TIPOS_OCORRENCIA = [
   { value: "incendio", label: "Incêndio" },
   { value: "desaparecimento", label: "Desaparecimento" },
   { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "flagrante", label: "Flagrante" },
   { value: "outro", label: "Outro" },
 ];
 
@@ -163,9 +146,9 @@ let estado = {
   audioChunks: [],
   isRecording: false,
   sttInicializado: false,
-  modeloSelecionado: "",
   // P3: catálogo de guardas ativos para seleção rápida
   guardasDisponiveis: [],
+  statusRascunho: "nao_salvo",
   // 🔥 NOVO: Estado para o canvas de assinatura
   canvasAssinatura: null,
   assinaturaAtual: null,
@@ -195,6 +178,7 @@ export async function renderNovaOcorrencia(container, appInstance) {
   // Verificar se tem dados do rascunho
   if (appInstance.dadosRascunho && !isCompletando) {
     estado.id = appInstance.rascunhoId;
+    estado.statusRascunho = "pendente";
     estado.dados = appInstance.dadosRascunho;
     // 🔥 Garantir que assinaturas exista
     if (!estado.dados.assinaturas) {
@@ -230,6 +214,7 @@ export async function renderNovaOcorrencia(container, appInstance) {
 
 function resetarEstado() {
   estado.id = null;
+  estado.statusRascunho = "nao_salvo";
   estado.isCompletando = false;
   estado.etapa = 1;
   estado.modo = MODE_COMPLETO;
@@ -263,7 +248,6 @@ function resetarEstado() {
   };
   estado.dadosOriginais = null;
   estado.sttInicializado = false;
-  estado.modeloSelecionado = "";
   estado.canvasAssinatura = null;
   estado.assinaturaAtual = null;
   estado.envolvidoSelecionado = null;
@@ -377,13 +361,10 @@ async function carregarGuardasDisponiveis(appInstance) {
 
 function garantirResponsavelEquipe(dados) {
   const user = authManager.getUser?.();
-  if (!user?.id) return dados.guardasParticipantes || [];
-
   const equipe = (dados.guardasParticipantes || []).filter(
-    (g) => g && g.esta_ativo !== false,
+    (g) => g && g.esta_ativo !== false && g.guarda_id !== user?.id,
   );
-  const atual = equipe.find((g) => g.papel === "responsavel");
-  if (!atual) {
+  if (user?.id) {
     equipe.unshift({
       guarda_id: user.id,
       papel: "responsavel",
@@ -395,61 +376,161 @@ function garantirResponsavelEquipe(dados) {
       selecionado_por: user.id,
     });
     dados.guardasParticipantes = equipe;
+  } else {
+    dados.guardasParticipantes = equipe;
   }
   return equipe;
 }
 
 function equipeTemMinima(equipe) {
-  const ativas = (equipe || []).filter((g) => g && g.esta_ativo !== false);
+  const ativas = (equipe || []).filter((g) => g && g.esta_ativo !== false && g.guarda_id);
+  const ids = new Set(ativas.map((g) => g.guarda_id));
   return (
     ativas.some((g) => g.papel === "responsavel") &&
-    ativas.some((g) => g.papel === "acompanhante")
+    ativas.some((g) => g.papel === "acompanhante") &&
+    ids.size >= 2
   );
+}
+
+function rotuloPapelEquipe(papel) {
+  if (papel === "responsavel") return "Responsável pelo registro";
+  if (papel === "acompanhante") return "GM acompanhante";
+  return "GM de apoio";
 }
 
 function renderEquipeGuardas(dados, modo = "completo") {
   const equipe = garantirResponsavelEquipe(dados);
   const responsavel = equipe.find((g) => g.papel === "responsavel");
-  const acompanhante = equipe.find((g) => g.papel === "acompanhante");
-  const userId = responsavel?.guarda_id || authManager.getUserId?.();
+  const integrantes = equipe
+    .filter((g) => g.papel !== "responsavel" && g.esta_ativo !== false)
+    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   const disponiveis = (estado.guardasDisponiveis || []).filter(
-    (g) => g.id !== userId && g.status === "ativo",
+    (g) => g.id !== responsavel?.guarda_id && g.status === "ativo" && ["guarda", "supervisor"].includes(g.perfil),
   );
-  const opcoes = disponiveis.length
-    ? `<option value="">Selecione o guarda acompanhante</option>${disponiveis
-        .map(
-          (g) =>
-            `<option value="${escaparHtmlEquipe(g.id)}" ${acompanhante?.guarda_id === g.id ? "selected" : ""}>${escaparHtmlEquipe(g.nome_completo)}${g.matricula ? ` — Mat. ${escaparHtmlEquipe(g.matricula)}` : ""}</option>`,
-        )
-        .join("")}`
-    : `<option value="">Nenhum guarda ativo disponível</option>`;
+  const statusEquipe = equipeTemMinima(equipe);
+  const listaIntegrantes = integrantes.length
+    ? `<div class="bo-team-members" aria-label="GMs selecionados">${integrantes.map((g) => {
+        const nome = g.nome_snapshot || g.nome_completo || "GM cadastrado";
+        const papelControle = modo === "completo" ? `<label class="bo-team-role-control"><span>Função</span><select aria-label="Papel operacional de ${escaparHtmlEquipe(nome)}" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" onchange="window._novaOcorrenciaAlterarPapelGuarda(this.dataset.guardaId,this.value)"><option value="acompanhante" ${g.papel === "acompanhante" ? "selected" : ""}>Acompanhante</option><option value="apoio" ${g.papel === "apoio" ? "selected" : ""}>Apoio</option></select></label>` : "";
+        return `<div class="bo-team-member"><span class="bo-team-avatar" aria-hidden="true"><i class="fas fa-user-shield"></i></span><span class="bo-team-member-copy"><strong>${escaparHtmlEquipe(nome)}</strong><small>${rotuloPapelEquipe(g.papel)}${g.matricula_snapshot || g.matricula ? ` · Mat. ${escaparHtmlEquipe(g.matricula_snapshot || g.matricula)}` : ""}</small></span>${papelControle}<button type="button" class="bo-team-remove" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" aria-label="Remover ${escaparHtmlEquipe(nome)} da equipe" onclick="window._novaOcorrenciaRemoverGuarda(this.dataset.guardaId)"><i class="fas fa-times"></i></button></div>`;
+      }).join("")}</div>`
+    : `<div class="bo-team-empty">Ainda falta selecionar o GM que acompanha a ocorrência.</div>`;
 
   return `
-    <section aria-label="Equipe da ocorrência" style="margin:0 0 16px 0;padding:14px;border:2px solid ${equipeTemMinima(equipe) ? "var(--verde-bandeira)" : "var(--azul-claro)"};border-radius:16px;background:linear-gradient(135deg,var(--branco) 0%,var(--azul-muito-claro) 100%);box-shadow:var(--sombra-suave);">
-      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
-        <div style="width:42px;height:42px;flex:0 0 42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--azul-bandeira);color:var(--branco);font-size:18px;"><i class="fas fa-user-shield"></i></div>
-        <div style="min-width:0;">
-          <h3 style="margin:0;color:var(--azul-bandeira);font-size:16px;">Equipe da ocorrência</h3>
-          <p style="margin:3px 0 0;color:var(--cinza-escuro);font-size:12px;line-height:1.35;">Selecione o guarda que está com você. Este campo é separado dos envolvidos civis.</p>
-        </div>
+    <section class="bo-team-card ${statusEquipe ? "is-complete" : "is-pending"}" aria-label="Equipe operacional da ocorrência">
+      <div class="bo-team-heading">
+        <span class="bo-team-icon"><i class="fas fa-user-shield" aria-hidden="true"></i></span>
+        <div><span class="bo-section-kicker">EQUIPE OPERACIONAL</span><h3>GMs que atuaram no atendimento</h3><p>Equipe registrada separadamente das pessoas civis envolvidas.</p></div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--branco);border-radius:12px;margin-bottom:10px;">
-        <i class="fas fa-check-circle" style="color:var(--verde-bandeira);font-size:18px;"></i>
-        <div style="min-width:0;"><div style="font-size:10px;color:var(--cinza-medio);font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Responsável pelo registro</div><div style="font-size:14px;font-weight:700;color:var(--cinza-escuro);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escaparHtmlEquipe(responsavel?.nome_snapshot || "Guarda logado")}${responsavel?.matricula_snapshot ? ` <span style="font-size:11px;font-weight:500;color:var(--cinza-medio);">· Mat. ${escaparHtmlEquipe(responsavel.matricula_snapshot)}</span>` : ""}</div></div>
+      <div class="bo-team-lead">
+        <span class="bo-team-avatar bo-team-avatar-lead"><i class="fas fa-clipboard-check" aria-hidden="true"></i></span>
+        <span class="bo-team-member-copy"><small>GM que registra o BO</small><strong>${escaparHtmlEquipe(responsavel?.nome_snapshot || "Guarda logado")}${responsavel?.matricula_snapshot ? ` · Mat. ${escaparHtmlEquipe(responsavel.matricula_snapshot)}` : ""}</strong></span>
+        <span class="bo-team-lock" aria-label="Responsável definido pelo usuário conectado"><i class="fas fa-lock" aria-hidden="true"></i></span>
       </div>
-      <label for="selectGuardaAcompanhante" style="display:block;font-size:11px;font-weight:700;color:var(--cinza-escuro);margin-bottom:5px;"><i class="fas fa-user-plus" style="margin-right:5px;color:var(--azul-bandeira);"></i>Guarda acompanhante <span style="color:var(--erro);">*</span></label>
-      <select id="selectGuardaAcompanhante" aria-label="Selecionar guarda acompanhante" onchange="window._novaOcorrenciaSelecionarAcompanhante(this.value)" style="width:100%;min-height:52px;padding:12px;border:2px solid ${acompanhante ? "var(--verde-bandeira)" : "var(--azul-claro)"};border-radius:12px;font-size:15px;background:var(--branco);color:var(--cinza-escuro);">
-        ${opcoes}
-      </select>
-      ${acompanhante ? `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;background:var(--verde-muito-claro);border-radius:10px;color:var(--verde-escuro);font-size:12px;"><i class="fas fa-shield-alt"></i><span style="flex:1;"><strong>${escaparHtmlEquipe(acompanhante.nome_snapshot)}</strong>${acompanhante.matricula_snapshot ? ` · Mat. ${escaparHtmlEquipe(acompanhante.matricula_snapshot)}` : ""}</span><button type="button" aria-label="Remover guarda acompanhante" onclick="window._novaOcorrenciaRemoverAcompanhante()" style="min-width:40px;min-height:40px;border:0;border-radius:10px;background:transparent;color:var(--erro);font-size:16px;"><i class="fas fa-times"></i></button></div>` : `<div style="margin-top:7px;color:var(--aviso);font-size:11px;"><i class="fas fa-exclamation-circle"></i> A ocorrência só poderá ser finalizada com um acompanhante selecionado.</div>`}
+      ${listaIntegrantes}
+      <div class="bo-team-search">
+        <label for="buscaGuardaEquipe"><i class="fas fa-search" aria-hidden="true"></i> Adicionar GM cadastrado</label>
+        <div class="bo-team-search-control"><input id="buscaGuardaEquipe" type="search" autocomplete="off" placeholder="Digite nome ou matrícula" aria-controls="listaSugestoesGuarda" aria-autocomplete="list" oninput="window._novaOcorrenciaBuscarGuardas(this.value)"><span aria-hidden="true"><i class="fas fa-keyboard"></i></span></div>
+        <div id="listaSugestoesGuarda" class="bo-team-suggestions" role="listbox" aria-live="polite">Digite ao menos 2 caracteres para buscar entre ${disponiveis.length} GMs ativos.</div>
+        <p class="bo-team-hint">${modo === "completo" ? "O primeiro GM entra como acompanhante; você pode trocar a função na própria lista. Mantenha pelo menos um acompanhante. Selecione somente quem atuou nesta ocorrência." : "O primeiro GM adicionado será o acompanhante obrigatório; os demais ficam como apoio. Selecione somente quem atuou nesta ocorrência."}</p>
+      </div>
+      <div class="bo-team-status ${statusEquipe ? "is-complete" : "is-pending"}" role="status"><i class="fas ${statusEquipe ? "fa-check-circle" : "fa-exclamation-circle"}" aria-hidden="true"></i><span>${statusEquipe ? `${equipe.filter((g) => g.esta_ativo !== false).length} GMs na equipe. Mínimo atendido.` : "Selecione pelo menos um GM acompanhante além do responsável."}</span></div>
     </section>
   `;
+}
+
+function normalizarBuscaGuarda(texto) {
+  return String(texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR")
+    .trim();
+}
+
+function buscarGuardasEquipe(termo) {
+  const target = document.getElementById("listaSugestoesGuarda");
+  if (!target) return;
+  const query = normalizarBuscaGuarda(termo);
+  if (query.length < 2) {
+    target.innerHTML = "Digite ao menos 2 caracteres para buscar os GMs cadastrados.";
+    return;
+  }
+  const selecionados = new Set((estado.dados.guardasParticipantes || []).filter((g) => g && g.esta_ativo !== false).map((g) => g.guarda_id));
+  const matches = (estado.guardasDisponiveis || []).filter((g) => {
+    if (!g || g.status !== "ativo" || !["guarda", "supervisor"].includes(g.perfil) || selecionados.has(g.id)) return false;
+    return normalizarBuscaGuarda(`${g.nome_completo || ""} ${g.matricula || ""}`).includes(query);
+  }).slice(0, 8);
+  target.innerHTML = matches.length
+    ? matches.map((g) => `<button type="button" class="bo-team-suggestion" role="option" data-guarda-id="${escaparHtmlEquipe(g.id)}" onclick="window._novaOcorrenciaAdicionarGuarda(this.dataset.guardaId)"><span class="bo-team-avatar"><i class="fas fa-user-shield" aria-hidden="true"></i></span><span><strong>${escaparHtmlEquipe(g.nome_completo)}</strong><small>${g.matricula ? `Matrícula ${escaparHtmlEquipe(g.matricula)}` : (g.perfil === "supervisor" ? "Supervisor cadastrado" : "Guarda cadastrado")}</small></span><i class="fas fa-plus-circle" aria-hidden="true"></i></button>`).join("")
+    : `<span class="bo-team-no-results">Nenhum GM ativo encontrado com esse nome ou matrícula.</span>`;
+}
+
+function selecionarGuardaEquipe(guardaId, container, appInstance) {
+  const guarda = (estado.guardasDisponiveis || []).find((g) => g.id === guardaId && g.status === "ativo" && ["guarda", "supervisor"].includes(g.perfil));
+  if (!guarda) {
+    appInstance.showToast("Selecione um GM cadastrado e ativo", "warning");
+    return;
+  }
+  const equipe = garantirResponsavelEquipe(estado.dados);
+  if (equipe.some((g) => g.guarda_id === guarda.id && g.esta_ativo !== false)) return;
+  const acompanhanteExiste = equipe.some((g) => g.papel === "acompanhante" && g.esta_ativo !== false);
+  estado.dados.guardasParticipantes.push({
+    guarda_id: guarda.id,
+    papel: acompanhanteExiste ? "apoio" : "acompanhante",
+    ordem: equipe.filter((g) => g.esta_ativo !== false).length + 1,
+    nome_snapshot: guarda.nome_completo,
+    matricula_snapshot: guarda.matricula || "",
+    perfil_snapshot: guarda.perfil || "guarda",
+    esta_ativo: true,
+    selecionado_por: authManager.getUserId?.(),
+  });
+  if (estado.modo === MODE_COMPLETO && !estado.isCompletando) marcarRascunhoPendente(appInstance);
+  else appInstance.alteracoesNaoSalvas = true;
+  renderizarEquipeAtual(container, appInstance);
+}
+
+function removerGuardaEquipe(guardaId, container, appInstance) {
+  const equipe = garantirResponsavelEquipe(estado.dados);
+  if (equipe.some((g) => g.guarda_id === guardaId && g.papel === "responsavel")) {
+    appInstance.showToast("O responsável pelo registro não pode ser removido da equipe", "warning");
+    return;
+  }
+  estado.dados.guardasParticipantes = equipe.filter((g) => g.guarda_id !== guardaId);
+  const semAcompanhante = !estado.dados.guardasParticipantes.some((g) => g.papel === "acompanhante" && g.esta_ativo !== false);
+  if (semAcompanhante) {
+    const proximo = estado.dados.guardasParticipantes.find((g) => g.papel === "apoio" && g.esta_ativo !== false);
+    if (proximo) proximo.papel = "acompanhante";
+  }
+  estado.dados.guardasParticipantes.forEach((g, index) => { g.ordem = index + 1; });
+  if (estado.modo === MODE_COMPLETO && !estado.isCompletando) marcarRascunhoPendente(appInstance);
+  else appInstance.alteracoesNaoSalvas = true;
+  renderizarEquipeAtual(container, appInstance);
+}
+
+function alterarPapelGuarda(guardaId, papel, container, appInstance) {
+  if (!["acompanhante", "apoio"].includes(papel)) return;
+  const equipe = garantirResponsavelEquipe(estado.dados);
+  const alvo = equipe.find((g) => g.guarda_id === guardaId && g.papel !== "responsavel" && g.esta_ativo !== false);
+  if (!alvo) return;
+  if (papel === "apoio" && alvo.papel === "acompanhante" && !equipe.some((g) => g.guarda_id !== guardaId && g.papel === "acompanhante" && g.esta_ativo !== false)) {
+    appInstance.showToast("Mantenha pelo menos um GM como acompanhante", "warning");
+    renderizarFormularioCompleto(container, appInstance);
+    return;
+  }
+  if (papel === "acompanhante") {
+    equipe.forEach((g) => { if (g.guarda_id !== guardaId && g.papel === "acompanhante") g.papel = "apoio"; });
+  }
+  alvo.papel = papel;
+  estado.statusRascunho = (appInstance.rascunhoId || estado.id) ? "pendente" : "nao_salvo";
+  marcarRascunhoPendente(appInstance);
+  renderizarFormularioCompleto(container, appInstance);
 }
 
 function renderizarEquipeAtual(container, appInstance) {
   if (estado.isCompletando) {
     renderizarFormularioCompletar(container, appInstance);
   } else if (estado.modo === MODE_RAPIDO) {
+    sincronizarDadosRapido(appInstance, false);
     renderizarFormularioRapido(container, appInstance);
   } else {
     renderizarFormularioCompleto(container, appInstance);
@@ -527,7 +608,7 @@ function renderizarEscolhaModo(container, appInstance) {
       </p>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div onclick="window._novaOcorrenciaSelecionarModo('rapido')"
+        <div onclick="window._novaOcorrenciaSelecionarModo('rapido')" 
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">⚡</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Rápido</h3>
@@ -535,7 +616,7 @@ function renderizarEscolhaModo(container, appInstance) {
           <div style="margin-top:8px;font-size:10px;color:var(--azul-bandeira);font-weight:600;">⏱️ ~2 minutos</div>
         </div>
 
-        <div onclick="window._novaOcorrenciaSelecionarModo('completo')"
+        <div onclick="window._novaOcorrenciaSelecionarModo('completo')" 
           style="background:var(--branco);border-radius:var(--border-radius);padding:16px;box-shadow:var(--sombra-suave);cursor:pointer;border:2px solid var(--cinza-claro);transition:all 0.2s ease;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">📋</div>
           <h3 style="font-size:14px;font-weight:700;color:var(--cinza-escuro);margin:0 0 4px 0;">Modo Completo</h3>
@@ -565,7 +646,17 @@ function renderizarEscolhaModo(container, appInstance) {
     }
   };
 
-  window._novaOcorrenciaVoltarModos = () => {
+  window._novaOcorrenciaVoltarModos = async () => {
+    const dadosAtuais = estado.dados || {};
+    const temConteudo = Object.entries(dadosAtuais).some(([chave, valor]) => {
+      if (chave === "guardasParticipantes") return Array.isArray(valor) && valor.some((g) => g && g.papel !== "responsavel");
+      if (["envolvidos", "anexos", "assinaturas"].includes(chave)) return Array.isArray(valor) && valor.length > 0;
+      return chave !== "modo_criacao" && typeof valor === "string" && valor.trim() !== "";
+    });
+    if (temConteudo) {
+      const confirmado = await appInstance.confirmar("Voltar à escolha de modo? O conteúdo ainda não salvo será descartado.");
+      if (!confirmado) return;
+    }
     resetarEstado();
     renderizarEscolhaModo(container, appInstance);
   };
@@ -575,159 +666,167 @@ function renderizarEscolhaModo(container, appInstance) {
 // RENDERIZAR FORMULÁRIO RÁPIDO
 // ============================================
 
+function sincronizarDadosRapido(appInstance, marcarAlteracao = false) {
+  estado.dados = estado.dados || {};
+  const obterValor = (id) => document.getElementById(id)?.value ?? "";
+  estado.dados.tipo_ocorrencia = obterValor("rapido_tipo_ocorrencia");
+  estado.dados.local_ocorrencia = obterValor("rapido_local_ocorrencia").trim();
+  estado.dados.data_hora_inicio = obterValor("rapido_data_hora");
+  estado.dados.nome_solicitante = obterValor("rapido_nome_solicitante").trim() || null;
+  estado.dados.observacoes = obterValor("rapido_observacoes").trim();
+  if (marcarAlteracao && appInstance) appInstance.alteracoesNaoSalvas = true;
+  return estado.dados;
+}
+
 function renderizarFormularioRapido(container, appInstance) {
-  // 🔥 CORRIGIDO: Usar a função auxiliar que retorna o horário LOCAL do dispositivo
   const hoje = obterDataHoraLocalInput();
+  const anexos = Array.isArray(estado.dados.anexos) ? estado.dados.anexos : [];
+  const solicitante = String(estado.dados.nome_solicitante || "");
+  const fotosMarkup = anexos.length
+    ? anexos.map((foto, index) => `
+        <figure class="quick-photo-item">
+          ${foto.url_thumb
+            ? `<img src="${escaparHtmlEquipe(foto.url_thumb)}" alt="Foto de apoio ${index + 1}" loading="lazy">`
+            : `<div class="quick-photo-placeholder"><i class="fas fa-image" aria-hidden="true"></i></div>`}
+          <figcaption title="${escaparHtmlEquipe(foto.nome || `Foto ${index + 1}`)}">${escaparHtmlEquipe(foto.nome || `Foto ${index + 1}`)}</figcaption>
+          <button type="button" class="quick-photo-remove" data-index="${index}" aria-label="Remover ${escaparHtmlEquipe(foto.nome || `foto ${index + 1}`)}" onclick="window._novaOcorrenciaRemoverAnexoRapido(this.dataset.index)"><i class="fas fa-times" aria-hidden="true"></i></button>
+        </figure>`).join("")
+    : `<p class="quick-photo-empty"><i class="fas fa-camera" aria-hidden="true"></i> Nenhuma foto selecionada.</p>`;
 
   const html = `
-    <div class="container" style="padding-bottom:100px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <main class="container quick-bo-shell">
+      <header class="quick-bo-heading">
         <div>
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-bolt" style="margin-right:8px;color:var(--aviso);"></i>
-            Modo Rápido ⚡
-          </h2>
-          <p style="color:var(--cinza-medio);font-size:12px;margin:0;">Preencha apenas os campos essenciais</p>
+          <span class="quick-bo-kicker">REGISTRO ESSENCIAL</span>
+          <h2><i class="fas fa-bolt" aria-hidden="true"></i> BO Rápido</h2>
+          <p>Registre o essencial agora; os detalhes podem ser complementados depois.</p>
         </div>
-        <button onclick="window._novaOcorrenciaVoltarModos()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-          <i class="fas fa-arrow-left"></i> Voltar
+        <button type="button" onclick="window._novaOcorrenciaVoltarModos()" class="quick-bo-back" aria-label="Voltar à escolha do modo">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i><span>Voltar</span>
         </button>
-      </div>
+      </header>
 
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-media);">
-        <form id="formOcorrenciaRapida" onsubmit="event.preventDefault();">
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-tag" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Tipo de Ocorrência <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <select id="rapido_tipo_ocorrencia" class="form-control" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;">
-              <option value="">Selecione...</option>
-              ${TIPOS_OCORRENCIA.map((op) => `<option value="${op.value}" ${estado.dados.tipo_ocorrencia === op.value ? "selected" : ""}>${op.label}</option>`).join("")}
+      <form id="formOcorrenciaRapida" class="quick-bo-form" onsubmit="event.preventDefault();">
+        <section class="quick-bo-section" aria-labelledby="quick-bo-fact-title">
+          <div class="quick-bo-section-heading">
+            <span class="quick-bo-section-icon"><i class="fas fa-location-dot" aria-hidden="true"></i></span>
+            <div><h3 id="quick-bo-fact-title">Dados do fato</h3><p>O que aconteceu, onde e quando.</p></div>
+          </div>
+          <div class="quick-bo-field">
+            <label for="rapido_tipo_ocorrencia">Tipo de ocorrência <span class="required">*</span></label>
+            <select id="rapido_tipo_ocorrencia" class="form-control" required>
+              <option value="">Selecione o tipo...</option>
+              ${TIPOS_OCORRENCIA.map((op) => `<option value="${escaparHtmlEquipe(op.value)}" ${estado.dados.tipo_ocorrencia === op.value ? "selected" : ""}>${escaparHtmlEquipe(op.label)}</option>`).join("")}
             </select>
           </div>
-
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-map-marker-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Local da Ocorrência <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <input type="text" id="rapido_local_ocorrencia" class="form-control" placeholder="Endereço completo" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;" value="${estado.dados.local_ocorrencia || ""}">
+          <div class="quick-bo-field">
+            <label for="rapido_local_ocorrencia">Local da ocorrência <span class="required">*</span></label>
+            <input type="text" id="rapido_local_ocorrencia" class="form-control" placeholder="Rua, número e bairro, se souber" autocomplete="street-address" required value="${escaparHtmlEquipe(estado.dados.local_ocorrencia || "")}">
           </div>
-
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-calendar" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Data/Hora <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <div style="display:flex;gap:8px;">
-              <div style="flex:1;position:relative;">
-                <input type="datetime-local" id="rapido_data_hora" class="form-control" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;" value="${estado.dados.data_hora_inicio || hoje}">
-              </div>
-              <button type="button" onclick="document.getElementById('rapido_data_hora').value = window._obterDataHoraLocalInput()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;white-space:nowrap;">
-                <i class="fas fa-clock"></i> Agora
-              </button>
+          <div class="quick-bo-field">
+            <label for="rapido_data_hora">Data e hora do fato <span class="required">*</span></label>
+            <div class="quick-bo-date-row">
+              <input type="datetime-local" id="rapido_data_hora" class="form-control" required value="${escaparHtmlEquipe(estado.dados.data_hora_inicio || hoje)}">
+              <button type="button" class="quick-bo-now" onclick="window._novaOcorrenciaDefinirAgoraRapido()"><i class="fas fa-clock" aria-hidden="true"></i> Agora</button>
             </div>
           </div>
+        </section>
 
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-user" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Solicitante <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <input type="text" id="rapido_nome_solicitante" class="form-control" placeholder="Nome completo" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:44px;" value="${estado.dados.nome_solicitante || ""}">
+        ${renderEquipeGuardas(estado.dados, "compact")}
+
+        <section class="quick-bo-section" aria-labelledby="quick-bo-report-title">
+          <div class="quick-bo-section-heading">
+            <span class="quick-bo-section-icon"><i class="fas fa-pen" aria-hidden="true"></i></span>
+            <div><h3 id="quick-bo-report-title">Relato objetivo</h3><p>Registre apenas o que foi informado, observado e realizado.</p></div>
           </div>
+          <div class="quick-bo-field">
+            <label for="rapido_observacoes">O que aconteceu? <span class="required">*</span></label>
+            <div class="quick-bo-narrative-wrap">
+              <textarea id="rapido_observacoes" class="form-control" rows="4" required placeholder="Resuma o fato, o que a equipe constatou, as providências adotadas e o desfecho.">${escaparHtmlEquipe(estado.dados.observacoes || "")}</textarea>
+              <button type="button" id="btnSttRapido" class="quick-bo-mic" title="Falar relato" aria-label="Falar relato"><i class="fas fa-microphone" aria-hidden="true"></i></button>
+            </div>
+            <p class="quick-bo-field-note">Se necessário, o BO poderá ser complementado depois. Evite suposições; descreva fatos e providências.</p>
+          </div>
+        </section>
 
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Relato dos Fatos <span class="required" style="color:var(--erro);">*</span>
-            </label>
-            <div style="position:relative;">
-              <textarea id="rapido_observacoes" class="form-control" rows="4" placeholder="Descreva resumidamente o ocorrido..." required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco);color:var(--cinza-escuro);min-height:80px;resize:vertical;padding-right:45px;">${estado.dados.observacoes || ""}</textarea>
-              <button type="button" id="btnSttRapido" class="btn-stt" title="Falar relato" style="position:absolute;right:10px;bottom:10px;width:44px;height:44px;border-radius:50%;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:2px solid var(--azul-claro);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:5;transition:all 0.3s ease;">
-                <i class="fas fa-microphone" style="font-size:18px;"></i>
-              </button>
+        <details class="quick-bo-optional"${solicitante ? " open" : ""}>
+          <summary><span><i class="fas fa-user" aria-hidden="true"></i> Identificação do solicitante</span><small>Opcional</small></summary>
+          <div class="quick-bo-optional-content">
+            <div class="quick-bo-field">
+              <label for="rapido_nome_solicitante">Nome do solicitante</label>
+              <input type="text" id="rapido_nome_solicitante" class="form-control" placeholder="Nome completo, se informado" autocomplete="name" value="${escaparHtmlEquipe(solicitante)}">
+              <p class="quick-bo-field-note">Deixe em branco se não foi informado ou se a pessoa preferiu não se identificar.</p>
             </div>
           </div>
+        </details>
 
-          ${renderEquipeGuardas(estado.dados, "compact")}
-
-          <!-- 🔥 ALTERADO: Fotos - ilimitado -->
-          <div class="form-group" style="margin-bottom:12px;">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-              <i class="fas fa-camera" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-              Fotos (opcional - ilimitado) 🔥
-            </label>
-            <div style="display:flex;flex-direction:column;gap:6px;">
-              <input type="file" id="rapido_file_input" accept="image/*" multiple style="display:none;" onchange="window._novaOcorrenciaProcessarAnexosRapido(this.files)">
-              <button type="button" onclick="document.getElementById('rapido_file_input').click()" class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:var(--border-radius);min-height:40px;">
-                <i class="fas fa-camera"></i> Selecionar Fotos
-              </button>
-              <div id="rapido_preview_area" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
-              <div class="input-hint" style="font-size:10px;color:var(--cinza-medio);">
-                <i class="fas fa-info-circle"></i> Sem limite de quantidade. Cada imagem será comprimida para até 1MB.
-              </div>
-            </div>
+        <details class="quick-bo-optional quick-bo-photo-details"${anexos.length ? " open" : ""}>
+          <summary><span><i class="fas fa-camera" aria-hidden="true"></i> Fotos de apoio</span><small>${anexos.length ? `${anexos.length} ${anexos.length === 1 ? "foto" : "fotos"}` : "Opcional"}</small></summary>
+          <div class="quick-bo-optional-content">
+            <input type="file" id="rapido_file_input" accept="image/*" multiple hidden onchange="window._novaOcorrenciaProcessarAnexosRapido(this.files)">
+            <button type="button" class="quick-bo-add-photos" onclick="document.getElementById('rapido_file_input').click()"><i class="fas fa-plus" aria-hidden="true"></i> Adicionar fotos</button>
+            <div id="rapido_preview_area" class="quick-photo-grid">${fotosMarkup}</div>
+            <p class="quick-bo-field-note">Anexe imagens que ajudem a contextualizar o atendimento.</p>
           </div>
+        </details>
 
-          <div style="display:flex;gap:8px;margin-top:16px;">
-            <button type="button" onclick="window._novaOcorrenciaFinalizarRapido()" class="btn-success" style="flex:2;border-radius:12px;min-height:44px;">
-              <i class="fas fa-check-circle"></i> Finalizar BO Rápido
-            </button>
-            <button type="button" onclick="window._novaOcorrenciaVoltarModos()" class="btn-secondary" style="flex:1;border-radius:12px;min-height:44px;">
-              Cancelar
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div class="quick-bo-actions" role="group" aria-label="Ações do BO Rápido">
+          <button type="button" onclick="window._novaOcorrenciaFinalizarRapido()" class="quick-bo-submit"><i class="fas fa-check-circle" aria-hidden="true"></i> Finalizar BO Rápido</button>
+          <button type="button" onclick="window._novaOcorrenciaVoltarModos()" class="quick-bo-cancel">Cancelar</button>
+        </div>
+      </form>
+    </main>
   `;
 
   container.innerHTML = html;
-
-  // 🔥 CORRIGIDO: Registrar função global para obter data/hora local
   window._obterDataHoraLocalInput = obterDataHoraLocalInput;
-
-  window._novaOcorrenciaSelecionarAcompanhante = (id) =>
-    selecionarGuardaAcompanhante(id, container, appInstance);
-  window._novaOcorrenciaRemoverAcompanhante = () =>
-    removerGuardaAcompanhante(container, appInstance);
-
-  window._novaOcorrenciaProcessarAnexosRapido = (files) => {
-    processarAnexosRapido(files, container, appInstance);
+  window._novaOcorrenciaDefinirAgoraRapido = () => {
+    const input = document.getElementById("rapido_data_hora");
+    if (input) input.value = obterDataHoraLocalInput();
+    sincronizarDadosRapido(appInstance, true);
   };
 
-  window._novaOcorrenciaFinalizarRapido = () => {
-    finalizarRapido(container, appInstance);
+  ["rapido_tipo_ocorrencia", "rapido_local_ocorrencia", "rapido_data_hora", "rapido_nome_solicitante", "rapido_observacoes"].forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("input", () => sincronizarDadosRapido(appInstance, true));
+    input.addEventListener("change", () => sincronizarDadosRapido(appInstance, true));
+  });
+
+  window._novaOcorrenciaBuscarGuardas = (termo) => buscarGuardasEquipe(termo);
+  window._novaOcorrenciaAdicionarGuarda = (id) => selecionarGuardaEquipe(id, container, appInstance);
+  window._novaOcorrenciaRemoverGuarda = (id) => removerGuardaEquipe(id, container, appInstance);
+  window._novaOcorrenciaAlterarPapelGuarda = (id, papel) => alterarPapelGuarda(id, papel, container, appInstance);
+  window._novaOcorrenciaProcessarAnexosRapido = (files) => processarAnexosRapido(files, container, appInstance);
+  window._novaOcorrenciaRemoverAnexoRapido = (indice) => {
+    const anexosAtuais = Array.isArray(estado.dados.anexos) ? estado.dados.anexos : [];
+    const removido = anexosAtuais.splice(Number(indice), 1)[0];
+    if (removido?.url_thumb && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(removido.url_thumb);
+    estado.dados.anexos = anexosAtuais;
+    appInstance.alteracoesNaoSalvas = true;
+    renderizarFormularioRapido(container, appInstance);
+    appInstance.showToast("Foto removida", "info");
   };
+  window._novaOcorrenciaFinalizarRapido = () => finalizarRapido(container, appInstance);
 
   setTimeout(() => {
     if (window.utils && window.utils.initSpeechToText) {
-      window.utils.initSpeechToText(
-        "rapido_observacoes",
-        "btnSttRapido",
-        appInstance,
-      );
+      window.utils.initSpeechToText("rapido_observacoes", "btnSttRapido", appInstance);
     }
   }, 300);
-}
-
-// ============================================
-// 🔥 ALTERADO E CORRIGIDO: FINALIZAR BO RÁPIDO COM DATA_HORA_FINALIZACAO E SEM FUSO
+}// 🔥 ALTERADO E CORRIGIDO: FINALIZAR BO RÁPIDO COM DATA_HORA_FINALIZACAO E SEM FUSO
 // ============================================
 
 async function finalizarRapido(container, appInstance) {
+  sincronizarDadosRapido(appInstance, false);
   const tipo = document.getElementById("rapido_tipo_ocorrencia")?.value;
   const local = document.getElementById("rapido_local_ocorrencia")?.value;
   const dataHora = document.getElementById("rapido_data_hora")?.value;
-  const nomeSolicitante = document.getElementById(
-    "rapido_nome_solicitante",
-  )?.value;
-  const observacoes = document.getElementById("rapido_observacoes")?.value;
+  const nomeSolicitante = String(document.getElementById("rapido_nome_solicitante")?.value || "").trim();
+  const observacoes = String(document.getElementById("rapido_observacoes")?.value || "").trim();
 
-  if (!tipo || !local || !dataHora || !nomeSolicitante || !observacoes) {
-    appInstance.showToast("Preencha todos os campos obrigatórios", "warning");
+  if (!tipo || !local || !dataHora || !observacoes) {
+    appInstance.showToast("Preencha tipo, local, data/hora e relato para finalizar", "warning");
     return;
   }
 
@@ -757,7 +856,7 @@ async function finalizarRapido(container, appInstance) {
     tipo_ocorrencia: tipo,
     local_ocorrencia: local,
     data_hora_inicio: dataHora,
-    nome_solicitante: nomeSolicitante,
+    nome_solicitante: nomeSolicitante || null,
     observacoes: observacoes,
     forma_solicitacao: "Diretamente com a ocorrência",
     modo_criacao: MODE_RAPIDO,
@@ -818,6 +917,7 @@ async function finalizarRapido(container, appInstance) {
 // ============================================
 
 async function processarAnexosRapido(files, container, appInstance) {
+  sincronizarDadosRapido(appInstance, false);
   const anexos = estado.dados.anexos || [];
 
   for (const file of files) {
@@ -857,49 +957,66 @@ async function processarAnexosRapido(files, container, appInstance) {
 // RENDERIZAR FORMULÁRIO COMPLETO (7 ETAPAS)
 // ============================================
 
-function renderizarFormularioCompleto(container, appInstance) {
-  // Salvar dados atuais no estado antes de renderizar
-  salvarDadosEtapa();
+function textoStatusRascunho(status) {
+  const textos = {
+    nao_salvo: "Ainda não salvo",
+    pendente: "Alterações aguardando salvamento",
+    salvando: "Salvando rascunho…",
+    salvo: "Rascunho salvo no sistema",
+    falha: "Rascunho não salvo. Tente novamente.",
+    offline: "Sem conexão: o rascunho não foi salvo; tente novamente online.",
+  };
+  return textos[status] || textos.nao_salvo;
+}
 
+function atualizarStatusRascunho(status) {
+  estado.statusRascunho = status;
+  const elemento = document.getElementById("bo-draft-status");
+  if (elemento) {
+    elemento.textContent = textoStatusRascunho(status);
+    elemento.dataset.state = status;
+  }
+}
+
+function marcarRascunhoPendente(appInstance) {
+  if (appInstance) appInstance.alteracoesNaoSalvas = true;
+  const existeRascunho = !!(appInstance?.rascunhoId || estado.id);
+  atualizarStatusRascunho(existeRascunho ? "pendente" : "nao_salvo");
+}
+
+function renderizarFormularioCompleto(container, appInstance) {
+  // As transições e o salvamento do rascunho sincronizam o DOM antes de mudar de etapa.
   const etapa = estado.etapa;
   const dados = estado.dados;
+  appInstance.novaOcorrencia = { dados };
 
+  const progresso = Math.round((etapa / TOTAL_ETAPAS) * 100);
   let html = `
-    <div class="container" style="padding-bottom:100px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div>
-          <h2 style="color:var(--azul-bandeira);margin:0;font-size:18px;">
-            <i class="fas fa-file-alt" style="margin-right:8px;"></i>
-            Nova Ocorrência - Modo Completo
-          </h2>
-          <p style="color:var(--cinza-medio);font-size:12px;margin:0;">Preencha todos os dados da ocorrência (7 etapas)</p>
+    <div class="container bo-form-shell">
+      <header class="bo-form-heading">
+        <div class="bo-form-heading-copy">
+          <span class="bo-section-kicker">GUARDA MUNICIPAL · PITANGUEIRAS/PR</span>
+          <h2><span class="bo-form-title-icon"><i class="fas fa-file-alt" aria-hidden="true"></i></span>Nova ocorrência</h2>
+          <p>Modo completo <span aria-hidden="true">·</span> Registro operacional detalhado</p>
         </div>
-        <button onclick="window._novaOcorrenciaVoltarModos()" class="btn-secondary" style="padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-          <i class="fas fa-arrow-left"></i> Voltar
-        </button>
-      </div>
+        <button type="button" onclick="window._novaOcorrenciaVoltarModos()" class="bo-form-back"><i class="fas fa-arrow-left" aria-hidden="true"></i><span>Voltar</span></button>
+      </header>
 
-      <div class="step-indicator">
-        ${renderSteps(etapa, TOTAL_ETAPAS)}
-      </div>
-      <div class="step-title">${getEtapaTitulo(etapa)}</div>
-      <div class="step-subtitle">${getEtapaSubtitulo(etapa)}</div>
+      <section class="bo-progress-card" aria-label="Progresso do cadastro">
+        <div class="bo-progress-copy"><div><span class="bo-step-counter">ETAPA ${etapa} DE ${TOTAL_ETAPAS}</span><h3 class="step-title">${getEtapaTitulo(etapa)}</h3><p class="step-subtitle">${getEtapaSubtitulo(etapa)}</p></div><span class="bo-progress-percent">${progresso}%</span></div>
+        <div class="bo-progress-track" role="progressbar" aria-label="Progresso do BO" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progresso}"><span style="width:${progresso}%"></span></div>
+        <div class="step-indicator" aria-label="Etapas do BO">${renderSteps(etapa, TOTAL_ETAPAS)}</div>
+      </section>
 
-      ${etapa === 2 ? renderModelosOcorrencia(appInstance) : ""}
 
-      <form id="formOcorrencia" style="margin-top:16px;" onsubmit="event.preventDefault();">
+      <form id="formOcorrencia" class="bo-form-panel" onsubmit="event.preventDefault();">
         ${renderEtapaForm(etapa, dados, appInstance)}
       </form>
 
-      <div class="form-actions">
-        ${etapa > 1 ? `<button type="button" class="btn-secondary" onclick="window._novaOcorrenciaAnterior()"><i class="fas fa-arrow-left" style="margin-right:6px;"></i> Voltar</button>` : ""}
-        ${etapa < TOTAL_ETAPAS ? `<button type="button" class="btn-primary" onclick="window._novaOcorrenciaProxima()">Próximo <i class="fas fa-arrow-right" style="margin-left:6px;"></i></button>` : `<button type="button" class="btn-success" onclick="window._novaOcorrenciaFinalizar()"><i class="fas fa-check-circle" style="margin-right:6px;"></i> Finalizar Ocorrência</button>`}
-      </div>
-
-      <div style="margin-top:12px;">
-        <button type="button" class="btn-secondary" onclick="window._novaOcorrenciaSalvarRascunho()" style="width:100%;background:var(--azul-muito-claro);color:var(--azul-bandeira);border:1px solid var(--azul-bandeira);">
-          <i class="fas fa-save" style="margin-right:6px;"></i> Salvar Rascunho
-        </button>
+      <div class="form-actions bo-form-actions bo-form-actions-with-save">
+        ${etapa > 1 ? `<button type="button" class="btn-secondary" onclick="window._novaOcorrenciaAnterior()"><i class="fas fa-arrow-left" aria-hidden="true"></i> Voltar</button>` : `<span aria-hidden="true"></span>`}
+        <div class="bo-draft-control"><button id="bo-save-draft-button" type="button" class="bo-save-draft" onclick="window._novaOcorrenciaSalvarRascunho()"><i class="fas fa-save" aria-hidden="true"></i> Salvar rascunho</button><span id="bo-draft-status" class="bo-draft-status" role="status" aria-live="polite" data-state="${estado.statusRascunho || "nao_salvo"}">${textoStatusRascunho(estado.statusRascunho || "nao_salvo")}</span></div>
+        ${etapa < TOTAL_ETAPAS ? `<button type="button" class="btn-primary" onclick="window._novaOcorrenciaProxima()">Próxima etapa <i class="fas fa-arrow-right" aria-hidden="true"></i></button>` : `<button type="button" class="btn-success" onclick="window._novaOcorrenciaFinalizar()"><i class="fas fa-check-circle" aria-hidden="true"></i> Finalizar ocorrência</button>`}
       </div>
     </div>
   `;
@@ -913,15 +1030,11 @@ function renderizarFormularioCompleto(container, appInstance) {
       "#formOcorrencia input, #formOcorrencia select, #formOcorrencia textarea",
     )
     .forEach((input) => {
-      input.addEventListener("change", () => {
-        appInstance.alteracoesNaoSalvas = true;
-      });
-      input.addEventListener("input", () => {
-        appInstance.alteracoesNaoSalvas = true;
-      });
+      input.addEventListener("change", () => marcarRascunhoPendente(appInstance));
+      input.addEventListener("input", () => marcarRascunhoPendente(appInstance));
     });
 
-  if (etapa === 4) {
+  if (etapa === 5) {
     setTimeout(() => {
       if (window.utils && window.utils.initSpeechToText) {
         window.utils.initSpeechToText(
@@ -933,31 +1046,46 @@ function renderizarFormularioCompleto(container, appInstance) {
     }, 300);
   }
 
-  // 🔥 NOVO: Inicializar canvas de assinatura se estiver na etapa 6
-  if (etapa === 6) {
-    setTimeout(() => {
-      inicializarCanvasAssinatura(appInstance);
-    }, 500);
-  }
-
-  // 🔥 NOVO: Atualizar dropdown de envolvidos na etapa 6
-  if (etapa === 6) {
-    setTimeout(() => {
-      atualizarDropdownEnvolvidos();
-    }, 300);
-  }
-
   window._novaOcorrenciaProxima = () => proximaEtapa(container, appInstance);
   window._novaOcorrenciaAnterior = () => etapaAnterior(container, appInstance);
   window._novaOcorrenciaFinalizar = () =>
     finalizarOcorrencia(container, appInstance);
-  window._novaOcorrenciaSalvarRascunho = () => appInstance.salvarRascunho();
-  window._novaOcorrenciaAplicarModelo = (tipo) =>
-    aplicarModeloOcorrencia(tipo, container, appInstance);
-  window._novaOcorrenciaSelecionarAcompanhante = (id) =>
-    selecionarGuardaAcompanhante(id, container, appInstance);
-  window._novaOcorrenciaRemoverAcompanhante = () =>
-    removerGuardaAcompanhante(container, appInstance);
+  window._novaOcorrenciaSalvarRascunho = async () => {
+    salvarDadosEtapa();
+    appInstance.novaOcorrencia = { dados: estado.dados };
+    const botao = document.getElementById("bo-save-draft-button");
+    if (botao) botao.disabled = true;
+    atualizarStatusRascunho("salvando");
+    try {
+      const salvo = await appInstance.salvarRascunho();
+      if (salvo === true) {
+        estado.id = appInstance.rascunhoId || estado.id;
+        atualizarStatusRascunho("salvo");
+      } else {
+        atualizarStatusRascunho(navigator.onLine ? "falha" : "offline");
+      }
+    } catch (error) {
+      atualizarStatusRascunho(navigator.onLine ? "falha" : "offline");
+    } finally {
+      if (botao) botao.disabled = false;
+    }
+  };
+  window._novaOcorrenciaBuscarGuardas = (termo) => buscarGuardasEquipe(termo);
+  window._novaOcorrenciaAdicionarGuarda = (id) =>
+    selecionarGuardaEquipe(id, container, appInstance);
+  window._novaOcorrenciaRemoverGuarda = (id) =>
+    removerGuardaEquipe(id, container, appInstance);
+  window._novaOcorrenciaAlterarPapelGuarda = (id, papel) =>
+    alterarPapelGuarda(id, papel, container, appInstance);
+  window._novaOcorrenciaAlternarAssinaturaEnvolvido = (ativo) => {
+    const painel = document.getElementById("env-assinatura-painel");
+    if (!painel) return;
+    painel.hidden = !ativo;
+    if (ativo) setTimeout(() => inicializarCanvasAssinatura(appInstance, "canvasAssinaturaEnvolvido"), 40);
+    else limparAssinatura(appInstance, true, "canvasAssinaturaEnvolvido");
+  };
+  window._novaOcorrenciaLimparAssinaturaEnvolvido = () =>
+    limparAssinatura(appInstance, false, "canvasAssinaturaEnvolvido");
   window._novaOcorrenciaAdicionarEnvolvido = () =>
     adicionarEnvolvido(appInstance);
   window._novaOcorrenciaRemoverEnvolvido = (index) =>
@@ -969,8 +1097,8 @@ function renderizarFormularioCompleto(container, appInstance) {
   // 🔥 NOVO: Funções para assinatura
   window._novaOcorrenciaAdicionarAssinatura = () =>
     adicionarAssinatura(appInstance);
-  window._novaOcorrenciaRemoverAssinatura = (tipo) =>
-    removerAssinatura(tipo, appInstance);
+  window._novaOcorrenciaRemoverAssinatura = (chave) =>
+    removerAssinatura(chave, appInstance);
   window._novaOcorrenciaLimparAssinatura = () => limparAssinatura(appInstance);
   // 🔥 NOVO: Função para selecionar envolvido na assinatura
   window._novaOcorrenciaSelecionarEnvolvido = () =>
@@ -985,11 +1113,11 @@ function renderSteps(etapaAtual, total) {
   let html = "";
   for (let i = 1; i <= total; i++) {
     const classe = i < etapaAtual ? "done" : i === etapaAtual ? "active" : "";
-    html += `<div class="step ${classe}"><span class="step-number">${i}</span></div>`;
+    const estadoEtapa = i < etapaAtual ? "concluída" : i === etapaAtual ? "atual" : "pendente";
+    html += `<div class="step ${classe}" aria-label="Etapa ${i}, ${estadoEtapa}" ${i === etapaAtual ? 'aria-current="step"' : ""}><span class="step-number">${i < etapaAtual ? '<i class="fas fa-check" aria-hidden="true"></i>' : i}</span></div>`;
     if (i < total) {
-      const linhaClasse =
-        i < etapaAtual ? "done" : i === etapaAtual ? "active" : "";
-      html += `<div class="line ${linhaClasse}"></div>`;
+      const linhaClasse = i < etapaAtual ? "done" : "";
+      html += `<div class="line ${linhaClasse}" aria-hidden="true"></div>`;
     }
   }
   return html;
@@ -1003,10 +1131,10 @@ function getEtapaTitulo(etapa) {
   const titulos = {
     1: "Origem da Solicitação",
     2: "Dados da Ocorrência",
-    3: "Qualificação dos Envolvidos",
-    4: "Observações e Relato dos Fatos",
-    5: "Anexos (Fotos e Documentos)",
-    6: "Assinaturas",
+    3: "Equipe operacional",
+    4: "Envolvidos no fato",
+    5: "Relato dos fatos",
+    6: "Anexos e evidências",
     7: "Revisão e Finalização",
   };
   return titulos[etapa] || "";
@@ -1016,89 +1144,13 @@ function getEtapaSubtitulo(etapa) {
   const subtitulos = {
     1: "Informe como a solicitação chegou até você",
     2: "Preencha os dados principais da ocorrência",
-    3: "Cadastre os envolvidos (autores, vítimas, testemunhas, solicitante)",
-    4: "Descreva detalhadamente o ocorrido",
-    5: "Adicione fotos, vídeos ou documentos (ilimitado)",
-    6: "Selecione um envolvido e colete a assinatura digital",
+    3: "Registre os GMs que atuaram e defina quem foi o acompanhante",
+    4: "Cadastre cada pessoa envolvida e, se possível, colete sua assinatura opcional",
+    5: "Descreva cronologicamente o que foi observado e realizado",
+    6: "Adicione fotos, vídeos ou documentos (ilimitado)",
     7: "Revise todos os dados e informe o encerramento",
   };
   return subtitulos[etapa] || "";
-}
-
-// ============================================
-// MODELOS DE OCORRÊNCIA
-// ============================================
-
-const MODELOS_OCORRENCIA = {
-  furto: {
-    titulo: "Furto",
-    observacoes:
-      "O solicitante informou que teve seu(s) pertences(s) subtraídos(s) no local informado. Segundo relato, o(s) objeto(s) estava(m) em sua posse e foram levados sem sua autorização. O solicitante não soube informar detalhes sobre o(s) autor(es). Foi orientado a registrar BO na delegacia de polícia para fins de investigação.",
-  },
-  roubo: {
-    titulo: "Roubo",
-    observacoes:
-      "O solicitante informou que foi vítima de roubo no local informado. Segundo relato, o(s) autor(es) mediante ameaça ou violência, subtraiu(ram) seus pertences. O solicitante descreveu o(s) autor(es) como [descrever características]. Foi orientado a registrar BO na delegacia de polícia.",
-  },
-  perturbacao: {
-    titulo: "Perturbação do Sossego",
-    observacoes:
-      "O solicitante informou que está sofrendo com perturbação do sossego no local informado. Segundo relato, há excesso de barulho, confusão ou desordem que está afetando a tranquilidade do local. A equipe realizou orientação aos envolvidos e constatou a situação.",
-  },
-  acidente: {
-    titulo: "Acidente de Trânsito",
-    observacoes:
-      "O solicitante informou que houve um acidente de trânsito no local informado. Segundo relato, [descrever dinâmica do acidente]. Não houve vítimas com ferimentos graves. A via foi sinalizada e o trânsito foi normalizado após a remoção dos veículos.",
-  },
-  ameaca: {
-    titulo: "Ameaça",
-    observacoes:
-      "O solicitante informou que está sofrendo ameaças no local informado. Segundo relato, [descrever ameaça]. O solicitante demonstrou receio quanto à sua integridade física. Foi orientado a procurar a delegacia de polícia para registro de ocorrência.",
-  },
-};
-
-function renderModelosOcorrencia(appInstance) {
-  return `
-    <div style="margin-bottom:16px;background:var(--azul-muito-claro);border-radius:var(--border-radius);padding:12px;">
-      <p style="font-size:12px;color:var(--azul-bandeira);font-weight:600;margin:0 0 8px 0;">
-        <i class="fas fa-copy" style="margin-right:6px;"></i>
-        Modelos Rápidos (clique para aplicar)
-      </p>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        ${Object.keys(MODELOS_OCORRENCIA)
-          .map(
-            (key) => `
-          <button onclick="window._novaOcorrenciaAplicarModelo('${key}')"
-            class="btn-secondary"
-            style="padding:4px 10px;font-size:10px;min-height:auto;width:auto;border-radius:20px;background:${estado.modeloSelecionado === key ? "var(--azul-bandeira)" : "var(--branco)"};color:${estado.modeloSelecionado === key ? "var(--branco)" : "var(--cinza-escuro)"};">
-            ${MODELOS_OCORRENCIA[key].titulo}
-          </button>
-        `,
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-}
-
-function aplicarModeloOcorrencia(tipo, container, appInstance) {
-  const modelo = MODELOS_OCORRENCIA[tipo];
-  if (!modelo) return;
-
-  estado.modeloSelecionado = tipo;
-  estado.dados.tipo_ocorrencia = tipo;
-  estado.dados.observacoes = modelo.observacoes;
-
-  const tipoSelect = document.getElementById("tipo_ocorrencia");
-  if (tipoSelect) tipoSelect.value = tipo;
-
-  const observacoesText = document.getElementById("observacoes");
-  if (observacoesText) observacoesText.value = modelo.observacoes;
-
-  estado.etapa = 4;
-  appInstance.alteracoesNaoSalvas = true;
-  renderizarFormularioCompleto(container, appInstance);
-  appInstance.showToast(`Modelo "${modelo.titulo}" aplicado!`, "success");
 }
 
 // ============================================
@@ -1131,79 +1183,37 @@ function renderEtapaForm(etapa, dados, appInstance) {
 // ============================================
 
 function renderEtapa1(dados) {
+  const complementos = [dados.cpf_solicitante, dados.rg_solicitante, dados.endereco_solicitante, dados.codigo_municipal, dados.complemento, dados.bairro_solicitante, dados.identificacao_adicional];
+  const temComplementos = complementos.some((valor) => String(valor || "").trim());
   return `
     <div class="form-group">
       <label for="forma_solicitacao"><i class="fas fa-phone-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>Forma de solicitação <span class="required">*</span></label>
-      <div class="input-wrapper">
-        <i class="fas fa-list-ul input-icon-left"></i>
-        <select id="forma_solicitacao" class="form-control" required>
-          ${FORMAS_SOLICITACAO.map((op) => `<option value="${op.value}" ${dados.forma_solicitacao === op.value ? "selected" : ""}>${op.label}</option>`).join("")}
-        </select>
-      </div>
+      <div class="input-wrapper"><i class="fas fa-list-ul input-icon-left"></i><select id="forma_solicitacao" class="form-control" required>${FORMAS_SOLICITACAO.map((op) => `<option value="${escaparHtmlEquipe(op.value)}" ${dados.forma_solicitacao === op.value ? "selected" : ""}>${op.label}</option>`).join("")}</select></div>
     </div>
     <div class="form-group">
-      <label for="nome_solicitante"><i class="fas fa-user" style="margin-right:6px;color:var(--azul-bandeira);"></i>Nome do solicitante</label>
-      <div class="input-wrapper">
-        <i class="fas fa-user input-icon-left"></i>
-        <input type="text" id="nome_solicitante" class="form-control" placeholder="Nome completo (deixe em branco para anônimo)" value="${dados.nome_solicitante || ""}" style="min-height:44px;">
-      </div>
-      <div class="input-hint"><i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>Deixe em branco para registrar ocorrência anônima</div>
+      <label for="nome_solicitante"><i class="fas fa-user" style="margin-right:6px;color:var(--azul-bandeira);"></i>Nome do solicitante <span class="optional-label">(opcional)</span></label>
+      <div class="input-wrapper"><i class="fas fa-user input-icon-left"></i><input type="text" id="nome_solicitante" class="form-control" placeholder="Nome completo (deixe em branco para anônimo)" value="${escaparHtmlEquipe(dados.nome_solicitante)}"></div>
+      <div class="input-hint"><i class="fas fa-info-circle" aria-hidden="true"></i>Deixe em branco para registrar solicitação anônima</div>
     </div>
     <div class="form-group">
-      <label for="cpf_solicitante"><i class="fas fa-id-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>CPF do Solicitante</label>
-      <div class="input-wrapper">
-        <i class="fas fa-id-card input-icon-left"></i>
-        <input type="text" id="cpf_solicitante" class="form-control" placeholder="123.456.789-00" value="${dados.cpf_solicitante || ""}" maxlength="14" style="min-height:44px;">
+      <label for="telefone_solicitante"><i class="fas fa-phone" style="margin-right:6px;color:var(--azul-bandeira);"></i>Telefone <span class="optional-label">(opcional)</span></label>
+      <div class="input-wrapper"><i class="fas fa-phone input-icon-left"></i><input type="tel" id="telefone_solicitante" class="form-control" placeholder="(44) 99999-9999" value="${escaparHtmlEquipe(dados.telefone_solicitante)}"></div>
+    </div>
+    <details class="bo-optional-details"${temComplementos ? " open" : ""}>
+      <summary><span><i class="fas fa-sliders-h" aria-hidden="true"></i> Dados complementares do solicitante</span><small>Opcionais</small></summary>
+      <div class="bo-optional-details-content">
+        <div class="form-group"><label for="cpf_solicitante">CPF</label><div class="input-wrapper"><i class="fas fa-id-card input-icon-left"></i><input type="text" id="cpf_solicitante" class="form-control" placeholder="123.456.789-00" value="${escaparHtmlEquipe(dados.cpf_solicitante)}" maxlength="14"></div></div>
+        <div class="form-group"><label for="rg_solicitante">RG</label><div class="input-wrapper"><i class="fas fa-address-card input-icon-left"></i><input type="text" id="rg_solicitante" class="form-control" placeholder="RG do solicitante" value="${escaparHtmlEquipe(dados.rg_solicitante)}"></div></div>
+        <div class="form-group"><label for="endereco_solicitante">Endereço informado</label><div class="input-wrapper"><i class="fas fa-home input-icon-left"></i><input type="text" id="endereco_solicitante" class="form-control" placeholder="Rua, número" value="${escaparHtmlEquipe(dados.endereco_solicitante)}"></div></div>
+        <div class="form-group"><label for="bairro_solicitante">Bairro do solicitante</label><div class="input-wrapper"><i class="fas fa-location-dot input-icon-left"></i><input type="text" id="bairro_solicitante" class="form-control" placeholder="Bairro" value="${escaparHtmlEquipe(dados.bairro_solicitante)}"></div></div>
+        <div class="form-group"><label for="codigo_municipal">Código do próprio municipal</label><div class="input-wrapper"><i class="fas fa-hashtag input-icon-left"></i><input type="text" id="codigo_municipal" class="form-control" placeholder="Código do imóvel" value="${escaparHtmlEquipe(dados.codigo_municipal)}"></div></div>
+        <div class="form-group"><label for="complemento">Complemento</label><div class="input-wrapper"><i class="fas fa-pen input-icon-left"></i><input type="text" id="complemento" class="form-control" placeholder="Apto, bloco ou ponto de referência" value="${escaparHtmlEquipe(dados.complemento)}"></div></div>
+        <div class="form-group"><label for="identificacao_adicional">Identificação adicional</label><textarea id="identificacao_adicional" class="form-control" rows="3" placeholder="Informações adicionais para identificar o solicitante">${escaparHtmlEquipe(dados.identificacao_adicional)}</textarea></div>
       </div>
-    </div>
-    <div class="form-group">
-      <label for="rg_solicitante"><i class="fas fa-address-card" style="margin-right:6px;color:var(--azul-bandeira);"></i>RG do Solicitante</label>
-      <div class="input-wrapper">
-        <i class="fas fa-address-card input-icon-left"></i>
-        <input type="text" id="rg_solicitante" class="form-control" placeholder="RG do solicitante" value="${dados.rg_solicitante || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="telefone_solicitante"><i class="fas fa-phone" style="margin-right:6px;color:var(--azul-bandeira);"></i>Telefone do solicitante</label>
-      <div class="input-wrapper">
-        <i class="fas fa-phone input-icon-left"></i>
-        <input type="tel" id="telefone_solicitante" class="form-control" placeholder="(44) 99999-9999" value="${dados.telefone_solicitante || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="endereco_solicitante"><i class="fas fa-home" style="margin-right:6px;color:var(--azul-bandeira);"></i>Endereço informado pelo solicitante</label>
-      <div class="input-wrapper">
-        <i class="fas fa-map-marker-alt input-icon-left"></i>
-        <input type="text" id="endereco_solicitante" class="form-control" placeholder="Rua, número, bairro" value="${dados.endereco_solicitante || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="codigo_municipal"><i class="fas fa-hashtag" style="margin-right:6px;color:var(--azul-bandeira);"></i>Código do próprio municipal</label>
-      <div class="input-wrapper">
-        <i class="fas fa-hashtag input-icon-left"></i>
-        <input type="text" id="codigo_municipal" class="form-control" placeholder="Código do imóvel" value="${dados.codigo_municipal || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="complemento"><i class="fas fa-pen" style="margin-right:6px;color:var(--azul-bandeira);"></i>Complemento</label>
-      <div class="input-wrapper">
-        <i class="fas fa-pen input-icon-left"></i>
-        <input type="text" id="complemento" class="form-control" placeholder="Apto, bloco, ponto de referência" value="${dados.complemento || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="bairro_solicitante"><i class="fas fa-location-dot" style="margin-right:6px;color:var(--azul-bandeira);"></i>Bairro</label>
-      <div class="input-wrapper">
-        <i class="fas fa-location-dot input-icon-left"></i>
-        <input type="text" id="bairro_solicitante" class="form-control" placeholder="Bairro" value="${dados.bairro_solicitante || ""}" style="min-height:44px;">
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="identificacao_adicional"><i class="fas fa-info-circle" style="margin-right:6px;color:var(--azul-bandeira);"></i>Identificação adicional do solicitante</label>
-      <textarea id="identificacao_adicional" class="form-control" rows="3" placeholder="Informações adicionais para identificar o solicitante">${dados.identificacao_adicional || ""}</textarea>
-    </div>
+    </details>
   `;
 }
+
 
 // ============================================
 // ETAPA 2 - DADOS DA OCORRÊNCIA (SEM ENCERRAMENTO)
@@ -1276,71 +1286,42 @@ function renderEtapa2(dados, appInstance) {
 }
 
 // ============================================
-// ETAPA 3 - ENVOLVIDOS (MANTIDO)
+// ETAPA 3 — EQUIPE OPERACIONAL
 // ============================================
-
-function renderEtapa3(dados, appInstance) {
-  const envolvidos = dados.envolvidos || [];
-
-  let html = `
-    ${renderEquipeGuardas(dados)}
-    <div style="margin-bottom:16px;">
-      <p style="color:var(--cinza-medio);font-size:14px;">
-        <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-        Cadastre os envolvidos na ocorrência. Você pode adicionar quantos forem necessários.
-        <strong>Os envolvidos cadastrados aqui poderão assinar digitalmente na etapa 6.</strong>
-      </p>
-    </div>
-    <div id="listaEnvolvidos">
-  `;
-
-  if (envolvidos.length === 0) {
-    html += `
-      <div class="lista-vazia">
-        <i class="fas fa-users"></i>
-        <p>Nenhum envolvido cadastrado</p>
-        <p class="sub">Clique no botão abaixo para adicionar</p>
-      </div>
-    `;
-  } else {
-    envolvidos.forEach((env, index) => {
-      html += `
-        <div class="envolvido-item-modern">
-          <div class="header">
-            <span class="badge badge-azul"><i class="fas fa-user" style="margin-right:4px;"></i>${getTipoEnvolvidoLabel(env.tipo)}</span>
-            <span class="nome">${env.nome_completo || "Nome não informado"}</span>
-            <button type="button" class="remove-btn" onclick="window._novaOcorrenciaRemoverEnvolvido(${index})" style="margin-left:auto;background:none;border:none;color:var(--erro);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:50%;transition:all 0.3s ease;"><i class="fas fa-trash-alt"></i></button>
-          </div>
-          <div class="detalhes-grid">
-            ${env.cpf ? `<div class="campo"><i class="fas fa-id-card"></i><span class="label">CPF:</span><span class="valor">${env.cpf}</span></div>` : ""}
-            ${env.rg ? `<div class="campo"><i class="fas fa-address-card"></i><span class="label">RG:</span><span class="valor">${env.rg}</span></div>` : ""}
-            ${env.telefone ? `<div class="campo"><i class="fas fa-phone"></i><span class="label">Tel:</span><span class="valor">${env.telefone}</span></div>` : ""}
-            ${env.data_nascimento ? `<div class="campo"><i class="fas fa-calendar-alt"></i><span class="label">Nasc:</span><span class="valor">${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</span></div>` : ""}
-            ${env.endereco ? `<div class="campo"><i class="fas fa-map-marker-alt"></i><span class="label">End:</span><span class="valor">${env.endereco}</span></div>` : ""}
-            ${env.bairro ? `<div class="campo"><i class="fas fa-location-dot"></i><span class="label">Bairro:</span><span class="valor">${env.bairro}</span></div>` : ""}
-            ${env.cidade ? `<div class="campo"><i class="fas fa-city"></i><span class="label">Cidade:</span><span class="valor">${env.cidade}</span></div>` : ""}
-            ${env.observacoes ? `<div class="campo" style="grid-column: 1 / -1;"><i class="fas fa-pencil-alt"></i><span class="label">Obs:</span><span class="valor">${env.observacoes}</span></div>` : ""}
-          </div>
-        </div>
-      `;
-    });
-  }
-
-  html += `
-    </div>
-    <button type="button" class="btn-add" onclick="window._novaOcorrenciaAdicionarEnvolvido()">
-      <i class="fas fa-plus-circle"></i> Adicionar Envolvido
-    </button>
-  `;
-
-  return html;
+function renderEtapa3(dados) {
+  return renderEquipeGuardas(dados, "completo");
 }
 
+// ============================================
+// ETAPA 4 — ENVOLVIDOS NO FATO
+// ============================================
+function renderEtapa4(dados) {
+  const envolvidos = Array.isArray(dados.envolvidos) ? dados.envolvidos : [];
+  const assinaturas = Array.isArray(dados.assinaturas) ? dados.assinaturas : [];
+  const cards = envolvidos.length ? envolvidos.map((env, index) => {
+    const assinatura = assinaturas.find((item) => item && item.envolvido_id === env.id);
+    const assinaturaKey = assinatura ? (assinatura.id || assinatura.envolvido_id || assinatura.tipo) : "";
+    const campos = [
+      env.cpf ? `<div class="campo"><i class="fas fa-id-card"></i><span class="label">CPF:</span><span class="valor">${escaparHtmlEquipe(env.cpf)}</span></div>` : "",
+      env.rg ? `<div class="campo"><i class="fas fa-address-card"></i><span class="label">RG:</span><span class="valor">${escaparHtmlEquipe(env.rg)}</span></div>` : "",
+      env.telefone ? `<div class="campo"><i class="fas fa-phone"></i><span class="label">Tel:</span><span class="valor">${escaparHtmlEquipe(env.telefone)}</span></div>` : "",
+      env.endereco ? `<div class="campo"><i class="fas fa-map-marker-alt"></i><span class="label">End:</span><span class="valor">${escaparHtmlEquipe(env.endereco)}</span></div>` : "",
+      env.bairro ? `<div class="campo"><i class="fas fa-location-dot"></i><span class="label">Bairro:</span><span class="valor">${escaparHtmlEquipe(env.bairro)}</span></div>` : "",
+      env.observacoes ? `<div class="campo bo-person-notes"><i class="fas fa-pencil-alt"></i><span class="label">Obs:</span><span class="valor">${escaparHtmlEquipe(env.observacoes)}</span></div>` : "",
+    ].filter(Boolean).join("");
+    return `<article class="envolvido-item-modern bo-person-card"><div class="bo-person-card-heading"><span class="badge badge-azul"><i class="fas fa-user" aria-hidden="true"></i> ${escaparHtmlEquipe(getTipoEnvolvidoLabel(env.tipo))}</span><strong>${escaparHtmlEquipe(env.nome_completo || "Nome não informado")}</strong><button type="button" class="bo-person-remove" aria-label="Remover ${escaparHtmlEquipe(env.nome_completo || "envolvido")}" onclick="window._novaOcorrenciaRemoverEnvolvido(${index})"><i class="fas fa-trash-alt" aria-hidden="true"></i></button></div>${campos ? `<div class="detalhes-grid">${campos}</div>` : ""}<div class="bo-person-signature-state ${assinatura ? "is-signed" : "is-unsigned"}"><span><i class="fas ${assinatura ? "fa-check-circle" : "fa-pen-nib"}" aria-hidden="true"></i>${assinatura ? "Assinatura coletada" : "Sem assinatura"}</span>${assinatura ? `<button type="button" class="bo-person-signature-remove" data-signature-key="${escaparHtmlEquipe(assinaturaKey)}" onclick="window._novaOcorrenciaRemoverAssinatura(this.dataset.signatureKey)">Remover assinatura</button>` : `<small>A coleta foi opcional</small>`}</div></article>`;
+  }).join("") : `<div class="lista-vazia bo-people-empty"><i class="fas fa-users" aria-hidden="true"></i><p>Nenhum envolvido cadastrado</p><p class="sub">Se houver pessoas relacionadas ao fato, cadastre cada uma individualmente.</p></div>`;
+
+  return `<section class="bo-people-section" aria-label="Pessoas envolvidas no fato"><div class="bo-people-intro"><span class="bo-team-icon"><i class="fas fa-users" aria-hidden="true"></i></span><div><span class="bo-section-kicker">ENVOLVIDOS NO FATO</span><h3>Pessoas relacionadas à ocorrência</h3><p>Esta lista é separada da equipe da Guarda. Cadastre uma pessoa por vez; assinatura opcional é oferecida no próprio cadastro.</p></div></div><div class="bo-people-count" role="status">${envolvidos.length} ${envolvidos.length === 1 ? "pessoa cadastrada" : "pessoas cadastradas"}</div><div id="listaEnvolvidos" class="bo-people-list">${cards}</div><button type="button" class="btn-add bo-add-person" onclick="window._novaOcorrenciaAdicionarEnvolvido()"><i class="fas fa-plus-circle" aria-hidden="true"></i> Adicionar envolvido</button></section>`;
+}
+
+// ============================================
+// ETAPA 5 - RELATO DOS FATOS
 // ============================================
 // ETAPA 4 - OBSERVAÇÕES (MANTIDO)
 // ============================================
 
-function renderEtapa4(dados, appInstance) {
+function renderEtapa5(dados, appInstance) {
   return `
     <div class="form-group">
       <label for="observacoes"><i class="fas fa-pencil-alt" style="margin-right:6px;color:var(--azul-bandeira);"></i>Observações e Relato dos Fatos <span class="required">*</span></label>
@@ -1351,6 +1332,7 @@ function renderEtapa4(dados, appInstance) {
         </button>
       </div>
       <div class="input-hint"><i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>Mínimo 10 caracteres. Use o microfone para falar.</div>
+      <div class="bo-authority-hint"><i class="fas fa-landmark" aria-hidden="true"></i><p><strong>Outra autoridade atuou junto?</strong> Registre aqui no relato o órgão/equipe, a providência realizada e o encaminhamento. Não inclua esses agentes como GM na equipe operacional.</p></div>
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
         <button type="button" onclick="document.getElementById('observacoes').value += 'O solicitante informou que...'" class="btn-secondary" style="padding:4px 10px;font-size:10px;min-height:auto;width:auto;border-radius:12px;">Início padrão</button>
         <button type="button" onclick="document.getElementById('observacoes').value += 'A equipe constatou a situação e orientou as partes envolvidas.'" class="btn-secondary" style="padding:4px 10px;font-size:10px;min-height:auto;width:auto;border-radius:12px;">Conclusão padrão</button>
@@ -1360,10 +1342,10 @@ function renderEtapa4(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 ETAPA 5 - ANEXOS (SEPARADO DAS ASSINATURAS)
+// ETAPA 6 - ANEXOS E EVIDÊNCIAS
 // ============================================
 
-function renderEtapa5(dados, appInstance) {
+function renderEtapa6(dados, appInstance) {
   const anexos = dados.anexos || [];
 
   return `
@@ -1411,147 +1393,6 @@ function renderEtapa5(dados, appInstance) {
 }
 
 // ============================================
-// 🔥 NOVA ETAPA 6 - ASSINATURAS (INTEGRADA COM ENVOLVIDOS)
-// ============================================
-
-function renderEtapa6(dados, appInstance) {
-  const assinaturas = dados.assinaturas || [];
-  const envolvidos = dados.envolvidos || [];
-
-  // Mapear quais envolvidos já assinaram
-  const envolvidosAssinados = {};
-  assinaturas.forEach((ass) => {
-    if (ass.envolvido_id) {
-      envolvidosAssinados[ass.envolvido_id] = true;
-    }
-  });
-
-  // Construir opções do dropdown
-  let opcoesDropdown = `<option value="">-- Selecione um envolvido --</option>`;
-  if (envolvidos.length === 0) {
-    opcoesDropdown = `
-      <option value="">-- Nenhum envolvido cadastrado --</option>
-    `;
-  } else {
-    envolvidos.forEach((env) => {
-      const jaAssinou = envolvidosAssinados[env.id] ? " ✅" : "";
-      const disabled = jaAssinou ? "disabled" : "";
-      opcoesDropdown += `
-        <option value="${env.id}" ${disabled}>
-          ${env.nome_completo} (${getTipoEnvolvidoLabel(env.tipo)})${jaAssinou}
-        </option>
-      `;
-    });
-  }
-
-  let html = `
-    <div style="margin-bottom:16px;">
-      <p style="color:var(--cinza-medio);font-size:14px;">
-        <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-        Selecione um envolvido cadastrado na etapa 3 e colete a assinatura digital.
-      </p>
-    </div>
-
-    <div id="avisoSemEnvolvidos" style="display:${envolvidos.length === 0 ? "block" : "none"};padding:16px;background:#fef3c7;border-radius:var(--border-radius);border-left:4px solid var(--aviso);margin-bottom:12px;">
-      <i class="fas fa-exclamation-triangle" style="color:var(--aviso);margin-right:8px;"></i>
-      <strong>Nenhum envolvido cadastrado!</strong>
-      <p style="margin:4px 0 0 0;font-size:13px;">Para coletar assinaturas, você precisa cadastrar os envolvidos na <strong>Etapa 3</strong>.</p>
-      <button onclick="window._novaOcorrenciaAnterior()" class="btn-secondary" style="margin-top:8px;padding:4px 12px;font-size:12px;min-height:auto;width:auto;border-radius:8px;">
-        <i class="fas fa-arrow-left"></i> Voltar para Etapa 3
-      </button>
-    </div>
-
-    <div id="formAssinaturaWrapper" style="display:${envolvidos.length > 0 ? "block" : "none"};">
-      <div class="form-group" style="margin-bottom:12px;">
-        <label style="font-size:12px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">
-          <i class="fas fa-user"></i> Selecione o Envolvido <span class="required">*</span>
-        </label>
-        <select id="selectEnvolvidoAssinatura" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;min-height:44px;background:var(--branco);"
-          onchange="window._novaOcorrenciaSelecionarEnvolvido()">
-          ${opcoesDropdown}
-        </select>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-        <div class="form-group" style="margin-bottom:0;">
-          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">Nome</label>
-          <input type="text" id="assinaturaNomeAuto" readonly disabled
-            style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;background:var(--branco-fumaca);color:var(--cinza-escuro);min-height:36px;"
-            placeholder="Selecione um envolvido">
-        </div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:2px;">CPF</label>
-          <input type="text" id="assinaturaCpfAuto" readonly disabled
-            style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:13px;background:var(--branco-fumaca);color:var(--cinza-escuro);min-height:36px;"
-            placeholder="Selecione um envolvido">
-        </div>
-      </div>
-
-      <div style="margin-top:8px;">
-        <label style="font-size:11px;font-weight:600;color:var(--cinza-escuro);display:block;margin-bottom:4px;">Assinatura Digital *</label>
-        <div style="border:2px solid var(--cinza-claro);border-radius:8px;overflow:hidden;background:white;touch-action:none;">
-          <canvas id="canvasAssinatura" width="400" height="150" style="width:100%;height:150px;touch-action:none;cursor:crosshair;"></canvas>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button type="button" onclick="window._novaOcorrenciaLimparAssinatura()" class="btn-secondary" style="flex:1;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
-            <i class="fas fa-undo"></i> Limpar
-          </button>
-          <button type="button" onclick="window._novaOcorrenciaAdicionarAssinatura()" class="btn-primary" style="flex:2;padding:4px 8px;font-size:11px;min-height:auto;width:auto;border-radius:6px;">
-            <i class="fas fa-save"></i> Atribuir Assinatura
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Lista de assinaturas já coletadas -->
-    <div style="margin-top:16px;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-      <h4 style="font-size:13px;color:var(--azul-bandeira);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-        <i class="fas fa-list"></i> Assinaturas Coletadas (${assinaturas.length})
-      </h4>
-      <div id="listaAssinaturas">
-        ${
-          assinaturas.length === 0
-            ? `<div style="text-align:center;padding:16px;color:var(--cinza-medio);font-size:13px;background:var(--branco);border-radius:var(--border-radius);border:1px dashed var(--cinza-claro);">
-                <i class="fas fa-pen" style="font-size:24px;display:block;margin-bottom:4px;opacity:0.3;"></i>
-                Nenhuma assinatura coletada ainda
-               </div>`
-            : assinaturas
-                .map((ass) => {
-                  const papelLabel =
-                    getTipoAssinaturaLabel(ass.tipo) || ass.tipo;
-                  const dataAss = ass.assinado_em
-                    ? new Date(ass.assinado_em).toLocaleString("pt-BR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                    : "";
-                  return `
-                    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--verde-muito-claro);border-radius:var(--border-radius);border-left:4px solid var(--verde-bandeira);margin-bottom:4px;">
-                      <i class="fas fa-check-circle" style="color:var(--verde-bandeira);"></i>
-                      <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
-                      <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${papelLabel}</span>
-                      ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
-                      <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${dataAss}</span>
-                      <button type="button" onclick="window._novaOcorrenciaRemoverAssinatura('${ass.tipo}')" class="remove-btn" style="background:none;border:none;color:var(--erro);cursor:pointer;padding:2px 6px;font-size:14px;">
-                        <i class="fas fa-times"></i>
-                      </button>
-                    </div>
-                  `;
-                })
-                .join("")
-        }
-      </div>
-      <div style="margin-top:6px;font-size:11px;color:var(--cinza-medio);">
-        <i class="fas fa-info-circle"></i>
-        Cada envolvido pode assinar apenas uma vez. Para substituir, remova a assinatura atual.
-      </div>
-    </div>
-  `;
-
-  return html;
-}
-
-// ============================================
 // 🔥 ETAPA 7 - REVISÃO E FINALIZAÇÃO (COM ENCERRAMENTO)
 // ============================================
 
@@ -1559,6 +1400,7 @@ function renderEtapa7(dados, appInstance) {
   const envolvidos = dados.envolvidos || [];
   const anexos = dados.anexos || [];
   const assinaturas = dados.assinaturas || [];
+  const equipe = garantirResponsavelEquipe(dados);
 
   // 🔥 NOVO: Data/hora encerramento com valor atual ou do dispositivo
   const dataEncerramentoAtual =
@@ -1623,10 +1465,10 @@ function renderEtapa7(dados, appInstance) {
         <div class="campo" style="background:var(--azul-muito-claro);padding:6px 10px;border-radius:4px;border-left:3px solid var(--azul-bandeira);">
           <span class="rotulo" style="color:var(--azul-bandeira);">📌 Data/Hora Encerramento:</span>
           <div style="display:flex;align-items:center;gap:6px;flex:1;">
-            <input type="datetime-local" id="revisao_data_hora_encerramento"
+            <input type="datetime-local" id="revisao_data_hora_encerramento" 
               value="${dataEncerramentoAtual}"
               style="flex:1;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:6px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:32px;">
-            <button type="button" onclick="document.getElementById('revisao_data_hora_encerramento').value = window._obterDataHoraLocalInput()"
+            <button type="button" onclick="document.getElementById('revisao_data_hora_encerramento').value = window._obterDataHoraLocalInput()" 
               class="btn-secondary" style="padding:4px 10px;font-size:11px;min-height:auto;width:auto;border-radius:6px;white-space:nowrap;">
               <i class="fas fa-clock"></i> Agora
             </button>
@@ -1643,16 +1485,15 @@ function renderEtapa7(dados, appInstance) {
 
     <div class="card-revisao">
       <h4><i class="fas fa-users"></i> Envolvidos (${envolvidos.length})</h4>
-      ${
-        envolvidos.length === 0
-          ? `<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>`
-          : envolvidos
-              .map(
-                (env) =>
-                  `<div class="envolvido-item"><span class="badge badge-azul" style="font-size:10px;">${getTipoEnvolvidoLabel(env.tipo)}</span> <strong>${env.nome_completo}</strong> ${env.cpf ? `<span style="color:var(--cinza-medio);font-size:12px;"> - ${env.cpf}</span>` : ""}</div>`,
-              )
-              .join("")
-      }
+      ${envolvidos.length === 0 ? `<p style="color:var(--cinza-medio);font-size:14px;">Nenhum envolvido cadastrado</p>` : envolvidos.map((env) => {
+        const assinatura = assinaturas.find((ass) => ass && ass.envolvido_id === env.id);
+        return `<div class="bo-review-person"><div><span class="badge badge-azul" style="font-size:10px;">${escaparHtmlEquipe(getTipoEnvolvidoLabel(env.tipo))}</span> <strong>${escaparHtmlEquipe(env.nome_completo || "Nome não informado")}</strong>${env.cpf ? `<small>${escaparHtmlEquipe(env.cpf)}</small>` : ""}</div><span class="bo-review-signature ${assinatura ? "is-signed" : "is-unsigned"}"><i class="fas ${assinatura ? "fa-check-circle" : "fa-minus-circle"}" aria-hidden="true"></i>${assinatura ? "Assinatura coletada" : "Sem assinatura"}</span></div>`;
+      }).join("")}
+    </div>
+
+    <div class="card-revisao bo-review-team">
+      <h4><i class="fas fa-user-shield" aria-hidden="true"></i> Equipe operacional (${equipe.filter((g) => g && g.esta_ativo !== false).length})</h4>
+      ${equipe.filter((g) => g && g.esta_ativo !== false).sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).map((g) => `<div class="bo-review-team-member"><strong>${escaparHtmlEquipe(g.nome_snapshot || g.nome_completo || "GM cadastrado")}</strong><span>${rotuloPapelEquipe(g.papel)}${g.matricula_snapshot ? ` · Mat. ${escaparHtmlEquipe(g.matricula_snapshot)}` : ""}</span></div>`).join("")}
     </div>
 
     ${
@@ -1672,26 +1513,6 @@ function renderEtapa7(dados, appInstance) {
         <div><strong>📎 Anexos:</strong> ${anexos.length} arquivo(s) (ilimitado)</div>
         ${anexos.length > 0 ? `<div style="margin-top:4px;font-size:12px;color:var(--cinza-medio);">${anexos.map((a) => a.nome).join(", ")}</div>` : ""}
       </div>
-    </div>
-
-    <div class="card-revisao">
-      <h4><i class="fas fa-pen-fancy"></i> Assinaturas (${assinaturas.length})</h4>
-      ${
-        assinaturas.length === 0
-          ? `<p style="color:var(--cinza-medio);font-size:13px;">Nenhuma assinatura coletada</p>`
-          : assinaturas
-              .map(
-                (ass) => `
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--cinza-claro);">
-              <span class="badge badge-azul" style="font-size:9px;padding:2px 10px;">${getTipoAssinaturaLabel(ass.tipo)}</span>
-              <span style="font-weight:600;font-size:13px;">${ass.nome}</span>
-              ${ass.cpf ? `<span style="font-size:11px;color:var(--cinza-medio);">${ass.cpf}</span>` : ""}
-              <span style="font-size:10px;color:var(--cinza-medio);margin-left:auto;">${new Date(ass.assinado_em).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-            </div>
-          `,
-              )
-              .join("")
-      }
     </div>
 
     <div class="alert-finalizar">
@@ -1763,6 +1584,7 @@ function selecionarEnvolvidoParaAssinatura(appInstance) {
 
   const envolvido = estado.dados.envolvidos.find((e) => e.id === envolvidoId);
   if (!envolvido) return;
+  if (estado.envolvidoSelecionado?.id !== envolvido.id) limparAssinatura(null, true);
 
   estado.envolvidoSelecionado = envolvido;
   document.getElementById("assinaturaNomeAuto").value =
@@ -1773,9 +1595,11 @@ function selecionarEnvolvidoParaAssinatura(appInstance) {
 /**
  * Inicializa o canvas para captura de assinatura
  */
-function inicializarCanvasAssinatura(appInstance) {
-  const canvas = document.getElementById("canvasAssinatura");
-  if (!canvas) return;
+function inicializarCanvasAssinatura(appInstance, canvasId = "canvasAssinatura") {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || canvas.dataset.initialized === "true") return;
+  canvas.dataset.initialized = "true";
+  canvas.dataset.hasUserInk = "false";
 
   estado.canvasAssinatura = canvas;
   const ctx = canvas.getContext("2d");
@@ -1823,6 +1647,7 @@ function inicializarCanvasAssinatura(appInstance) {
     ctx.moveTo(estado.lastX, estado.lastY);
     ctx.lineTo(x, y);
     ctx.stroke();
+    canvas.dataset.hasUserInk = "true";
 
     estado.lastX = x;
     estado.lastY = y;
@@ -1868,6 +1693,7 @@ function inicializarCanvasAssinatura(appInstance) {
       ctx.moveTo(estado.lastX, estado.lastY);
       ctx.lineTo(x, y);
       ctx.stroke();
+      canvas.dataset.hasUserInk = "true";
 
       estado.lastX = x;
       estado.lastY = y;
@@ -1890,9 +1716,10 @@ function inicializarCanvasAssinatura(appInstance) {
 /**
  * Limpa o canvas de assinatura
  */
-function limparAssinatura(appInstance) {
-  const canvas = document.getElementById("canvasAssinatura");
+function limparAssinatura(appInstance, silencioso = false, canvasId = "canvasAssinatura") {
+  const canvas = document.getElementById(canvasId);
   if (!canvas) return;
+  canvas.dataset.hasUserInk = "false";
 
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1909,7 +1736,7 @@ function limparAssinatura(appInstance) {
   ctx.strokeStyle = "#1e293b";
   ctx.lineWidth = 2;
 
-  if (appInstance && appInstance.showToast) {
+  if (!silencioso && appInstance && appInstance.showToast) {
     appInstance.showToast("Assinatura limpa", "info");
   }
 }
@@ -2008,27 +1835,23 @@ async function adicionarAssinatura(appInstance) {
 /**
  * Remove uma assinatura da ocorrência
  */
-function removerAssinatura(tipo, appInstance) {
-  if (!tipo) return;
-
-  const assinatura = estado.dados.assinaturas.find((a) => a.tipo === tipo);
-  if (!assinatura) return;
-
-  const confirmado = appInstance.confirmar(
-    `Remover assinatura de ${assinatura.nome}?`,
+async function removerAssinatura(chave, appInstance) {
+  const assinaturas = estado.dados.assinaturas || [];
+  const indice = assinaturas.findIndex((a) =>
+    a.id === chave || a.envolvido_id === chave || (!a.id && !a.envolvido_id && a.tipo === chave),
+  );
+  if (indice < 0) return;
+  const assinatura = assinaturas[indice];
+  const confirmado = await appInstance.confirmar(
+    `Remover a assinatura de ${assinatura.nome || "este envolvido"}?`,
   );
   if (!confirmado) return;
-
-  estado.dados.assinaturas = estado.dados.assinaturas.filter(
-    (a) => a.tipo !== tipo,
-  );
-  appInstance.alteracoesNaoSalvas = true;
-
+  estado.dados.assinaturas = assinaturas.filter((_, index) => index !== indice);
+  marcarRascunhoPendente(appInstance);
   const container = document.getElementById("page-nova-ocorrencia");
   if (container) {
     renderizarFormularioCompleto(container, appInstance);
   }
-
   appInstance.showToast("Assinatura removida", "info");
 }
 
@@ -2130,14 +1953,11 @@ function salvarDadosEtapa() {
       dados.data_hora_inicio =
         document.getElementById("data_hora_inicio")?.value || "";
       break;
-    case 4:
+    case 5:
       dados.observacoes = document.getElementById("observacoes")?.value || "";
       break;
-    case 5:
-      // Anexos já são salvos via estado
-      break;
     case 6:
-      // Assinaturas já são salvas via estado
+      // Anexos são mantidos no estado do formulário.
       break;
     case 7:
       // Data/hora encerramento é salva via evento change
@@ -2192,28 +2012,27 @@ function validarEtapa(appInstance) {
       }
       break;
     case 2:
-      if (!document.getElementById("local_ocorrencia")?.value) {
+      if (!document.getElementById("tipo_ocorrencia")?.value) {
+        mensagem = "Selecione o tipo de ocorrência";
+        isValid = false;
+      } else if (!document.getElementById("local_ocorrencia")?.value) {
         mensagem = "Informe o local da ocorrência";
         isValid = false;
       } else if (!document.getElementById("data_hora_inicio")?.value) {
         mensagem = "Informe a data e hora do início";
         isValid = false;
-      } else if (!document.getElementById("tipo_ocorrencia")?.value) {
-        mensagem = "Selecione o tipo de ocorrência";
+      }
+      break;
+    case 3:
+      if (!equipeTemMinima(estado.dados.guardasParticipantes)) {
+        mensagem = "Inclua o GM responsável e pelo menos um acompanhante antes de continuar";
         isValid = false;
       }
       break;
-    case 4:
+    case 5:
       const observacoes = document.getElementById("observacoes")?.value;
       if (!observacoes || observacoes.trim().length < 10) {
         mensagem = "Descreva o ocorrido com pelo menos 10 caracteres";
-        isValid = false;
-      }
-      break;
-    case 6:
-      // Não obriga a ter assinaturas, mas avisa se não houver envolvidos
-      if (estado.dados.envolvidos.length === 0) {
-        mensagem = "Cadastre envolvidos na etapa 3 para coletar assinaturas";
         isValid = false;
       }
       break;
@@ -2240,6 +2059,7 @@ function validarEtapa(appInstance) {
 // ============================================
 
 function adicionarEnvolvido(appInstance) {
+  const assinaturaInlineCompleto = estado.modo === MODE_COMPLETO && !estado.isCompletando;
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.style.cssText = `
@@ -2290,6 +2110,7 @@ function adicionarEnvolvido(appInstance) {
             <label for="env_observacoes" style="display:block;font-size:13px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">Observações</label>
             <textarea id="env_observacoes" class="form-control" rows="2" placeholder="Observações adicionais" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:16px;font-size:14px;min-height:50px;resize:vertical;"></textarea>
           </div>
+          ${assinaturaInlineCompleto ? `<section class="bo-inline-signature"><label class="bo-inline-signature-toggle"><input type="checkbox" id="env_coletar_assinatura" onchange="window._novaOcorrenciaAlternarAssinaturaEnvolvido(this.checked)"><span><strong>Coletar assinatura agora</strong><small>Opcional — você pode salvar sem coletar.</small></span></label><div id="env-assinatura-painel" class="bo-inline-signature-panel" hidden><p>A imagem será vinculada somente a este cadastro e não indica, por si só, concordância com o relato integral do BO.</p><div class="bo-inline-signature-canvas"><canvas id="canvasAssinaturaEnvolvido" width="400" height="150" aria-label="Área para assinatura manuscrita opcional"></canvas></div><div class="bo-inline-signature-actions"><button type="button" class="btn-secondary" onclick="window._novaOcorrenciaLimparAssinaturaEnvolvido()"><i class="fas fa-undo" aria-hidden="true"></i> Limpar</button></div></div></section>` : ""}
         </form>
       </div>
       <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
@@ -2317,7 +2138,7 @@ function adicionarEnvolvido(appInstance) {
 
   window._novaOcorrenciaSalvarEnvolvido = function () {
     const tipo = document.getElementById("env_tipo")?.value;
-    const nome = document.getElementById("env_nome")?.value;
+    const nome = document.getElementById("env_nome")?.value?.trim();
     if (!tipo || !nome) {
       appInstance.showToast("Preencha o tipo e o nome do envolvido", "warning");
       return;
@@ -2325,24 +2146,46 @@ function adicionarEnvolvido(appInstance) {
 
     const envolvido = {
       id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
-      tipo: tipo,
+      tipo,
       nome_completo: nome,
       cpf: document.getElementById("env_cpf")?.value || "",
       telefone: document.getElementById("env_telefone")?.value || "",
       observacoes: document.getElementById("env_observacoes")?.value || "",
     };
+    const checkbox = document.getElementById("env_coletar_assinatura");
+    const canvas = document.getElementById("canvasAssinaturaEnvolvido");
+    let assinatura = null;
+    if (checkbox?.checked) {
+      if (!canvas || canvas.dataset.hasUserInk !== "true") {
+        appInstance.showToast("Desenhe a assinatura ou desmarque a coleta opcional", "warning");
+        return;
+      }
+      assinatura = {
+        id: crypto.randomUUID ? crypto.randomUUID() : gerarUUID(),
+        envolvido_id: envolvido.id,
+        tipo: envolvido.tipo,
+        nome: envolvido.nome_completo,
+        cpf: envolvido.cpf || null,
+        assinatura_data_url: canvas.toDataURL("image/png"),
+        assinado_em: new Date().toISOString(),
+        assinado_por: authManager.getUserId(),
+        nome_guarda: authManager.getUser()?.nome_completo || "Desconhecido",
+        metodo: "captura_manuscrita_em_tela",
+      };
+    }
 
     estado.dados.envolvidos.push(envolvido);
-    // 🔥 NOVO: Atualizar mapa de envolvidos
     estado.dados.envolvidosMap[envolvido.id] = envolvido;
-    appInstance.alteracoesNaoSalvas = true;
+    if (assinatura) estado.dados.assinaturas.push(assinatura);
+    marcarRascunhoPendente(appInstance);
 
     const modal = document.querySelector(".modal-overlay");
     if (modal) modal.remove();
-
     const container = document.getElementById("page-nova-ocorrencia");
     if (container) renderizarFormularioCompleto(container, appInstance);
-    appInstance.showToast("Envolvido adicionado com sucesso!", "success");
+    appInstance.showToast(assinatura ? "Envolvido cadastrado e assinatura vinculada" : "Envolvido adicionado sem assinatura", "success");
+
+
   };
 }
 
@@ -2369,7 +2212,7 @@ function removerEnvolvido(index, appInstance) {
 
   estado.dados.envolvidos.splice(index, 1);
   delete estado.dados.envolvidosMap[envolvido.id];
-  appInstance.alteracoesNaoSalvas = true;
+  marcarRascunhoPendente(appInstance);
 
   const container = document.getElementById("page-nova-ocorrencia");
   if (container) renderizarFormularioCompleto(container, appInstance);
@@ -2422,7 +2265,8 @@ async function processarAnexos(files, appInstance) {
   }
 
   estado.dados.anexos = anexos;
-  appInstance.alteracoesNaoSalvas = true;
+  if (estado.modo === MODE_COMPLETO && !estado.isCompletando) marcarRascunhoPendente(appInstance);
+  else appInstance.alteracoesNaoSalvas = true;
 
   const container = document.getElementById("page-nova-ocorrencia");
   if (container) renderizarFormularioCompleto(container, appInstance);
@@ -2438,7 +2282,8 @@ async function processarAnexos(files, appInstance) {
 
 function removerAnexo(index, appInstance) {
   estado.dados.anexos.splice(index, 1);
-  appInstance.alteracoesNaoSalvas = true;
+  if (estado.modo === MODE_COMPLETO && !estado.isCompletando) marcarRascunhoPendente(appInstance);
+  else appInstance.alteracoesNaoSalvas = true;
 
   const container = document.getElementById("page-nova-ocorrencia");
   if (container) renderizarFormularioCompleto(container, appInstance);
@@ -2453,6 +2298,17 @@ async function finalizarOcorrencia(container, appInstance) {
   salvarDadosEtapa();
 
   const dados = estado.dados;
+
+  const idsEnvolvidosAssinaveis = new Set((dados.envolvidos || []).map((env) => env.id));
+  const assinaturaSemEnvolvido = (dados.assinaturas || []).some(
+    (assinatura) => !assinatura.envolvido_id || !idsEnvolvidosAssinaveis.has(assinatura.envolvido_id),
+  );
+  if (assinaturaSemEnvolvido) {
+    appInstance.showToast("Há uma assinatura sem vínculo válido com um envolvido. Revise a pessoa na etapa de envolvidos; a coleta continua opcional.", "warning");
+    estado.etapa = 4;
+    renderizarFormularioCompleto(container, appInstance);
+    return;
+  }
 
   if (!dados.forma_solicitacao) {
     appInstance.showToast("Selecione a forma de solicitação", "warning");
@@ -2487,7 +2343,7 @@ async function finalizarOcorrencia(container, appInstance) {
       "Descreva o ocorrido com pelo menos 10 caracteres",
       "warning",
     );
-    estado.etapa = 4;
+    estado.etapa = 5;
     renderizarFormularioCompleto(container, appInstance);
     return;
   }
@@ -2499,7 +2355,7 @@ async function finalizarOcorrencia(container, appInstance) {
   }
 
   if (!equipeTemMinima(dados.guardasParticipantes)) {
-    appInstance.showToast("Selecione o guarda acompanhante na Etapa 3", "warning");
+    appInstance.showToast("A equipe precisa incluir o responsável pelo registro e pelo menos um GM acompanhante na etapa de equipe", "warning");
     estado.etapa = 3;
     renderizarFormularioCompleto(container, appInstance);
     return;
@@ -2510,7 +2366,7 @@ async function finalizarOcorrencia(container, appInstance) {
       "Nenhum envolvido cadastrado. Deseja continuar assim?",
     );
     if (!confirmado) {
-      estado.etapa = 3;
+      estado.etapa = 4;
       renderizarFormularioCompleto(container, appInstance);
       return;
     }
@@ -2623,6 +2479,7 @@ async function finalizarOcorrencia(container, appInstance) {
     const envResult = await ocorrenciaManager.salvarEnvolvidos(
       ocorrenciaId,
       envolvidos,
+      true,
     );
     if (!envResult.success)
       erros.push("Erro ao salvar envolvidos: " + envResult.error);

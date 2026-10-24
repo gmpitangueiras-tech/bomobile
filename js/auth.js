@@ -30,6 +30,56 @@ const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutos
 const SALT_ROUNDS = 10;
 const ENCRYPTION_KEY_LENGTH = 256;
 
+// logs_acesso.data_hora é timestamp sem fuso, armazenado como UTC.
+function dataLocalSPParaUtcSemFuso(dataString, diasAdicionais = 0) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dataString || ""));
+  if (!match) return null;
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  const dia = Number(match[3]);
+  const dataValidacao = new Date(Date.UTC(ano, mes - 1, dia));
+  if (dataValidacao.getUTCFullYear() !== ano || dataValidacao.getUTCMonth() !== mes - 1 || dataValidacao.getUTCDate() !== dia) return null;
+
+  const diaAlvo = dia + diasAdicionais;
+  const meioDiaUtc = Date.UTC(ano, mes - 1, diaAlvo, 12, 0, 0);
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(meioDiaUtc));
+  const valores = Object.fromEntries(partes.map((parte) => [parte.type, parte.value]));
+  const paredeLocalEmUtc = Date.UTC(
+    Number(valores.year), Number(valores.month) - 1, Number(valores.day),
+    Number(valores.hour), Number(valores.minute), Number(valores.second),
+  );
+  const diferencaFuso = paredeLocalEmUtc - meioDiaUtc;
+  return new Date(Date.UTC(ano, mes - 1, diaAlvo, 0, 0, 0) - diferencaFuso)
+    .toISOString().slice(0, 19);
+}
+
+function aplicarFiltrosDataLogs(query, filtros = {}) {
+  if (filtros.data_inicio) {
+    const inicio = dataLocalSPParaUtcSemFuso(filtros.data_inicio);
+    if (!inicio) throw new Error("Data inicial inválida.");
+    query = query.gte("data_hora", inicio);
+  }
+  if (filtros.data_fim) {
+    const fimExclusivo = dataLocalSPParaUtcSemFuso(filtros.data_fim, 1);
+    if (!fimExclusivo) throw new Error("Data final inválida.");
+    query = query.lt("data_hora", fimExclusivo);
+  }
+  return query;
+}
+
+function sanitizarBuscaLogs(valor) {
+  return String(valor || "")
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{N}\s@._:-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
 // ============================================
 // CLASSE AUTH MANAGER
 // ============================================
@@ -660,6 +710,7 @@ class AuthManager {
         JSON.stringify({
           id: usuario.id,
           nome_completo: usuario.nome_completo,
+          apelido: usuario.apelido || null,
           cpf: usuario.cpf,
           perfil: usuario.perfil,
           matricula: usuario.matricula,
@@ -944,6 +995,26 @@ class AuthManager {
     }
   }
 
+  async listarUsuariosParaLogs() {
+    if (!this.isSupervisor()) {
+      return { success: false, error: "Permissão negada. Apenas supervisores podem consultar usuários nos logs." };
+    }
+    try {
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar" };
+      const { data, error } = await client
+        .from("usuarios")
+        .select("id,nome_completo,matricula")
+        .order("nome_completo")
+        .limit(500);
+      if (error) throw error;
+      return { success: true, data: data || [] };
+    } catch (error) {
+      console.error("Erro ao carregar usuários para filtros de logs:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async criarUsuario(dados) {
     if (!this.isSupervisor()) {
       return {
@@ -1044,7 +1115,7 @@ class AuthManager {
             error: "Permissão negada. Você só pode editar seu próprio perfil.",
           };
         }
-        const camposPermitidos = ["nome_completo", "telefone", "email"];
+        const camposPermitidos = ["nome_completo", "telefone", "email", "apelido"];
         const dadosFiltrados = {};
         for (const campo of camposPermitidos) {
           if (dados[campo] !== undefined) {
@@ -1100,6 +1171,7 @@ class AuthManager {
           JSON.stringify({
             id: this.user.id,
             nome_completo: this.user.nome_completo,
+            apelido: this.user.apelido || null,
             cpf: this.user.cpf,
             perfil: this.user.perfil,
             matricula: this.user.matricula,
@@ -1246,10 +1318,13 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
+      const limiteSolicitado = Number.parseInt(filtros.limit, 10);
+      const limite = Math.max(1, Math.min(Number.isFinite(limiteSolicitado) ? limiteSolicitado : 50, 500));
+      const deslocamentoSolicitado = Number.parseInt(filtros.offset, 10);
+      const deslocamento = Math.max(0, Number.isFinite(deslocamentoSolicitado) ? deslocamentoSolicitado : 0);
       let query = client
         .from("logs_acesso")
-        .select("*, usuarios(nome_completo, matricula)")
-        .order("data_hora", { ascending: false });
+        .select("id,data_hora,usuario_id,acao,entidade,detalhes,ip,usuarios(nome_completo,matricula)", { count: "exact" });
 
       if (filtros.usuario_id) {
         query = query.eq("usuario_id", filtros.usuario_id);
@@ -1257,20 +1332,19 @@ class AuthManager {
       if (filtros.acao) {
         query = query.eq("acao", filtros.acao);
       }
-      if (filtros.data_inicio) {
-        query = query.gte("data_hora", filtros.data_inicio);
-      }
-      if (filtros.data_fim) {
-        query = query.lte("data_hora", filtros.data_fim);
-      }
-      if (filtros.limit) {
-        query = query.limit(filtros.limit);
+      query = aplicarFiltrosDataLogs(query, filtros);
+      const busca = sanitizarBuscaLogs(filtros.busca);
+      if (busca) {
+        query = query.or(`acao.ilike.%${busca}%,entidade.ilike.%${busca}%,detalhes.ilike.%${busca}%,ip.ilike.%${busca}%`);
       }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query
+        .order("data_hora", { ascending: false })
+        .order("id", { ascending: false })
+        .range(deslocamento, deslocamento + limite - 1);
       if (error) throw error;
 
-      return { success: true, data: data || [] };
+      return { success: true, data: data || [], count: count ?? 0, limit: limite, offset: deslocamento };
     } catch (error) {
       console.error("❌ Erro ao listar logs de acesso:", error);
       return { success: false, error: error.message };
@@ -1290,42 +1364,31 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      let query = client.from("logs_acesso").select("*");
-
-      if (filtros.data_inicio) {
-        query = query.gte("data_hora", filtros.data_inicio);
+      const contar = async (tipo) => {
+        let query = client.from("logs_acesso").select("id", { count: "exact", head: true });
+        query = aplicarFiltrosDataLogs(query, filtros);
+        if (tipo === "login") query = query.eq("acao", "login");
+        if (tipo === "ocorrencias") {
+          query = query.in("acao", [
+            "criar_ocorrencia", "finalizar_ocorrencia", "cancelar_ocorrencia",
+            "solicitar_retificacao", "aprovar_retificacao", "rejeitar_retificacao",
+          ]);
+        }
+        return query;
+      };
+      const [total, logins, acoesOcorrencia] = await Promise.all([
+        contar("total"), contar("login"), contar("ocorrencias"),
+      ]);
+      for (const resultado of [total, logins, acoesOcorrencia]) {
+        if (resultado.error) throw resultado.error;
       }
-      if (filtros.data_fim) {
-        query = query.lte("data_hora", filtros.data_fim);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const porAcao = {};
-      const porUsuario = {};
-      const porDia = {};
-
-      data.forEach((log) => {
-        if (!porAcao[log.acao]) porAcao[log.acao] = 0;
-        porAcao[log.acao]++;
-
-        if (!porUsuario[log.usuario_id]) porUsuario[log.usuario_id] = 0;
-        porUsuario[log.usuario_id]++;
-
-        const dia = log.data_hora.slice(0, 10);
-        if (!porDia[dia]) porDia[dia] = 0;
-        porDia[dia]++;
-      });
 
       return {
         success: true,
         data: {
-          total: data.length,
-          por_acao: porAcao,
-          por_usuario: porUsuario,
-          por_dia: porDia,
-          logs: data.slice(0, 100),
+          total: total.count ?? 0,
+          logins: logins.count ?? 0,
+          acoes_ocorrencia: acoesOcorrencia.count ?? 0,
         },
       };
     } catch (error) {

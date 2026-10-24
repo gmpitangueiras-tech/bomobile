@@ -2034,25 +2034,10 @@ class OcorrenciaManager {
 
       if (error) throw error;
 
-      // Verificar URLs e cache
+      // A listagem retorna somente metadados/URLs; não faz HEAD por arquivo.
+      // Consultas sequenciais por foto atrasavam a abertura do modal quando
+      // havia muitos anexos. A disponibilidade é tratada pelo carregamento da imagem.
       const anexos = data || [];
-      for (const anexo of anexos) {
-        if (anexo.url) {
-          try {
-            // Cache de verificação de URL
-            if (!this.cacheAnexos[anexo.id]) {
-              const response = await fetch(anexo.url, { method: "HEAD" });
-              anexo.url_valida = response.ok;
-              this.cacheAnexos[anexo.id] = response.ok;
-            } else {
-              anexo.url_valida = this.cacheAnexos[anexo.id];
-            }
-          } catch (e) {
-            anexo.url_valida = false;
-          }
-        }
-      }
-
       return { success: true, data: anexos };
     } catch (error) {
       console.error("❌ Erro ao listar anexos:", error);
@@ -2421,6 +2406,8 @@ class OcorrenciaManager {
         .from("usuarios")
         .select("id, nome_completo, matricula, perfil, status")
         .eq("status", "ativo")
+        .in("perfil", ["guarda", "supervisor"])
+        .is("deleted_at", null)
         .order("nome_completo", { ascending: true });
       if (error) throw error;
       return { success: true, data: data || [] };
@@ -2515,7 +2502,7 @@ class OcorrenciaManager {
   // SALVAR EM LOTE - 🔥 ALTERADO (sem limite)
   // ============================================
 
-  async salvarEnvolvidos(ocorrenciaId, envolvidos) {
+  async salvarEnvolvidos(ocorrenciaId, envolvidos, preservarIds = false) {
     if (!envolvidos || envolvidos.length === 0) {
       return { success: true };
     }
@@ -2532,6 +2519,7 @@ class OcorrenciaManager {
       }
 
       const dadosParaInserir = envolvidos.map((env) => ({
+        ...(preservarIds && env.id ? { id: env.id } : {}),
         ocorrencia_id: ocorrenciaId,
         tipo: env.tipo,
         nome_completo: env.nome_completo,
@@ -2721,52 +2709,96 @@ class OcorrenciaManager {
         .toISOString()
         .slice(0, 10);
 
-      // 🔥 NOVO: Estatísticas de assinaturas com envolvido_id
-      const totalAssinaturas = data.reduce(
-        (acc, o) => acc + (o.assinaturas?.length || 0),
+      // Normalizar o campo para tolerar arrays, JSON serializado e formatos legados.
+      // Esta conversão é somente em memória para estatísticas; não grava dados.
+      const ocorrencias = Array.isArray(data) ? data : [];
+      const obterListaAssinaturas = (valor) => {
+        let assinaturas = valor;
+        if (typeof assinaturas === "string") {
+          try {
+            assinaturas = JSON.parse(assinaturas);
+          } catch {
+            return assinaturas.trim() ? [assinaturas] : [];
+          }
+        }
+        if (Array.isArray(assinaturas)) {
+          return assinaturas.filter((item) => item != null);
+        }
+        if (assinaturas && typeof assinaturas === "object") {
+          if (Array.isArray(assinaturas.assinaturas)) {
+            return assinaturas.assinaturas.filter((item) => item != null);
+          }
+          const valores = Object.values(assinaturas);
+          if (valores.length > 0 && valores.every(Array.isArray)) {
+            return valores.flat().filter((item) => item != null);
+          }
+          if (
+            valores.length > 0 &&
+            valores.every((item) => item && typeof item === "object")
+          ) {
+            return valores;
+          }
+          return Object.keys(assinaturas).length > 0 ? [assinaturas] : [];
+        }
+        return [];
+      };
+      const assinaturasPorOcorrencia = ocorrencias.map((ocorrencia) => {
+        const normalizada = obterListaAssinaturas(ocorrencia?.assinaturas);
+        // Defesa final: nenhum filtro de estatística recebe JSON/object/undefined.
+        return Array.isArray(normalizada)
+          ? normalizada.filter((assinatura) => assinatura != null)
+          : [];
+      });
+      const totalAssinaturas = assinaturasPorOcorrencia.reduce(
+        (total, assinaturas) => total + assinaturas.length,
         0,
       );
-      const assinaturasComEnvolvido = data.reduce((acc, o) => {
-        if (o.assinaturas) {
-          return acc + o.assinaturas.filter((a) => a.envolvido_id).length;
-        }
-        return acc;
-      }, 0);
+      const assinaturasComEnvolvido = assinaturasPorOcorrencia.reduce(
+        (total, assinaturas) =>
+          total +
+          assinaturas.filter(
+            (assinatura) =>
+              assinatura &&
+              typeof assinatura === "object" &&
+              assinatura.envolvido_id,
+          ).length,
+        0,
+      );
 
       const stats = {
-        total: data.length,
-        hoje: data.filter((o) => o.criado_em.slice(0, 10) === hoje).length,
-        draft: data.filter((o) => o.status === "draft").length,
-        pending: data.filter((o) => o.status === "pending_sync").length,
-        synced: data.filter((o) => o.status === "synced").length,
-        cancelled: data.filter((o) => o.status === "cancelled").length,
-        rectified: data.filter((o) => o.status === "rectified").length,
-        pending_rectification: data.filter(
+        total: ocorrencias.length,
+        hoje: ocorrencias.filter((o) => o.criado_em.slice(0, 10) === hoje).length,
+        draft: ocorrencias.filter((o) => o.status === "draft").length,
+        pending: ocorrencias.filter((o) => o.status === "pending_sync").length,
+        synced: ocorrencias.filter((o) => o.status === "synced").length,
+        cancelled: ocorrencias.filter((o) => o.status === "cancelled").length,
+        rectified: ocorrencias.filter((o) => o.status === "rectified").length,
+        pending_rectification: ocorrencias.filter(
           (o) => o.status === "pending_rectification",
         ).length,
-        rectification_rejected: data.filter(
+        rectification_rejected: ocorrencias.filter(
           (o) => o.status === "rectification_rejected",
         ).length,
         // Estatísticas por modo
-        rapido: data.filter((o) => o.modo_criacao === "rapido").length,
-        completo: data.filter((o) => o.modo_criacao === "completo").length,
-        rapido_completado: data.filter(
+        rapido: ocorrencias.filter((o) => o.modo_criacao === "rapido").length,
+        completo: ocorrencias.filter((o) => o.modo_criacao === "completo").length,
+        rapido_completado: ocorrencias.filter(
           (o) => o.modo_criacao === "rapido" && o.completado_em !== null,
         ).length,
-        rapido_pendente: data.filter(
+        rapido_pendente: ocorrencias.filter(
           (o) => o.modo_criacao === "rapido" && o.completado_em === null,
         ).length,
         // 🔥 NOVO: Estatísticas de finalização
-        finalizados_hoje: data.filter(
+        finalizados_hoje: ocorrencias.filter(
           (o) =>
             o.data_hora_finalizacao &&
             o.data_hora_finalizacao.slice(0, 10) === hoje,
         ).length,
-        com_finalizacao: data.filter((o) => o.data_hora_finalizacao !== null)
+        com_finalizacao: ocorrencias.filter((o) => o.data_hora_finalizacao !== null)
           .length,
         // 🔥 NOVO: Estatísticas de assinaturas
-        com_assinaturas: data.filter(
-          (o) => o.assinaturas && o.assinaturas.length > 0,
+        com_assinaturas: assinaturasPorOcorrencia.filter(
+          (assinaturas) => assinaturas.length > 0,
         ).length,
         total_assinaturas: totalAssinaturas,
         assinaturas_com_envolvido: assinaturasComEnvolvido,

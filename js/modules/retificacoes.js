@@ -43,6 +43,7 @@ const TIPOS_OCORRENCIA = [
   { value: "incendio", label: "Incêndio" },
   { value: "desaparecimento", label: "Desaparecimento" },
   { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "flagrante", label: "Flagrante" },
   { value: "outro", label: "Outro" },
 ];
 
@@ -559,12 +560,12 @@ function renderizarLista(container, appInstance) {
 
       <!-- 🔥 NOVO: Abas: Pendentes | Histórico -->
       <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
-        <button onclick="window._retificacoesMudarAba('pendentes')" id="tabPendentes" class="tab-btn"
+        <button onclick="window._retificacoesMudarAba('pendentes')" id="tabPendentes" class="tab-btn" 
           style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "pendentes" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "pendentes" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
           <i class="fas fa-clock"></i> Pendentes
           <span style="background:var(--aviso);color:white;border-radius:9999px;padding:0 8px;font-size:10px;margin-left:4px;">${retificacoes.filter((r) => r._status_retificacao === "pending").length}</span>
         </button>
-        <button onclick="window._retificacoesMudarAba('historico')" id="tabHistorico" class="tab-btn"
+        <button onclick="window._retificacoesMudarAba('historico')" id="tabHistorico" class="tab-btn" 
           style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "historico" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "historico" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
           <i class="fas fa-history"></i> Histórico
         </button>
@@ -834,7 +835,7 @@ function renderRetificacaoItem(ret, appInstance) {
           <details style="cursor:pointer;">
             <summary style="font-size:13px;font-weight:600;color:var(--azul-bandeira);">
               <i class="fas fa-edit"></i> 
-              ${camposAlterados.length} campo(s) alterado(s)
+              ${camposAlterados.length} campo(s) alterado(s) 
               <span style="font-size:11px;color:var(--cinza-medio);font-weight:400;">(clique para expandir)</span>
             </summary>
             <div style="margin-top:6px;padding:8px;background:var(--branco-fumaca);border-radius:var(--border-radius);">
@@ -869,15 +870,15 @@ function renderRetificacaoItem(ret, appInstance) {
         isPendente
           ? `
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-          <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}', '${ret._tipo_retificacao}')"
+          <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}', '${ret._tipo_retificacao}')" 
             style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
             <i class="fas fa-check"></i> Aprovar
           </button>
-          <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}', '${ret._tipo_retificacao}')"
+          <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}', '${ret._tipo_retificacao}')" 
             style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
             <i class="fas fa-times"></i> Rejeitar
           </button>
-          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')"
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')" 
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
             <i class="fas fa-eye"></i> Ver completa
           </button>
@@ -885,11 +886,11 @@ function renderRetificacaoItem(ret, appInstance) {
       `
           : `
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')"
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')" 
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);flex:1;">
             <i class="fas fa-eye"></i> Ver detalhes
           </button>
-          <button class="btn-secondary" onclick="window._retificacoesExportarDetalhe('${ret.id}', '${ret._tipo_retificacao}')"
+          <button class="btn-secondary" onclick="window._retificacoesExportarDetalhe('${ret.id}', '${ret._tipo_retificacao}')" 
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--verde-muito-claro);color:var(--verde-escuro);flex:1;">
             <i class="fas fa-file-pdf"></i> PDF
           </button>

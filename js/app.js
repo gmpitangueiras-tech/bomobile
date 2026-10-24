@@ -152,6 +152,7 @@ class App {
       { value: "incendio", label: "Incêndio" },
       { value: "desaparecimento", label: "Desaparecimento" },
       { value: "atendimento_social", label: "Atendimento Social" },
+      { value: "flagrante", label: "Flagrante" },
       { value: "outro", label: "Outro" },
     ];
 
@@ -236,11 +237,18 @@ class App {
 
     // Carregar tipos de ocorrência do cache
     const tiposCache = utils.getCachedData(CACHE_KEYS.TIPOS_OCORRENCIA);
-    if (tiposCache) {
-      this.TIPOS_OCORRENCIA = tiposCache;
+    if (Array.isArray(tiposCache)) {
+      const tiposAtualizados = tiposCache.map((tipo) =>
+        tipo?.value === "flagrante" ? { ...tipo, label: "Flagrante" } : tipo,
+      );
+      if (!tiposAtualizados.some((tipo) => tipo?.value === "flagrante")) {
+        tiposAtualizados.push({ value: "flagrante", label: "Flagrante" });
+      }
+      this.TIPOS_OCORRENCIA = tiposAtualizados;
+      utils.setCachedData(CACHE_KEYS.TIPOS_OCORRENCIA, tiposAtualizados);
       console.log("✅ Tipos de ocorrência carregados do cache");
     } else {
-      // Salvar no cache para uso futuro
+      // Salvar no cache para uso futuro; não altera outros dados locais.
       utils.setCachedData(CACHE_KEYS.TIPOS_OCORRENCIA, this.TIPOS_OCORRENCIA);
     }
   }
@@ -440,8 +448,27 @@ class App {
   }
 
   updateBottomNav(page) {
-    document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
-      item.classList.toggle("active", item.dataset.page === page);
+    const sectionByPage = {
+      dashboard: "home",
+      ocorrencias: "occurrences",
+      "nova-ocorrencia": "occurrences",
+      "detalhe-ocorrencia": "occurrences",
+      consulta: "approaches",
+      "retificacoes": "more",
+      "retificacoes-abordagens": "more",
+      mural: "more",
+      notificacoes: "more",
+      relatorios: "more",
+      logs: "more",
+      usuarios: "more",
+      perfil: "more",
+    };
+    const activeSection = sectionByPage[page] || "home";
+    document.querySelectorAll(".nav-item[data-nav-section]").forEach((item) => {
+      const isActive = item.dataset.navSection === activeSection;
+      item.classList.toggle("active", isActive);
+      if (isActive) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
     });
   }
 
@@ -633,6 +660,9 @@ class App {
           data_hora_encerramento: data.data_hora_encerramento || "",
           tipo_ocorrencia: data.tipo_ocorrencia || "",
           envolvidos: [],
+          envolvidosMap: {},
+          guardasParticipantes: [],
+          assinaturas: Array.isArray(data.assinaturas) ? data.assinaturas : (typeof data.assinaturas === "string" ? (() => { try { const value = JSON.parse(data.assinaturas); return Array.isArray(value) ? value : []; } catch (e) { return []; } })() : []),
           observacoes: data.observacoes || "",
           anexos: [],
         };
@@ -641,6 +671,7 @@ class App {
         const envResult = await ocorrenciaManager.listarEnvolvidos(data.id);
         if (envResult.success) {
           this.dadosRascunho.envolvidos = envResult.data;
+          this.dadosRascunho.envolvidosMap = (envResult.data || []).reduce((map, env) => { map[env.id] = env; return map; }, {});
         }
 
         // Carregar anexos
@@ -653,6 +684,18 @@ class App {
             url: a.url,
           }));
         }
+
+        const guardasResult = await ocorrenciaManager.listarGuardas(data.id);
+        if (guardasResult.success) this.dadosRascunho.guardasParticipantes = guardasResult.data || [];
+        const idsEnvolvidos = new Set(this.dadosRascunho.envolvidos.map((env) => env.id));
+        const digitos = (valor) => String(valor || "").replace(/\D/g, "");
+        this.dadosRascunho.assinaturas = (this.dadosRascunho.assinaturas || []).map((assinatura) => {
+          if (!assinatura || idsEnvolvidos.has(assinatura.envolvido_id)) return assinatura;
+          const nome = String(assinatura.nome || "").trim().toLocaleLowerCase("pt-BR");
+          const cpf = digitos(assinatura.cpf);
+          const correspondentes = this.dadosRascunho.envolvidos.filter((env) => cpf ? digitos(env.cpf) === cpf : (!env.cpf && String(env.nome_completo || "").trim().toLocaleLowerCase("pt-BR") === nome));
+          return correspondentes.length === 1 ? { ...assinatura, envolvido_id: correspondentes[0].id } : assinatura;
+        });
 
         console.log("📂 Rascunho carregado:", this.rascunhoId);
         this.alteracoesNaoSalvas = true;
@@ -671,174 +714,116 @@ class App {
       const dados = this.novaOcorrencia?.dados;
       if (!dados) {
         this.showToast("Nenhum dado para salvar como rascunho", "warning");
-        return;
+        return false;
       }
 
-      // Verificar se há dados relevantes
-      const camposPreenchidos = Object.keys(dados).filter((key) => {
+      const envolvidos = Array.isArray(dados.envolvidos) ? dados.envolvidos : [];
+      const anexos = Array.isArray(dados.anexos) ? dados.anexos : [];
+      const equipe = Array.isArray(dados.guardasParticipantes) ? dados.guardasParticipantes : [];
+      const assinaturas = Array.isArray(dados.assinaturas) ? dados.assinaturas : [];
+      const camposIgnorados = ["data_hora_inicio", "data_hora_encerramento", "codigo_operacional", "tipo_ocorrencia", "envolvidos", "anexos", "guardasParticipantes", "assinaturas", "envolvidosMap", "modo_criacao", "data_hora_finalizacao"];
+      const temDadosRelevantes = Object.keys(dados).some((key) => {
+        if (camposIgnorados.includes(key)) return false;
         const valor = dados[key];
-        if (key === "envolvidos" || key === "anexos") {
-          return valor && valor.length > 0;
-        }
-        return valor && (typeof valor !== "string" || valor.trim() !== "");
+        return typeof valor === "string" ? valor.trim() !== "" : valor != null && valor !== false;
       });
-
-      const camposIgnorados = [
-        "data_hora_inicio",
-        "data_hora_encerramento",
-        "codigo_operacional",
-        "tipo_ocorrencia",
-      ];
-      const temDadosRelevantes = camposPreenchidos.some(
-        (key) => !camposIgnorados.includes(key),
-      );
-
-      if (
-        !temDadosRelevantes &&
-        dados.envolvidos.length === 0 &&
-        dados.anexos.length === 0
-      ) {
+      if (!temDadosRelevantes && envolvidos.length === 0 && anexos.length === 0 && equipe.length === 0 && assinaturas.length === 0) {
         this.showToast("Não há dados para salvar como rascunho", "warning");
-        return;
+        return false;
       }
 
       const user = authManager.getUser();
       if (!user) {
         this.showToast("Usuário não autenticado", "error");
-        return;
+        return false;
       }
-
       const client = supabaseClient.getClient();
       if (!client) {
         this.showToast("Erro ao conectar ao servidor", "error");
-        return;
+        return false;
       }
 
-      // Preparar dados para salvar
       const dadosParaSalvar = { ...dados };
       delete dadosParaSalvar.envolvidos;
       delete dadosParaSalvar.anexos;
+      delete dadosParaSalvar.guardasParticipantes;
+      delete dadosParaSalvar.envolvidosMap;
+      delete dadosParaSalvar.assinaturas_objeto;
 
-      // 🔥 CORRIGIDO: Usar o valor do dispositivo SEM ajuste de fuso
+      const normalizarDataLocal = async (valor) => {
+        if (!valor) return null;
+        try {
+          const dateObj = new Date(valor);
+          if (!isNaN(dateObj.getTime())) {
+            const year = dateObj.getFullYear();
+            const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+            const day = String(dateObj.getDate()).padStart(2, "0");
+            const hours = String(dateObj.getHours()).padStart(2, "0");
+            const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+            const seconds = String(dateObj.getSeconds()).padStart(2, "0");
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+          }
+        } catch (e) {}
+        return null;
+      };
       if (dadosParaSalvar.data_hora_inicio) {
-        try {
-          const dateObj = new Date(dadosParaSalvar.data_hora_inicio);
-          if (!isNaN(dateObj.getTime())) {
-            // ✅ Mantém a data exata do dispositivo, sem conversão para UTC
-            // Constrói a string ISO manualmente com o horário local
-            const year = dateObj.getFullYear();
-            const month = String(dateObj.getMonth() + 1).padStart(2, "0");
-            const day = String(dateObj.getDate()).padStart(2, "0");
-            const hours = String(dateObj.getHours()).padStart(2, "0");
-            const minutes = String(dateObj.getMinutes()).padStart(2, "0");
-            const seconds = String(dateObj.getSeconds()).padStart(2, "0");
-            dadosParaSalvar.data_hora_inicio = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-          } else {
-            // Se a data for inválida, usa a função do utils (que também é segura)
-            const agora = await utils.obterDataHoraInput();
-            dadosParaSalvar.data_hora_inicio = agora;
-          }
-        } catch (e) {
-          // Se houver erro, usa a função do utils
-          const agora = await utils.obterDataHoraInput();
-          dadosParaSalvar.data_hora_inicio = agora;
-        }
+        dadosParaSalvar.data_hora_inicio = await normalizarDataLocal(dadosParaSalvar.data_hora_inicio) || await utils.obterDataHoraInput();
       }
+      dadosParaSalvar.data_hora_encerramento = await normalizarDataLocal(dadosParaSalvar.data_hora_encerramento);
 
-      if (dadosParaSalvar.data_hora_encerramento) {
-        try {
-          const dateObj = new Date(dadosParaSalvar.data_hora_encerramento);
-          if (!isNaN(dateObj.getTime())) {
-            // ✅ Mesma correção para encerramento
-            const year = dateObj.getFullYear();
-            const month = String(dateObj.getMonth() + 1).padStart(2, "0");
-            const day = String(dateObj.getDate()).padStart(2, "0");
-            const hours = String(dateObj.getHours()).padStart(2, "0");
-            const minutes = String(dateObj.getMinutes()).padStart(2, "0");
-            const seconds = String(dateObj.getSeconds()).padStart(2, "0");
-            dadosParaSalvar.data_hora_encerramento = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-          } else {
-            dadosParaSalvar.data_hora_encerramento = null;
-          }
-        } catch (e) {
-          dadosParaSalvar.data_hora_encerramento = null;
-        }
-      } else {
-        dadosParaSalvar.data_hora_encerramento = null;
-      }
-
+      const agora = new Date().toISOString();
       const ocorrencia = {
         ...dadosParaSalvar,
+        modo_criacao: dados.modo_criacao || "completo",
         status: "draft",
         criado_por: user.id,
-        criado_em: new Date().toISOString(),
-        atualizado_em: new Date().toISOString(),
-        numero_versao: 1,
+        atualizado_em: agora,
         esta_ativa: true,
       };
+      if (!this.rascunhoId) {
+        ocorrencia.criado_em = agora;
+        ocorrencia.numero_versao = 1;
+      }
 
-      let result;
       if (this.rascunhoId) {
-        const { data, error } = await client
-          .from("ocorrencias")
-          .update(ocorrencia)
-          .eq("id", this.rascunhoId)
-          .select()
-          .single();
+        const { error } = await client.from("ocorrencias").update(ocorrencia).eq("id", this.rascunhoId).select().single();
         if (error) throw error;
-        result = { data };
       } else {
-        const { data, error } = await client
-          .from("ocorrencias")
-          .insert([ocorrencia])
-          .select()
-          .single();
+        const { data, error } = await client.from("ocorrencias").insert([ocorrencia]).select().single();
         if (error) throw error;
         this.rascunhoId = data.id;
-        result = { data };
       }
 
-      // Salvar envolvidos
-      if (dados.envolvidos && dados.envolvidos.length > 0) {
-        await client
-          .from("envolvidos")
-          .delete()
-          .eq("ocorrencia_id", this.rascunhoId);
-        const envResult = await ocorrenciaManager.salvarEnvolvidos(
-          this.rascunhoId,
-          dados.envolvidos,
-        );
-        if (!envResult.success) {
-          console.warn(
-            "Erro ao salvar envolvidos do rascunho:",
-            envResult.error,
-          );
-        }
+      const { error: erroExcluirEnvolvidos } = await client.from("envolvidos").delete().eq("ocorrencia_id", this.rascunhoId);
+      if (erroExcluirEnvolvidos) throw erroExcluirEnvolvidos;
+      if (envolvidos.length > 0) {
+        const resultadoEnvolvidos = await ocorrenciaManager.salvarEnvolvidos(this.rascunhoId, envolvidos, true);
+        if (!resultadoEnvolvidos.success) throw new Error(resultadoEnvolvidos.error || "Falha ao salvar envolvidos");
       }
 
-      // Salvar anexos
-      if (dados.anexos && dados.anexos.length > 0) {
-        await client
-          .from("anexos")
-          .delete()
-          .eq("ocorrencia_id", this.rascunhoId);
-        const anexoResult = await ocorrenciaManager.salvarAnexos(
-          this.rascunhoId,
-          dados.anexos,
-        );
-        if (!anexoResult.success) {
-          console.warn("Erro ao salvar anexos do rascunho:", anexoResult.error);
-        }
+      if (equipe.length > 0) {
+        const resultadoEquipe = await ocorrenciaManager.salvarGuardas(this.rascunhoId, equipe);
+        if (!resultadoEquipe.success) throw new Error(resultadoEquipe.error || "Falha ao salvar equipe operacional");
+      }
+
+      const { error: erroExcluirAnexos } = await client.from("anexos").delete().eq("ocorrencia_id", this.rascunhoId);
+      if (erroExcluirAnexos) throw erroExcluirAnexos;
+      if (anexos.length > 0) {
+        const resultadoAnexos = await ocorrenciaManager.salvarAnexos(this.rascunhoId, anexos);
+        if (!resultadoAnexos.success) throw new Error(resultadoAnexos.error || "Falha ao salvar anexos");
       }
 
       this.alteracoesNaoSalvas = false;
       this.showToast("Rascunho salvo com sucesso!", "success");
       console.log("✅ Rascunho salvo:", this.rascunhoId);
+      return true;
     } catch (error) {
       console.error("❌ Erro ao salvar rascunho:", error);
       this.showToast("Erro ao salvar rascunho: " + error.message, "error");
+      return false;
     }
   }
+
 
   async descartarRascunho() {
     try {
@@ -951,8 +936,10 @@ class App {
     if (!user) return;
 
     const userNameEl = document.getElementById("userName");
+    const apelido = String(user.apelido || "").trim().replace(/^GM\s+/i, "").replace(/\s+/g, " ");
+    const nomeExibido = apelido ? `GM ${apelido}` : (user.nome_completo || "Guarda");
     if (userNameEl) {
-      userNameEl.textContent = user.nome_completo || "Guarda";
+      userNameEl.textContent = nomeExibido;
     }
 
     const userMatriculaEl = document.getElementById("userMatricula");
@@ -964,8 +951,12 @@ class App {
 
     const userAvatarEl = document.getElementById("userAvatar");
     if (userAvatarEl) {
-      const inicial = user.nome_completo?.charAt(0) || "G";
-      userAvatarEl.innerHTML = `<span style="font-weight:700;font-size:16px;">${inicial.toUpperCase()}</span>`;
+      const inicial = (apelido || user.nome_completo || "G").trim().charAt(0).toLocaleUpperCase("pt-BR");
+      const initialsEl = document.createElement("span");
+      initialsEl.style.fontWeight = "700";
+      initialsEl.style.fontSize = "16px";
+      initialsEl.textContent = inicial;
+      userAvatarEl.replaceChildren(initialsEl);
     }
   }
 
@@ -1315,9 +1306,11 @@ class App {
         if (input.type === "password") {
           input.type = "text";
           icon.className = "fas fa-eye-slash";
+          toggleBtn.setAttribute("aria-label", "Ocultar senha");
         } else {
           input.type = "password";
           icon.className = "fas fa-eye";
+          toggleBtn.setAttribute("aria-label", "Mostrar senha");
         }
       });
     }

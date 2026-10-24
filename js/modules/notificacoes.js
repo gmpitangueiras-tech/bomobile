@@ -319,7 +319,9 @@ class Notificacoes {
         ocorrencia.numero_ocorrencia ||
         ocorrencia.numero_temporario ||
         "Rascunho";
-      const tipo = ocorrencia.tipo_ocorrencia || "Sem tipo";
+      const tipo = ocorrencia.tipo_ocorrencia === "flagrante"
+        ? "Flagrante"
+        : ocorrencia.tipo_ocorrencia || "Sem tipo";
 
       // Criar notificações para todos os guardas
       const notificacoes = usuarios.map((u) => ({
@@ -962,8 +964,8 @@ class Notificacoes {
 
       registration.showNotification(titulo, {
         body: mensagem,
-        icon: new URL("assets/icons/icon-192x192.png", document.baseURI).href,
-        badge: new URL("assets/icons/favicon-32x32.png", document.baseURI).href,
+        icon: "/assets/icons/icon-192x192.png",
+        badge: "/assets/icons/icon-192x192.png",
         vibrate: [200, 100, 200],
         data: {
           date: new Date().toISOString(),

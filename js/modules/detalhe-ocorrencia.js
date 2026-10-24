@@ -34,6 +34,7 @@ const TIPOS_OCORRENCIA = [
   { value: "incendio", label: "Incêndio" },
   { value: "desaparecimento", label: "Desaparecimento" },
   { value: "atendimento_social", label: "Atendimento Social" },
+  { value: "flagrante", label: "Flagrante" },
   { value: "outro", label: "Outro" },
 ];
 
@@ -59,6 +60,7 @@ const TIPO_CORES = {
   acidente: "badge-tipo-acidente",
   desaparecimento: "badge-tipo-desaparecimento",
   atendimento_social: "badge-tipo-atendimento_social",
+  flagrante: "badge-tipo-flagrante",
   outro: "badge-tipo-outro",
 };
 
@@ -116,6 +118,9 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     return;
   }
 
+  // Iniciar cada novo acesso no resumo; a aba escolhida não vaza para outro BO.
+  estado.abaAtiva = "detalhes";
+
   // Mostrar loader
   container.innerHTML = renderLoader();
 
@@ -145,7 +150,7 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     // 🔥 NOVO: Buscar assinaturas (separadas dos anexos)
     const assinaturasResult = await ocorrenciaManager.listarAssinaturas(id);
     estado.assinaturas = assinaturasResult.success
-      ? assinaturasResult.data
+      ? normalizarListaAssinaturas(assinaturasResult.data)
       : [];
 
     // 🔥 FILTRAR: Processar imagens apenas dos anexos reais (sem assinaturas)
@@ -249,132 +254,96 @@ function renderizarDetalhe(container, appInstance) {
     return;
   }
 
-  const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
+  const numero = escapeDetalheHTML(occ.numero_ocorrencia || occ.numero_temporario || "Rascunho");
   const statusClass = getStatusClass(occ.status);
-  const statusLabel = getStatusLabel(occ.status);
-  const statusIcon = STATUS_ICONS[occ.status] || "📌";
-  const tipoLabel = getTipoLabel(occ.tipo_ocorrencia);
+  const statusLabel = escapeDetalheHTML(getStatusLabel(occ.status));
+  const tipoLabel = escapeDetalheHTML(getTipoLabel(occ.tipo_ocorrencia));
   const tipoClass = TIPO_CORES[occ.tipo_ocorrencia] || "badge-tipo-outro";
-  const dataCriacao = formatarDataHoraLocal(occ.criado_em);
-  const dataInicio = occ.data_hora_inicio
-    ? formatarDataHoraLocal(occ.data_hora_inicio)
-    : "Não informado";
-  const dataEncerramento = occ.data_hora_encerramento
-    ? formatarDataHoraLocal(occ.data_hora_encerramento)
-    : "Não encerrado";
-  const cpfExibido = formatarCPFSeguro(estado.criadorCPF);
-
-  const coords =
-    occ.latitude && occ.longitude
-      ? `${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}`
-      : "Localização não disponível";
-
+  const dataCriacao = formatarDataHoraLocal(occ.criado_em) || "Não informada";
+  const dataInicio = occ.data_hora_inicio ? formatarDataHoraLocal(occ.data_hora_inicio) : "Não informada";
+  const dataEncerramento = occ.data_hora_encerramento ? formatarDataHoraLocal(occ.data_hora_encerramento) : "";
+  const local = escapeDetalheHTML(occ.local_ocorrencia || "Local não informado");
+  const bairro = escapeDetalheHTML(occ.bairro_ocorrencia || "");
+  const gravidade = escapeDetalheHTML(occ.gravidade || "");
+  const nomeGuarda = escapeDetalheHTML(estado.criadorNome || "Não identificado");
+  const coords = occ.latitude !== null && occ.latitude !== undefined && occ.longitude !== null && occ.longitude !== undefined
+    ? `${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}`
+    : "";
   const isSupervisor = authManager.isSupervisor();
   const isDraft = occ.status === "draft";
   const isPending = occ.status === "pending_rectification";
   const isSynced = occ.status === "synced";
   const isCancelled = occ.status === "cancelled";
-
-  // Verificar permissões
   const podeEditar = authManager.podeEditar(occ);
   const podeFinalizar = authManager.podeFinalizar(occ);
   const podeCancelar = authManager.podeCancelar(occ);
   const podeRetificar = authManager.podeSolicitarRetificacao(occ);
-
-  const temImagens = estado.imagensGaleria.length > 0;
-  const totalAnexos = estado.anexos.filter(
-    (a) => a.tipo !== "assinatura",
-  ).length;
+  const totalAnexos = estado.anexos.filter((a) => a.tipo !== "assinatura").length;
+  estado.assinaturas = normalizarListaAssinaturas(estado.assinaturas);
   const totalAssinaturas = estado.assinaturas.length;
+  const isRapido = occ.modo_criacao === "rapido";
 
-  let html = `
-  <div class="container" style="padding-bottom:100px;" id="detalheContainer">
-    <!-- Cabeçalho: Voltar + Status -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <button onclick="window._detalheVoltar()" 
-        style="background:none;border:none;color:var(--azul-bandeira);font-size:15px;cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:4px;font-weight:600;">
-        <i class="fas fa-arrow-left" style="font-size:14px;"></i> Voltar
-      </button>
-      <span class="badge badge-${statusClass}" style="font-size:12px;padding:6px 16px;font-weight:700;border-radius:30px;display:flex;align-items:center;gap:4px;">
-        ${statusIcon} ${statusLabel}
-      </span>
-    </div>
+  container.innerHTML = `
+    <div class="container bo-detail-page" id="detalheContainer" data-active-tab="${escapeDetalheHTML(estado.abaAtiva)}">
+      <header class="bo-detail-backline">
+        <button type="button" class="bo-detail-back" onclick="window._detalheVoltar()">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i><span>Voltar às ocorrências</span>
+        </button>
+        <span class="bo-detail-backline__label">DETALHES DO BO</span>
+      </header>
 
-    <!-- Card do cabeçalho principal -->
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px 16px;box-shadow:var(--sombra-media);margin-bottom:12px;">
-      <!-- Linha 1: Número + Tipo + Versão -->
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-        <span style="font-weight:800;font-size:20px;color:var(--azul-bandeira);letter-spacing:-0.5px;">
-          #${numero}
-        </span>
-        <span class="badge ${tipoClass}" style="font-size:10px;padding:2px 12px;font-weight:700;">
-          ${tipoLabel}
-        </span>
-        ${occ.numero_versao > 1 ? `<span class="badge badge-rectified" style="font-size:9px;padding:1px 8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">v${occ.numero_versao}</span>` : ""}
-      </div>
-
-      <!-- Linha 2: Guarda e CPF -->
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;color:var(--cinza-escuro);padding:4px 0;border-top:1px solid var(--cinza-claro);">
-        <i class="fas fa-user-circle" style="color:var(--azul-bandeira);font-size:16px;"></i>
-        <span style="font-weight:600;">${estado.criadorNome}</span>
-        <span style="color:var(--cinza-medio);">·</span>
-        <span style="color:var(--cinza-medio);font-size:13px;">${cpfExibido}</span>
-      </div>
-
-      <!-- Linha 3: Localização e Data -->
-      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--cinza-medio);padding:3px 0;border-top:1px solid var(--cinza-claro);">
-        <div style="display:flex;align-items:center;gap:4px;">
-          <i class="fas fa-map-pin" style="color:var(--verde-bandeira);font-size:12px;"></i>
-          <span>${coords}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <i class="fas fa-calendar" style="color:var(--azul-bandeira);font-size:12px;"></i>
-          <span>${dataCriacao}</span>
-        </div>
-        ${
-          occ.data_hora_encerramento
-            ? `
-          <div style="display:flex;align-items:center;gap:4px;">
-            <i class="fas fa-check-circle" style="color:var(--verde-bandeira);font-size:12px;"></i>
-            <span>Encerrado: ${dataEncerramento}</span>
+      <section class="bo-detail-summary" aria-labelledby="boDetailTitle">
+        <div class="bo-detail-summary__heading">
+          <div class="bo-detail-summary__identity">
+            <span class="bo-detail-eyebrow">BOLETIM DE OCORRÊNCIA</span>
+            <h1 id="boDetailTitle">BO #${numero}</h1>
+            <div class="bo-detail-summary__badges">
+              <span class="badge ${tipoClass} bo-detail-summary__type">${tipoLabel}</span>
+              <span class="badge badge-${statusClass} bo-detail-summary__status">${statusLabel}</span>
+              ${isRapido ? `<span class="bo-detail-mode"><i class="fas fa-bolt" aria-hidden="true"></i> Modo rápido</span>` : occ.modo_criacao === "completo" ? `<span class="bo-detail-mode bo-detail-mode--complete"><i class="fas fa-clipboard-list" aria-hidden="true"></i> Modo completo</span>` : ""}
+              ${occ.numero_versao > 1 ? `<span class="bo-detail-version">Versão ${escapeDetalheHTML(occ.numero_versao)}</span>` : ""}
+            </div>
           </div>
-        `
-            : ""
-        }
-      </div>
-
-      <!-- Linha 4: Hash de integridade (se houver) -->
-      ${
-        occ.hash_pericial
-          ? `
-        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--verde-bandeira);padding:3px 0;border-top:1px solid var(--cinza-claro);font-family:monospace;">
-          <i class="fas fa-fingerprint" style="font-size:11px;"></i>
-          <span>Hash: ${occ.hash_pericial.substring(0, 16)}...</span>
-          <span style="font-size:9px;color:var(--cinza-medio);font-weight:400;cursor:help;" title="Hash SHA-256 de integridade">🔒</span>
+          <div class="bo-detail-summary__stamp" aria-hidden="true"><i class="fas fa-file-alt"></i></div>
         </div>
-      `
-          : ""
-      }
-    </div>
 
-    <!-- Abas -->
-    <div style="display:flex;gap:2px;margin-bottom:14px;background:var(--branco);border-radius:var(--border-radius);padding:4px;box-shadow:var(--sombra-suave);overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;">
-      ${renderAbas(totalAnexos, totalAssinaturas)}
-    </div>
+        <div class="bo-detail-summary__facts">
+          <div class="bo-detail-fact bo-detail-fact--time">
+            <span><i class="fas fa-clock" aria-hidden="true"></i> Data e hora do fato</span>
+            <strong>${escapeDetalheHTML(dataInicio)}</strong>
+          </div>
+          <div class="bo-detail-fact bo-detail-fact--location">
+            <span><i class="fas fa-map-marker-alt" aria-hidden="true"></i> Local do fato</span>
+            <strong>${local}</strong>
+            ${bairro ? `<small>${bairro}</small>` : ""}
+          </div>
+          ${gravidade ? `<div class="bo-detail-fact"><span><i class="fas fa-triangle-exclamation" aria-hidden="true"></i> Gravidade</span><strong>${gravidade}</strong></div>` : ""}
+        </div>
 
-    <!-- Conteúdo da aba ativa -->
-    <div id="abaConteudo">
-      ${renderConteudoAba(appInstance)}
-    </div>
+        <div class="bo-detail-summary__context">
+          <span><i class="fas fa-user-shield" aria-hidden="true"></i><strong>${nomeGuarda}</strong><small>Responsável pelo registro</small></span>
+          <span><i class="fas fa-calendar-plus" aria-hidden="true"></i><strong>${escapeDetalheHTML(dataCriacao)}</strong><small>Data do cadastro</small></span>
+          ${dataEncerramento ? `<span><i class="fas fa-check-circle" aria-hidden="true"></i><strong>${escapeDetalheHTML(dataEncerramento)}</strong><small>Encerramento</small></span>` : ""}
+        </div>
+      </section>
 
-    <!-- Botões de ação no final -->
-    <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
+      ${isRapido && !occ.completado_em && !isCancelled ? `
+        <aside class="bo-detail-notice" role="status">
+          <i class="fas fa-circle-info" aria-hidden="true"></i>
+          <span><strong>Registro em Modo Rápido.</strong> As informações complementares podem estar pendentes.</span>
+        </aside>` : ""}
+
+      <nav class="bo-detail-tabs" role="tablist" aria-label="Seções do boletim">
+        ${renderAbas(totalAnexos, totalAssinaturas)}
+      </nav>
+
+      <main id="abaConteudo" class="bo-detail-tab-content" role="tabpanel">
+        ${renderConteudoAba(appInstance)}
+      </main>
+
       ${renderBotoesAcao(occ, { podeEditar, podeFinalizar, podeCancelar, podeRetificar, isSupervisor, isDraft, isPending, isSynced, isCancelled }, appInstance)}
     </div>
-  </div>
-`;
-
-  container.innerHTML = html;
+  `;
 }
 
 // ============================================
@@ -383,50 +352,20 @@ function renderizarDetalhe(container, appInstance) {
 
 function renderAbas(totalAnexos, totalAssinaturas) {
   const aba = estado.abaAtiva;
-
   const abas = [
-    { id: "detalhes", label: "Detalhes", icon: "fa-file-alt" },
+    { id: "detalhes", label: "Resumo", icon: "fa-file-alt" },
     { id: "anexos", label: `Anexos (${totalAnexos})`, icon: "fa-paperclip" },
-    // 🔥 NOVO: Aba de Assinaturas
-    {
-      id: "assinaturas",
-      label: `Assinaturas (${totalAssinaturas})`,
-      icon: "fa-pen-fancy",
-    },
+    { id: "assinaturas", label: `Assinaturas (${totalAssinaturas})`, icon: "fa-pen-fancy" },
     { id: "historico", label: "Histórico", icon: "fa-history" },
-    { id: "pdf", label: "Gerar PDF", icon: "fa-file-pdf" },
+    { id: "pdf", label: "PDF", icon: "fa-file-pdf" },
   ];
 
-  return abas
-    .map(
-      (a) => `
-      <button onclick="window._detalheMudarAba('${a.id}')" 
-        class="aba-btn"
-        style="
-          flex:1;
-          padding:8px 4px;
-          border:none;
-          border-radius:var(--border-radius);
-          font-size:11px;
-          font-weight:${aba === a.id ? "700" : "500"};
-          cursor:pointer;
-          transition:all 0.2s ease;
-          background:${aba === a.id ? "var(--azul-bandeira)" : "transparent"};
-          color:${aba === a.id ? "var(--branco)" : "var(--cinza-medio)"};
-          white-space:nowrap;
-          min-height:36px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          gap:4px;
-        "
-      >
-        <i class="fas ${a.icon}" style="font-size:12px;"></i>
-        <span>${a.label}</span>
-      </button>
-    `,
-    )
-    .join("");
+  return abas.map((a) => `
+    <button type="button" role="tab" aria-selected="${aba === a.id}" aria-controls="abaConteudo"
+      onclick="window._detalheMudarAba('${a.id}')" class="aba-btn${aba === a.id ? " is-active" : ""}">
+      <i class="fas ${a.icon}" aria-hidden="true"></i><span>${a.label}</span>
+    </button>
+  `).join("");
 }
 
 // ============================================
@@ -455,332 +394,203 @@ function renderConteudoAba(appInstance) {
 // ============================================
 
 function renderBotoesAcao(occ, perms, appInstance) {
-  const {
-    podeEditar,
-    podeFinalizar,
-    podeCancelar,
-    podeRetificar,
-    isSupervisor,
-    isDraft,
-    isPending,
-    isSynced,
-    isCancelled,
-  } = perms;
+  const { podeEditar, podeFinalizar, podeCancelar, podeRetificar, isSupervisor, isDraft, isPending, isSynced, isCancelled } = perms;
+  const principais = [];
+  const secundarias = [];
 
-  const botoes = [];
-
-  // Editar (apenas rascunho)
   if (isDraft && podeEditar) {
-    botoes.push({
-      label: "EDITAR OCORRÊNCIA",
-      icon: "fa-edit",
-      class: "btn-primary",
-      action: "window._detalheEditar()",
-    });
+    const label = occ.modo_criacao === "rapido" && !occ.completado_em ? "Continuar BO" : "Editar ocorrência";
+    principais.push({ label, icon: "fa-edit", tone: "primary", action: "window._detalheEditar()" });
   }
-
-  // Finalizar (apenas rascunho)
   if (isDraft && podeFinalizar) {
-    botoes.push({
-      label: "FINALIZAR OCORRÊNCIA",
-      icon: "fa-check-circle",
-      class: "btn-success",
-      action: "window._detalheFinalizar()",
-    });
+    principais.push({ label: "Finalizar BO", icon: "fa-check-circle", tone: "success", action: "window._detalheFinalizar()" });
   }
-
-  // Aprovar/Rejeitar retificação (apenas supervisor)
   if (isPending && isSupervisor) {
-    botoes.push({
-      label: "APROVAR RETIFICAÇÃO",
-      icon: "fa-check",
-      class: "btn-success",
-      action: "window._detalheAprovarRetificacao()",
-    });
-    botoes.push({
-      label: "REJEITAR RETIFICAÇÃO",
-      icon: "fa-times",
-      class: "btn-danger",
-      action: "window._detalheRejeitarRetificacao()",
-    });
+    principais.push({ label: "Aprovar retificação", icon: "fa-check", tone: "success", action: "window._detalheAprovarRetificacao()" });
+    principais.push({ label: "Rejeitar", icon: "fa-times", tone: "danger", action: "window._detalheRejeitarRetificacao()" });
   }
-
-  // Solicitar retificação (apenas finalizada)
   if (isSynced && podeRetificar) {
-    botoes.push({
-      label: "SOLICITAR RETIFICAÇÃO",
-      icon: "fa-sync-alt",
-      class: "btn-primary",
-      action: "window._detalheSolicitarRetificacao()",
-    });
+    principais.push({ label: "Solicitar retificação", icon: "fa-sync-alt", tone: "primary", action: "window._detalheSolicitarRetificacao()" });
   }
 
-  // Cancelar
   if (!isCancelled && podeCancelar) {
-    botoes.push({
-      label: "CANCELAR OCORRÊNCIA",
-      icon: "fa-times-circle",
-      class: "btn-danger",
-      action: "window._detalheCancelar()",
-    });
+    secundarias.push({ label: "Cancelar ocorrência", icon: "fa-times-circle", tone: "danger", action: "window._detalheCancelar()" });
   }
 
-  // Gerar PDF (sempre) - aparece como botão adicional
-  if (botoes.length > 0) {
-    botoes.push({
-      label: "GERAR PDF",
-      icon: "fa-file-pdf",
-      class: "btn-secondary",
-      action: "window._detalheGerarPDF()",
-      style:
-        "background:var(--azul-muito-claro);color:var(--azul-bandeira);border:2px solid var(--azul-bandeira);",
-    });
-  }
+  const botaoPDF = { label: "Gerar PDF", icon: "fa-file-pdf", tone: "secondary", action: "window._detalheGerarPDF()" };
+  if (principais.length === 0) principais.push(botaoPDF);
+  else secundarias.push(botaoPDF);
 
-  if (botoes.length === 0) {
-    return `
-      <div style="padding:12px;background:var(--branco);border-radius:var(--border-radius);box-shadow:var(--sombra-suave);text-align:center;">
-        <p style="color:var(--cinza-medio);font-size:13px;margin:0;">
-          <i class="fas fa-info-circle"></i>
-          Nenhuma ação disponível.
-        </p>
+  return `
+    <section class="bo-detail-actionbar" aria-label="Ações da ocorrência">
+      <div class="bo-detail-actionbar__primary">
+        ${principais.map((btn) => `
+          <button type="button" class="bo-detail-action bo-detail-action--${btn.tone}" onclick="${btn.action}">
+            <i class="fas ${btn.icon}" aria-hidden="true"></i><span>${btn.label}</span>
+          </button>
+        `).join("")}
       </div>
-    `;
-  }
-
-  return botoes
-    .map(
-      (btn) => `
-    <button onclick="${btn.action}" 
-      class="${btn.class}" 
-      style="width:100%;border-radius:12px;min-height:48px;gap:8px;font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:0.5px;${btn.style || ""}">
-      <i class="fas ${btn.icon}" style="font-size:14px;"></i>
-      ${btn.label}
-    </button>
-  `,
-    )
-    .join("");
+      ${secundarias.length ? `
+        <details class="bo-detail-actionbar__more">
+          <summary aria-label="Mais ações" title="Mais ações"><i class="fas fa-ellipsis-v" aria-hidden="true"></i><span>Mais</span></summary>
+          <div class="bo-detail-actionbar__menu">
+            ${secundarias.map((btn) => `
+              <button type="button" class="${btn.tone === "danger" ? "is-danger" : ""}" onclick="${btn.action}">
+                <i class="fas ${btn.icon}" aria-hidden="true"></i><span>${btn.label}</span>
+              </button>
+            `).join("")}
+          </div>
+        </details>` : ""}
+    </section>
+  `;
 }
 
 // ============================================
 // ABA: DETALHES
 // ============================================
 
+function escapeDetalheHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]);
+}
+
+function safeDetalheImageUrl(value) {
+  if (!value) return "";
+  const raw = String(value);
+  if (/^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(raw)) return raw;
+  try {
+    const url = new URL(raw, window.location.href);
+    return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function renderCamposDetalhe(campos) {
+  const preenchidos = campos.filter((campo) => campo.valor !== null && campo.valor !== undefined && String(campo.valor).trim() !== "");
+  if (!preenchidos.length) return `<p class="bo-detail-muted">Nenhum dado complementar informado.</p>`;
+  return `<div class="bo-detail-field-grid">${preenchidos.map((campo) => `
+    <div class="bo-detail-field"><span>${escapeDetalheHTML(campo.label)}</span><strong>${escapeDetalheHTML(campo.valor)}</strong></div>
+  `).join("")}</div>`;
+}
+
 function renderAbaDetalhes(appInstance) {
   const occ = estado.ocorrencia;
   if (!occ) return "";
 
-  // Dados da Solicitação
+  const obs = String(occ.observacoes || "").trim();
+  const dataInicio = occ.data_hora_inicio ? formatarDataHoraLocal(occ.data_hora_inicio) : "";
+  const dataEncerramento = occ.data_hora_encerramento ? formatarDataHoraLocal(occ.data_hora_encerramento) : "";
+  const dataCadastro = occ.criado_em ? formatarDataHoraLocal(occ.criado_em) : "";
+  const coords = occ.latitude !== null && occ.latitude !== undefined && occ.longitude !== null && occ.longitude !== undefined
+    ? `${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}`
+    : "";
+  const anexosReais = estado.anexos.filter((a) => a.tipo !== "assinatura");
+  const imagens = estado.imagensGaleria;
+  const documentos = anexosReais.filter((a) => a.tipo_arquivo !== "image" && a.tipo !== "image");
+
   const camposSolicitacao = [
-    { label: "Forma de Solicitação", valor: occ.forma_solicitacao },
-    { label: "Nome do Solicitante", valor: occ.nome_solicitante || "Anônimo" },
-    {
-      label: "CPF do Solicitante",
-      valor: occ.cpf_solicitante || "Não informado",
-    },
-    {
-      label: "RG do Solicitante",
-      valor: occ.rg_solicitante || "Não informado",
-    },
-    {
-      label: "Telefone do Solicitante",
-      valor: occ.telefone_solicitante || "Não informado",
-    },
-    {
-      label: "Endereço do Solicitante",
-      valor: occ.endereco_solicitante || "Não informado",
-    },
-    {
-      label: "Bairro do Solicitante",
-      valor: occ.bairro_solicitante || "Não informado",
-    },
-    { label: "Complemento", valor: occ.complemento || "Não informado" },
-    {
-      label: "Código Municipal",
-      valor: occ.codigo_municipal || "Não informado",
-    },
-    {
-      label: "Identificação Adicional",
-      valor: occ.identificacao_adicional || "Não informado",
-    },
+    { label: "Forma de solicitação", valor: occ.forma_solicitacao },
+    { label: "Nome do solicitante", valor: occ.nome_solicitante },
+    { label: "CPF do solicitante", valor: occ.cpf_solicitante },
+    { label: "RG do solicitante", valor: occ.rg_solicitante },
+    { label: "Telefone do solicitante", valor: occ.telefone_solicitante },
+    { label: "Endereço do solicitante", valor: occ.endereco_solicitante },
+    { label: "Bairro do solicitante", valor: occ.bairro_solicitante },
+    { label: "Complemento", valor: occ.complemento },
+    { label: "Código municipal", valor: occ.codigo_municipal },
+    { label: "Identificação adicional", valor: occ.identificacao_adicional },
+  ];
+  const camposRegistro = [
+    { label: "Tipo de ocorrência", valor: getTipoLabel(occ.tipo_ocorrencia) },
+    { label: "Local da ocorrência", valor: occ.local_ocorrencia },
+    { label: "Rodovia", valor: occ.rodovia },
+    { label: "Bairro da ocorrência", valor: occ.bairro_ocorrencia },
+    { label: "Ponto de referência", valor: occ.referencia },
+    { label: "Código operacional", valor: occ.codigo_operacional },
+    { label: "Data e hora do fato", valor: dataInicio },
+    { label: "Data e hora do encerramento", valor: dataEncerramento },
+    { label: "Data do cadastro", valor: dataCadastro },
+    { label: "Coordenadas", valor: coords },
   ];
 
-  const camposSolicitacaoPreenchidos = camposSolicitacao.filter(
-    (c) => c.valor && c.valor !== "Não informado" && c.valor !== "Anônimo",
-  );
-
-  // Dados da Ocorrência
-  const dataInicio = occ.data_hora_inicio
-    ? formatarDataHoraLocal(occ.data_hora_inicio)
-    : "Não informado";
-  const dataEncerramento = occ.data_hora_encerramento
-    ? formatarDataHoraLocal(occ.data_hora_encerramento)
-    : "Não encerrado";
-
-  const camposOcorrencia = [
-    {
-      label: "Tipo de Ocorrência",
-      valor: occ.tipo_ocorrencia
-        ? getTipoLabel(occ.tipo_ocorrencia)
-        : "Não informado",
-    },
-    {
-      label: "Local da Ocorrência",
-      valor: occ.local_ocorrencia || "Não informado",
-    },
-    { label: "Rodovia", valor: occ.rodovia || "Não informado" },
-    {
-      label: "Bairro da Ocorrência",
-      valor: occ.bairro_ocorrencia || "Não informado",
-    },
-    { label: "Referência", valor: occ.referencia || "Não informado" },
-    {
-      label: "Código Operacional",
-      valor: occ.codigo_operacional || "Não informado",
-    },
-    { label: "Data/Hora Início", valor: dataInicio },
-    { label: "Data/Hora Encerramento", valor: dataEncerramento },
-  ];
-
-  // Verificar se é retificação
-  let isRetificacao = estado.isRetificacao;
-  let camposAlterados = estado.camposAlterados;
-
-  let html = `
-    <!-- Seção: Dados da Solicitação -->
-    ${
-      camposSolicitacaoPreenchidos.length > 0
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-phone-alt" style="font-size:14px;"></i>
-          Dados da Solicitação
-        </h4>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
-          ${camposSolicitacaoPreenchidos
-            .map(
-              (c) => `
-            <div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);display:flex;flex-direction:column;">
-              <span style="color:var(--cinza-medio);font-size:10px;text-transform:uppercase;letter-spacing:0.3px;">${c.label}</span>
-              <span style="color:var(--cinza-escuro);font-weight:500;word-break:break-word;">${c.valor}</span>
-            </div>
-          `,
-            )
-            .join("")}
+  const envolvidos = estado.envolvidos || [];
+  const htmlEnvolvidos = envolvidos.length ? envolvidos.map((env) => {
+    const tipo = String(env.tipo || "");
+    const dados = [
+      { label: "CPF", valor: env.cpf },
+      { label: "Telefone", valor: env.telefone },
+      { label: "RG", valor: env.rg },
+      { label: "Nascimento", valor: env.data_nascimento ? new Date(env.data_nascimento).toLocaleDateString("pt-BR") : "" },
+    ].filter((item) => item.valor);
+    return `
+      <article class="bo-detail-person" data-role="${escapeDetalheHTML(tipo)}">
+        <div class="bo-detail-person__heading">
+          <span class="bo-detail-person__role">${escapeDetalheHTML(getTipoEnvolvidoLabel(tipo))}</span>
+          <strong>${escapeDetalheHTML(env.nome_completo || "Nome não informado")}</strong>
         </div>
-      </div>
-    `
-        : ""
-    }
+        ${dados.length ? `<div class="bo-detail-person__facts">${dados.map((item) => `<span><small>${escapeDetalheHTML(item.label)}</small>${escapeDetalheHTML(item.valor)}</span>`).join("")}</div>` : ""}
+        ${env.observacoes ? `<p class="bo-detail-person__note">${escapeDetalheHTML(env.observacoes)}</p>` : ""}
+      </article>`;
+  }).join("") : `<div class="bo-detail-empty"><i class="fas fa-user-group" aria-hidden="true"></i><span>Nenhum envolvido informado neste BO.</span></div>`;
 
-    <!-- Seção: Dados da Ocorrência -->
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-      <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-        <i class="fas fa-map-marker-alt" style="font-size:14px;"></i>
-        Dados da Ocorrência
-      </h4>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
-        ${camposOcorrencia
-          .map(
-            (c) => `
-          <div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--cinza-claro);display:flex;flex-direction:column;">
-            <span style="color:var(--cinza-medio);font-size:10px;text-transform:uppercase;letter-spacing:0.3px;">${c.label}</span>
-            <span style="color:var(--cinza-escuro);font-weight:500;word-break:break-word;">${c.valor}</span>
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
+  const htmlImagens = imagens.length ? `
+    <div class="bo-detail-evidence__gallery" aria-label="Prévia das fotos do BO">
+      ${imagens.slice(0, 3).map((img, index) => {
+        const url = safeDetalheImageUrl(img.url_thumb || img.url);
+        return `<button type="button" class="bo-detail-evidence__photo" onclick="window._detalheVerImagem(${index})" aria-label="Abrir foto ${index + 1} de ${imagens.length}">
+          ${url ? `<img src="${escapeDetalheHTML(url)}" alt="Foto ${index + 1} do BO" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false">` : ""}
+          <span class="bo-detail-evidence__placeholder" ${url ? "hidden" : ""}><i class="fas fa-image" aria-hidden="true"></i></span>
+          ${index === 2 && imagens.length > 3 ? `<span class="bo-detail-evidence__overflow">+${imagens.length - 3}</span>` : ""}
+        </button>`;
+      }).join("")}
     </div>
-
-    <!-- Seção: Observações -->
-    ${
-      occ.observacoes && occ.observacoes.trim() !== ""
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-pencil-alt" style="font-size:14px;"></i>
-          Observações
-        </h4>
-        <div style="font-size:13px;color:var(--cinza-escuro);line-height:1.6;white-space:pre-wrap;word-break:break-word;background:var(--branco-fumaca);padding:10px;border-radius:var(--border-radius);">
-          ${occ.observacoes}
-        </div>
-      </div>
-    `
-        : ""
-    }
-
-    <!-- Seção: Envolvidos -->
-    ${
-      estado.envolvidos.length > 0
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
-        <h4 style="color:var(--azul-bandeira);font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-users" style="font-size:14px;"></i>
-          Envolvidos (${estado.envolvidos.length})
-        </h4>
-        ${estado.envolvidos
-          .map(
-            (env) => `
-          <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:10px;margin-bottom:6px;border-left:3px solid ${env.tipo === "autor" ? "var(--erro)" : env.tipo === "vitima" ? "var(--azul-bandeira)" : "var(--verde-bandeira)"};">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-              <span class="badge badge-azul" style="font-size:9px;padding:1px 10px;">${getTipoEnvolvidoLabel(env.tipo)}</span>
-              <span style="font-weight:600;font-size:13px;">${env.nome_completo}</span>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:11px;color:var(--cinza-medio);margin-top:4px;">
-              ${env.cpf ? `<div><span style="color:var(--cinza-medio);">CPF:</span> ${env.cpf}</div>` : ""}
-              ${env.telefone ? `<div><span style="color:var(--cinza-medio);">Tel:</span> ${env.telefone}</div>` : ""}
-              ${env.rg ? `<div><span style="color:var(--cinza-medio);">RG:</span> ${env.rg}</div>` : ""}
-              ${env.data_nascimento ? `<div><span style="color:var(--cinza-medio);">Nasc:</span> ${new Date(env.data_nascimento).toLocaleDateString("pt-BR")}</div>` : ""}
-            </div>
-            ${env.observacoes ? `<div style="font-size:11px;color:var(--cinza-escuro);margin-top:4px;padding-top:4px;border-top:1px solid var(--cinza-claro);">${env.observacoes}</div>` : ""}
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
-    `
-        : ""
-    }
-
-    <!-- Seção: Retificação (se aplicável) -->
-    ${
-      isRetificacao && camposAlterados.length > 0
-        ? `
-      <div style="background:#fef3c7;border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;border-left:4px solid var(--aviso);">
-        <h4 style="color:#92400e;font-size:13px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-sync-alt" style="font-size:14px;"></i>
-          Campos Retificados
-        </h4>
-        ${camposAlterados
-          .map(
-            (campo) => `
-          <div style="display:grid;grid-template-columns:1fr 2fr;gap:4px;padding:4px 0;border-bottom:1px solid #fde68a;font-size:12px;">
-            <div style="font-weight:600;color:#92400e;">${campo.label || campo.campo}</div>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-              <span style="color:var(--cinza-medio);text-decoration:line-through;font-size:11px;">${campo.antes || "(vazio)"}</span>
-              <i class="fas fa-arrow-right" style="color:var(--cinza-medio);font-size:9px;"></i>
-              <span style="color:var(--verde-bandeira);font-weight:500;">${campo.depois || "(vazio)"}</span>
-            </div>
-          </div>
-        `,
-          )
-          .join("")}
-        ${
-          occ.justificativa_retificacao
-            ? `
-          <div style="margin-top:8px;padding:8px 10px;background:var(--branco);border-radius:var(--border-radius);font-size:12px;color:var(--cinza-escuro);">
-            <strong>Justificativa:</strong> ${occ.justificativa_retificacao}
-          </div>
-        `
-            : ""
-        }
-      </div>
-    `
-        : ""
-    }
+    <div class="bo-detail-evidence__actions">
+      <button type="button" onclick="window._detalheVerImagem(0)"><i class="fas fa-expand" aria-hidden="true"></i> Ver todas as fotos (${imagens.length})</button>
+      <button type="button" onclick="window._detalheMudarAba('anexos')"><i class="fas fa-paperclip" aria-hidden="true"></i> Anexos${documentos.length ? ` e documentos (${documentos.length})` : ""}</button>
+    </div>
+  ` : `
+    <div class="bo-detail-empty"><i class="fas fa-paperclip" aria-hidden="true"></i><span>${anexosReais.length ? `${anexosReais.length} anexo(s), sem fotos.` : "Nenhuma evidência anexada."}</span></div>
+    <div class="bo-detail-evidence__actions"><button type="button" onclick="window._detalheMudarAba('anexos')"><i class="fas fa-paperclip" aria-hidden="true"></i> Abrir anexos${documentos.length ? ` (${documentos.length})` : ""}</button></div>
   `;
 
+  let html = `
+    <div class="bo-detail-read-flow">
+      <section class="bo-detail-section bo-detail-narrative" aria-labelledby="boNarrativeTitle">
+        <div class="bo-detail-section__heading"><span class="bo-detail-section__icon"><i class="fas fa-align-left" aria-hidden="true"></i></span><div><h2 id="boNarrativeTitle">Relato da ocorrência</h2><p>Descrição registrada no boletim</p></div></div>
+        ${obs ? `<div class="bo-detail-narrative__text">${escapeDetalheHTML(obs)}</div>` : `<div class="bo-detail-empty"><i class="fas fa-file-lines" aria-hidden="true"></i><span>Não há observações adicionais neste registro.</span></div>`}
+      </section>
+
+      <section class="bo-detail-section" aria-labelledby="boPeopleTitle">
+        <div class="bo-detail-section__heading"><span class="bo-detail-section__icon bo-detail-section__icon--green"><i class="fas fa-users" aria-hidden="true"></i></span><div><h2 id="boPeopleTitle">Pessoas envolvidas <span class="bo-detail-count">${envolvidos.length}</span></h2><p>Identificação por papel na ocorrência</p></div></div>
+        <div class="bo-detail-people">${htmlEnvolvidos}</div>
+      </section>
+
+      <section class="bo-detail-section bo-detail-evidence" aria-labelledby="boEvidenceTitle">
+        <div class="bo-detail-section__heading"><span class="bo-detail-section__icon"><i class="fas fa-images" aria-hidden="true"></i></span><div><h2 id="boEvidenceTitle">Evidências <span class="bo-detail-count">${anexosReais.length}</span></h2><p>${imagens.length} ${imagens.length === 1 ? "foto" : "fotos"}${documentos.length ? ` · ${documentos.length} ${documentos.length === 1 ? "documento" : "documentos"}` : ""}</p></div></div>
+        ${htmlImagens}
+      </section>
+
+      <details class="bo-detail-section bo-detail-complementary">
+        <summary><span class="bo-detail-section__icon"><i class="fas fa-list-check" aria-hidden="true"></i></span><span class="bo-detail-complementary__label"><strong>Dados complementares</strong><small>Solicitação, localização e registro</small></span><i class="fas fa-chevron-down bo-detail-complementary__chevron" aria-hidden="true"></i></summary>
+        <div class="bo-detail-complementary__content">
+          ${camposSolicitacao.some((c) => c.valor !== null && c.valor !== undefined && String(c.valor).trim() !== "") ? `<section><h3>Dados da solicitação</h3>${renderCamposDetalhe(camposSolicitacao)}</section>` : ""}
+          <section><h3>Dados técnicos e de localização</h3>${renderCamposDetalhe(camposRegistro)}</section>
+          ${occ.hash_pericial ? `<section class="bo-detail-integrity"><h3><i class="fas fa-fingerprint" aria-hidden="true"></i> Integridade do registro</h3><code title="Hash SHA-256 completo">SHA-256 · ${escapeDetalheHTML(occ.hash_pericial)}</code></section>` : ""}
+        </div>
+      </details>
+
+      ${estado.isRetificacao && estado.camposAlterados.length ? `
+        <section class="bo-detail-section bo-detail-amendment" aria-labelledby="boAmendmentTitle">
+          <div class="bo-detail-section__heading"><span class="bo-detail-section__icon bo-detail-section__icon--amber"><i class="fas fa-sync-alt" aria-hidden="true"></i></span><div><h2 id="boAmendmentTitle">Alterações da retificação</h2><p>Comparação com os dados anteriores</p></div></div>
+          <div class="bo-detail-amendment__list">${estado.camposAlterados.map((campo) => `
+            <div class="bo-detail-amendment__row"><strong>${escapeDetalheHTML(campo.label || campo.campo)}</strong><div><span>${escapeDetalheHTML(campo.antes || "(vazio)")}</span><i class="fas fa-arrow-right" aria-hidden="true"></i><b>${escapeDetalheHTML(campo.depois || "(vazio)")}</b></div></div>
+          `).join("")}</div>
+          ${occ.justificativa_retificacao ? `<p class="bo-detail-amendment__reason"><strong>Justificativa:</strong> ${escapeDetalheHTML(occ.justificativa_retificacao)}</p>` : ""}
+        </section>` : ""}
+    </div>
+  `;
   return html;
 }
 
@@ -788,8 +598,42 @@ function renderAbaDetalhes(appInstance) {
 // 🔥 NOVO: ABA: ASSINATURAS
 // ============================================
 
+function normalizarListaAssinaturas(valor) {
+  let lista = valor;
+  if (typeof lista === "string") {
+    const texto = lista.trim();
+    if (!texto) return [];
+    try {
+      lista = JSON.parse(texto);
+    } catch (error) {
+      return [];
+    }
+  }
+
+  const isRegistroAssinatura = (item) => item && typeof item === "object" && !Array.isArray(item) && (
+    "assinatura_data_url" in item || "signature_data_url" in item || "envolvido_id" in item ||
+    ("nome" in item && "assinado_em" in item)
+  );
+
+  if (Array.isArray(lista)) return lista.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  if (!lista || typeof lista !== "object") return [];
+
+  for (const chave of ["assinaturas", "data", "items", "registros"]) {
+    if (Object.prototype.hasOwnProperty.call(lista, chave) && lista[chave] !== lista) {
+      const normalizadas = normalizarListaAssinaturas(lista[chave]);
+      if (normalizadas.length || Array.isArray(lista[chave]) || typeof lista[chave] === "string") return normalizadas;
+    }
+  }
+
+  if (isRegistroAssinatura(lista)) return [lista];
+  const valores = Object.values(lista);
+  if (valores.length && valores.every(isRegistroAssinatura)) return valores;
+  return [];
+}
+
 function renderAbaAssinaturas(appInstance) {
-  const assinaturas = estado.assinaturas || [];
+  const assinaturas = normalizarListaAssinaturas(estado.assinaturas);
+  estado.assinaturas = assinaturas;
 
   if (assinaturas.length === 0) {
     return `
@@ -858,7 +702,8 @@ function renderAbaAssinaturas(appInstance) {
 // ============================================
 
 function verAssinaturaAmpliada(index, appInstance) {
-  const assinaturas = estado.assinaturas || [];
+  const assinaturas = normalizarListaAssinaturas(estado.assinaturas);
+  estado.assinaturas = assinaturas;
   if (index < 0 || index >= assinaturas.length) {
     appInstance.showToast("Assinatura não encontrada", "error");
     return;
@@ -1172,7 +1017,7 @@ function renderAbaPDF(appInstance) {
   const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
   const options = estado.pdfOptions;
   const temHistorico = estado.historico && estado.historico.length > 1;
-  const temAssinaturas = estado.assinaturas && estado.assinaturas.length > 0;
+  const temAssinaturas = normalizarListaAssinaturas(estado.assinaturas).length > 0;
 
   return `
     <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);margin-bottom:10px;">
@@ -1217,7 +1062,7 @@ function renderAbaPDF(appInstance) {
             <input type="checkbox" ${options.incluirAssinaturas ? "checked" : ""} 
               onchange="window._detalheTogglePDFOption('incluirAssinaturas')"
               style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
-            <span>✍️ Assinaturas (${estado.assinaturas.length})</span>
+            <span>✍️ Assinaturas (${normalizarListaAssinaturas(estado.assinaturas).length})</span>
           </label>
         `
             : ""

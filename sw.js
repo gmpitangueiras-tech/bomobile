@@ -24,13 +24,13 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v75";
+const CACHE_NAME = "guarda-pitangueiras-v76";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v3";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v75";
+const CACHE_VERSION = "v76";
 
 const STATIC_ASSETS = [
   BASE_PATH,
@@ -442,13 +442,18 @@ self.addEventListener("fetch", (event) => {
   // Requisições de navegação (HTML)
   if (request.mode === "navigate") {
     event.respondWith(
-      caches
-        .match(BASE_PATH + "index.html")
-        .then((response) => {
-          return response || fetch(request);
+      fetch(request, { cache: "no-store" })
+        .then(async (response) => {
+          if (response && response.ok) {
+            const cache = await caches.open(CACHE_NAME);
+            const shellUrl = new URL("index.html", self.registration.scope).toString();
+            await cache.put(shellUrl, response.clone());
+          }
+          return response;
         })
-        .catch(() => {
-          return caches.match(BASE_PATH + "index.html");
+        .catch(async () => {
+          const shellUrl = new URL("index.html", self.registration.scope).toString();
+          return (await caches.match(shellUrl)) || new Response("Offline", { status: 503 });
         }),
     );
     return;

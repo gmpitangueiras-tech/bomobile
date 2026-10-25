@@ -141,7 +141,7 @@ function renderizarListaUsuarios(container, appInstance) {
 
       <!-- Filtro de busca -->
       <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
-        <input type="text" id="filtroSearchUser" placeholder="Buscar por nome, CPF ou matrícula..." 
+        <input type="text" id="filtroSearchUser" placeholder="Buscar por nome, CPF ou matrícula..."
           value="${estado.filtroSearch || ""}"
           style="flex:1;min-width:150px;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:var(--border-radius);font-size:14px;background:var(--branco-fumaca);"
           onkeydown="if(event.key==='Enter') window._usuariosFiltrar()">
@@ -204,13 +204,11 @@ function renderizarListaUsuarios(container, appInstance) {
       const perfilLabel =
         user.perfil === "supervisor" ? "Supervisor" : "Guarda";
       const ehAtual = user.id === authManager.getUserId();
-      const cpfExibido = formatarCPFSeguro(user.cpf);
 
       html += `
         <tr style="border-bottom:1px solid var(--cinza-claro);">
           <td style="padding:8px 10px;">
             <div style="font-weight:500;">${user.nome_completo}</div>
-            <div style="font-size:10px;color:var(--cinza-medio);">${cpfExibido}</div>
           </td>
           <td style="padding:8px 10px;">${user.matricula || "-"}</td>
           <td style="padding:8px 10px;text-align:center;">
@@ -552,12 +550,6 @@ export async function modalEditarUsuario(id, appInstance) {
                 Nome Completo <span class="required" style="color:var(--erro);">*</span>
               </label>
               <input type="text" id="edit_nome" class="form-control" value="${user.nome_completo || ""}" required style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:16px;font-size:14px;transition:all 0.3s ease;background:var(--branco);color:var(--cinza-escuro);font-family:inherit;">
-            </div>
-            <div class="form-group" style="margin-bottom:14px;">
-              <label for="edit_cpf" style="display:block;font-size:13px;font-weight:600;color:var(--cinza-escuro);margin-bottom:4px;">
-                CPF
-              </label>
-              <input type="text" id="edit_cpf" class="form-control" value="${formatarCPFSeguro(user.cpf, true)}" disabled style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:16px;font-size:14px;transition:all 0.3s ease;background:#eef2f6;color:var(--cinza-escuro);font-family:inherit;opacity:0.8;cursor:not-allowed;">
             </div>
             ${
               isSupervisor

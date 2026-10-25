@@ -87,6 +87,7 @@ function sanitizarBuscaLogs(valor) {
 class AuthManager {
   constructor() {
     this.user = null;
+    this._currentCpf = null;
     this._isLoggedIn = false;
     this.initialized = false;
     this.listeners = [];
@@ -277,16 +278,14 @@ class AuthManager {
   async carregarPerfilJWT(userId) {
     const client = supabaseClient.getClient();
     if (!client || !userId) return null;
-    const { data, error } = await client
-      .from("usuarios")
-      .select("id,nome_completo,matricula,apelido,email,telefone,perfil,status,primeiro_acesso,foto_url")
-      .eq("auth_user_id", userId)
-      .maybeSingle();
+    const { data, error } = await client.rpc("gm_my_profile");
     if (error) throw error;
-    if (!data || ["inativo", "bloqueado"].includes(data.status)) return null;
-    return data;
+    // A RPC retorna somente o perfil seguro associado ao JWT atual.
+    const rawProfile = data && typeof data === "object" && !Array.isArray(data) ? data : null;
+    if (!rawProfile || ["inativo", "bloqueado"].includes(rawProfile.status)) return null;
+    const { cpf, cpf_hash, senha_hash, ...profile } = rawProfile;
+    return profile;
   }
-
   async init() {
     if (this.initialized) return this._isLoggedIn;
 
@@ -710,51 +709,29 @@ class AuthManager {
 
   async primeiroAcesso(novaSenha, telefone = null, email = null) {
     try {
-      if (!this.user) {
-        return { success: false, error: "Usuário não autenticado" };
-      }
-
-      // Validar força da senha
+      if (!this.user) return { success: false, error: "Usuário não autenticado" };
       const validacao = this.validarForcaSenha(novaSenha);
-      if (!validacao.valid) {
-        return {
-          success: false,
-          error: `Senha fraca: ${validacao.errors.join(", ")}`,
-          validationErrors: validacao.errors,
-        };
-      }
-
+      if (!validacao.valid) return { success: false, error: `Senha fraca: ${validacao.errors.join(", ")}`, validationErrors: validacao.errors };
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
-
       const { data: hashData, error: hashError } = await client.rpc("criar_hash_senha", { p_senha: novaSenha });
       if (hashError) throw hashError;
-      const updates = {
-        senha_hash: hashData,
-        status: "ativo",
-        primeiro_acesso: false,
-        atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-      };
-      if (telefone) updates.telefone = telefone;
-      if (email) updates.email = email;
-      const { error: profileError } = await client.from("usuarios").update(updates).eq("id", this.user.id);
-      if (profileError) throw profileError;
-      // Primeiro atualiza o verificador legado. Se o Auth falhar, a Edge Function pode
-      // reconciliar a senha na próxima autenticação; em seguida rederivamos a chave local.
+      const { error: completeError } = await client.rpc("gm_complete_first_access", {
+        p_password_hash: hashData,
+        p_email: email || null,
+        p_telefone: telefone || null,
+      });
+      if (completeError) throw completeError;
+      // Fluxo compatível já existente: a atualização do Auth ocorre após a RPC.
+      // Se falhar, a senha do perfil já estará atualizada e Auth poderá divergir.
       const { error: authPasswordError } = await client.auth.updateUser({ password: novaSenha });
-      if (authPasswordError) throw authPasswordError;
-      if (window.offlineVault?.unlocked && window.offlineVault.userId === this.user.id) {
-        await window.offlineVault.rekey(novaSenha, this._currentCpf);
-      }
-
+      if (authPasswordError) throw new Error(`Perfil atualizado, mas a senha Auth não foi sincronizada: ${authPasswordError.message}`);
+      if (window.offlineVault?.unlocked && window.offlineVault.userId === this.user.id) await window.offlineVault.rekey(novaSenha, this._currentCpf);
       this.user.status = "ativo";
       this.user.primeiro_acesso = false;
       if (telefone) this.user.telefone = telefone;
       if (email) this.user.email = email;
-
-      // ===== REGISTRAR LOG DE PRIMEIRO ACESSO =====
       await this.registrarLogAcesso(this.user.id, "primeiro_acesso");
-
       this.notifyListeners("primeiro_acesso", this.user);
       return { success: true, usuario: this.user };
     } catch (error) {
@@ -762,167 +739,6 @@ class AuthManager {
       return { success: false, error: error.message };
     }
   }
-
-  async logout() {
-    const usuarioId = this.user?.id;
-
-    // ===== REGISTRAR LOG DE LOGOUT =====
-    if (usuarioId) {
-      await this.logLogout(usuarioId);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial("LOGOUT", "usuarios", usuarioId);
-      }
-    }
-
-    this._isLoggedIn = false;
-    this.user = null;
-    this.offlineOnly = false;
-    this._currentCpf = null;
-    window.offlineVault?.lock();
-    window.syncManager?.lock?.();
-    window.adminApi?.clear?.();
-    localStorage.removeItem("auth_user");
-    const client = supabaseClient.getClient();
-    if (client) {
-      const { error } = await client.auth.signOut({ scope: "local" });
-      if (error) console.warn("Falha ao limpar sessão local do Supabase Auth.");
-    }
-    this.notifyListeners("logout", null);
-    return { success: true };
-  }
-
-  // ============================================
-  // MÉTODOS PÚBLICOS
-  // ============================================
-
-  isLoggedIn() {
-    return this._isLoggedIn;
-  }
-
-  getUser() {
-    return this.user;
-  }
-
-  getPerfil() {
-    return this.user?.perfil || null;
-  }
-
-  getUserId() {
-    return this.user?.id || null;
-  }
-
-  getNome() {
-    return this.user?.nome_completo || null;
-  }
-
-  getMatricula() {
-    return this.user?.matricula || null;
-  }
-
-  getCPF() {
-    return this._currentCpf || this.user?.cpf || null;
-  }
-
-  isSupervisor() {
-    return this.user?.perfil === "supervisor";
-  }
-
-  isAdministrador() {
-    return this.user?.perfil === "administrador";
-  }
-
-  isSupervisorOperacional() {
-    return this.isSupervisor();
-  }
-
-  can(permission) {
-    const matrix = {
-      governanca: this.isAdministrador(),
-      logs: this.isAdministrador(),
-      usuarios: this.isAdministrador(),
-      resetar_senha: this.isAdministrador(),
-      relatorios: this.podeAcessarRelatorios(),
-      retificacoes: this.isSupervisor(),
-    };
-    return Boolean(matrix[permission]);
-  }
-
-  isGuarda() {
-    return this.user?.perfil === "guarda";
-  }
-
-  isPrimeiroAcesso() {
-    return (
-      this.user?.status === "primeiro_acesso" ||
-      this.user?.primeiro_acesso === true
-    );
-  }
-
-  // ============================================
-  // PERMISSÕES
-  // ============================================
-
-  podeEditar(ocorrencia) {
-    if (!this.user) return false;
-    if (this.isSupervisor()) {
-      return ocorrencia.status === "draft";
-    }
-    return (
-      ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
-    );
-  }
-
-  podeVisualizar(ocorrencia) {
-    if (!this.user) return false;
-    return true;
-  }
-
-  podeFinalizar(ocorrencia) {
-    if (!this.user) return false;
-    if (this.isSupervisor()) {
-      return ocorrencia.status === "draft";
-    }
-    return (
-      ocorrencia.criado_por === this.user.id && ocorrencia.status === "draft"
-    );
-  }
-
-  podeCancelar(ocorrencia) {
-    if (!this.user) return false;
-    if (!this.isSupervisor()) return false;
-    return ocorrencia.status !== "cancelled";
-  }
-
-  podeSolicitarRetificacao(ocorrencia) {
-    if (!this.user) return false;
-    if (
-      ocorrencia.status !== "synced" &&
-      ocorrencia.status !== "pending_sync"
-    ) {
-      return false;
-    }
-    if (this.isSupervisor()) {
-      return true;
-    }
-    return ocorrencia.criado_por === this.user.id;
-  }
-
-  podeAprovarRetificacao(ocorrencia) {
-    if (!this.user) return false;
-    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
-  }
-
-  podeRejeitarRetificacao(ocorrencia) {
-    if (!this.user) return false;
-    return this.isSupervisor() && ocorrencia.status === "pending_rectification";
-  }
-
-  podeVerHistorico(ocorrencia) {
-    return this.isLoggedIn();
-  }
-
   podeAcessarRelatorios() {
     // Todos os perfis autenticados podem consultar relatórios; o módulo aplica
     // escopo próprio para guarda e escopo completo para supervisor/admin.
@@ -942,41 +758,22 @@ class AuthManager {
   // ============================================
 
   async listarUsuarios(filtros = {}) {
-    if (!this.isAdministrador()) {
-      return {
-        success: false,
-        error: "Permissão negada. Apenas administradores podem listar usuários.",
-      };
-    }
-
+    if (!this.isAdministrador()) return { success: false, error: "Permissão negada. Apenas administradores podem listar usuários." };
     try {
-      const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
-
-      let query = client.from("usuarios").select("id,nome_completo,matricula,apelido,email,telefone,perfil,status,primeiro_acesso,foto_url,criado_em,atualizado_em");
-
-      if (filtros.perfil) {
-        query = query.eq("perfil", filtros.perfil);
-      }
-      if (filtros.status) {
-        query = query.eq("status", filtros.status);
-      }
-      if (filtros.search) {
-        const termo = String(filtros.search).replace(/[\%_,()]/g, " ").trim();
-        if (termo) query = query.or(
-          `nome_completo.ilike.%${termo}%,matricula.ilike.%${termo}%`,
-        );
-      }
-
-      const { data, error } = await query.order("nome_completo");
-      if (error) throw error;
-      return { success: true, data: data || [] };
+      if (!window.adminApi) throw new Error("API administrativa indisponível.");
+      const response = await window.adminApi.listUsers(filtros.search || "");
+      let data = response.users || response.data || [];
+      if (!Array.isArray(data)) data = [];
+      // Nunca propagar identificadores/hash em listagens gerais, mesmo se a API os incluir.
+      data = data.map(({ cpf, cpf_hash, senha_hash, ...user }) => user);
+      if (filtros.perfil) data = data.filter((u) => u.perfil === filtros.perfil);
+      if (filtros.status) data = data.filter((u) => u.status === filtros.status);
+      return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao listar usuários:", error);
       return { success: false, error: error.message };
     }
   }
-
   async listarUsuariosParaLogs() {
     if (!this.isAdministrador()) {
       return { success: false, error: "Permissão negada. Apenas administradores podem consultar usuários nos logs." };
@@ -998,296 +795,72 @@ class AuthManager {
   }
 
   async criarUsuario(dados) {
-    if (!this.isAdministrador()) {
-      return {
-        success: false,
-        error: "Permissão negada. Apenas administradores podem criar usuários.",
-      };
-    }
-
+    if (!this.isAdministrador()) return { success: false, error: "Permissão negada. Apenas administradores podem criar usuários." };
     try {
-      const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
-
-      const cpfClean = dados.cpf.replace(/[^0-9]/g, "");
-      if (cpfClean.length !== 11) {
-        return { success: false, error: "CPF inválido" };
-      }
-
-      const { data: existe } = await client
-        .from("usuarios")
-        .select("cpf")
-        .eq("cpf", cpfClean)
-        .maybeSingle();
-
-      if (existe) {
-        return { success: false, error: "CPF já cadastrado" };
-      }
-
-      const senhaTemp = dados.senha || this.gerarSenhaTemporaria();
-      const { data: hashData } = await client.rpc("criar_hash_senha", {
-        p_senha: senhaTemp,
+      if (!window.adminApi) throw new Error("API administrativa indisponível.");
+      const response = await window.adminApi.createUser({
+        nome: dados.nome, cpf: String(dados.cpf || "").replace(/\D/g, ""),
+        matricula: dados.matricula || null, email: dados.email || null,
+        telefone: dados.telefone || null, perfil: dados.perfil || "guarda",
+        senha: dados.senha || null,
       });
-
-      // Processar dados sensíveis
-      const sensitiveData = await this.processSensitiveData(dados, [
-        "cpf",
-        "telefone",
-      ]);
-
-      const novoUsuario = {
-        id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
-        nome_completo: dados.nome,
-        cpf: cpfClean,
-        matricula: dados.matricula || null,
-        email: dados.email || null,
-        telefone: dados.telefone || null,
-        perfil: dados.perfil || "guarda",
-        status: "primeiro_acesso",
-        primeiro_acesso: true,
-        senha_hash: hashData,
-        criado_por: this.user.id,
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
-        // Campos criptografados
-        cpf_encrypted: sensitiveData.cpf_encrypted,
-        cpf_hash: sensitiveData.cpf_hash,
-        telefone_encrypted: sensitiveData.telefone_encrypted,
-        telefone_hash: sensitiveData.telefone_hash,
-      };
-
-      const { data, error } = await client
-        .from("usuarios")
-        .insert([novoUsuario])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      await this.logCriarUsuario(this.user.id, data.id);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial(
-          "CRIAR_USUARIO",
-          "usuarios",
-          data.id,
-        );
-      }
-
-      return {
-        success: true,
-        data,
-        senha_temporaria: senhaTemp,
-      };
+      const data = response.data || response.user || null;
+      if (data?.id) await this.logCriarUsuario(this.user.id, data.id);
+      if (data?.id && window.app?.registrarLogPericial) await window.app.registrarLogPericial("CRIAR_USUARIO", "usuarios", data.id);
+      return { success: true, data, senha_temporaria: response.senha_temporaria || response.temporary_password || null };
     } catch (error) {
       console.error("❌ Erro ao criar usuário:", error);
       return { success: false, error: error.message };
     }
   }
-
   async atualizarUsuario(id, dados) {
     try {
+      const atualizaProprioPerfil = id === this.user?.id;
+      if (!this.isAdministrador() && !atualizaProprioPerfil) return { success: false, error: "Permissão negada. Você só pode atualizar o próprio perfil." };
+      const camposPerfil = ["nome_completo", "apelido", "email", "telefone"];
+      if (this.isAdministrador()) {
+        if (!window.adminApi) throw new Error("API administrativa indisponível.");
+        const response = await window.adminApi.updateUser({ id, ...dados });
+        const data = response.data || response.user || null;
+        await this.logEditarUsuario(this.user.id, id);
+        if (window.app?.registrarLogPericial) await window.app.registrarLogPericial("EDITAR_USUARIO", "usuarios", id);
+        return { success: true, data };
+      }
+      const payload = {};
+      camposPerfil.forEach((campo) => {
+        if (Object.prototype.hasOwnProperty.call(dados, campo)) payload[campo] = dados[campo];
+      });
+      if (!Object.keys(payload).length) return { success: false, error: "Nenhum campo de perfil permitido para atualização." };
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
-
-      const atualizaProprioPerfil = id === this.user?.id;
-      if (!this.isAdministrador() && !atualizaProprioPerfil) {
-        return {
-          success: false,
-          error: "Permissão negada. Você só pode atualizar o próprio perfil.",
-        };
-      }
-
-      if (atualizaProprioPerfil && !this.isAdministrador()) {
-        // Guarda e supervisor podem editar somente dados pessoais do próprio perfil.
-        // Perfil, status, CPF, senha e demais campos administrativos permanecem protegidos.
-        const camposPermitidos = ["nome_completo", "apelido", "email", "telefone"];
-        const dadosProprios = {};
-        camposPermitidos.forEach((campo) => {
-          if (Object.prototype.hasOwnProperty.call(dados, campo)) dadosProprios[campo] = dados[campo];
-        });
-        if (this.isSupervisor() && Object.prototype.hasOwnProperty.call(dados, "matricula")) {
-          dadosProprios.matricula = dados.matricula;
-        }
-        // Fluxo de troca da própria senha: aceita somente o hash já gerado pelo RPC.
-        if (Object.prototype.hasOwnProperty.call(dados, "senha_hash")) {
-          dadosProprios.senha_hash = dados.senha_hash;
-          dadosProprios.primeiro_acesso = false;
-          if (dados.status === "ativo") dadosProprios.status = "ativo";
-        }
-        dados = dadosProprios;
-      } else {
-        // O administrador só pode alterar os campos recebidos pela operação administrativa.
-        delete dados.senha_hash;
-      }
-
-      // Processar dados sensíveis se presentes
-      if (dados.cpf || dados.telefone) {
-        const sensitiveData = await this.processSensitiveData(dados, [
-          "cpf",
-          "telefone",
-        ]);
-        if (dados.cpf) {
-          dados.cpf_encrypted = sensitiveData.cpf_encrypted;
-          dados.cpf_hash = sensitiveData.cpf_hash;
-        }
-        if (dados.telefone) {
-          dados.telefone_encrypted = sensitiveData.telefone_encrypted;
-          dados.telefone_hash = sensitiveData.telefone_hash;
-        }
-      }
-
-      const { data, error } = await client
-        .from("usuarios")
-        .update({
-          ...dados,
-          atualizado_por: this.user.id,
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
-
+      const { data, error } = await client.from("usuarios").update(payload).eq("id", id)
+        .select("id,nome_completo,apelido,email,telefone,perfil,status,primeiro_acesso,foto_url").single();
       if (error) throw error;
-
       await this.logEditarUsuario(this.user.id, id);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial("EDITAR_USUARIO", "usuarios", id);
-      }
-
-      if (id === this.user.id) {
-        this.user = { ...this.user, ...dados };
-// O perfil vive apenas em memória; não gravar PII em localStorage.
-      }
-
-      console.log("✅ Usuário atualizado:", id);
+      if (id === this.user.id) this.user = { ...this.user, ...data };
       return { success: true, data };
     } catch (error) {
       console.error("❌ Erro ao atualizar usuário:", error);
       return { success: false, error: error.message };
     }
   }
-
   async ativarDesativarUsuario(id, status) {
-    if (!this.isAdministrador()) {
-      return {
-        success: false,
-        error:
-          "Permissão negada. Apenas administradores podem alterar status de usuários.",
-      };
-    }
-
-    if (!["ativo", "inativo", "bloqueado"].includes(status)) {
-      return {
-        success: false,
-        error: "Status inválido. Use 'ativo', 'inativo' ou 'bloqueado'.",
-      };
-    }
-
+    if (!this.isAdministrador()) return { success: false, error: "Permissão negada. Apenas administradores podem alterar status de usuários." };
+    if (!["ativo", "inativo", "bloqueado"].includes(status)) return { success: false, error: "Status inválido." };
     try {
-      const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
-
-      const { data, error } = await client
-        .from("usuarios")
-        .update({
-          status: status,
-          atualizado_por: this.user.id,
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      await this.logAtivarDesativarUsuario(this.user.id, id);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial(
-          "ALTERAR_STATUS_USUARIO",
-          "usuarios",
-          id,
-        );
-      }
-
-      console.log(`✅ Usuário ${id} alterado para status: ${status}`);
-      return { success: true, data };
-    } catch (error) {
-      console.error("❌ Erro ao alterar status do usuário:", error);
-      return { success: false, error: error.message };
-    }
+      const response = await window.adminApi.updateUser({ id, status });
+      return { success: true, data: response.data || response.user || null };
+    } catch (error) { return { success: false, error: error.message }; }
   }
-
   async resetarSenha(id) {
-    if (!this.isAdministrador()) {
-      return {
-        success: false,
-        error: "Permissão negada. Apenas administradores podem resetar senhas.",
-      };
-    }
-
+    if (!this.isAdministrador()) return { success: false, error: "Permissão negada. Apenas administradores podem resetar senhas." };
     try {
-      const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
-
-      const senhaTemp = this.gerarSenhaTemporaria();
-      const { data: hashData } = await client.rpc("criar_hash_senha", {
-        p_senha: senhaTemp,
-      });
-
-      const { data, error } = await client
-        .from("usuarios")
-        .update({
-          senha_hash: hashData,
-          status: "primeiro_acesso",
-          primeiro_acesso: true,
-          atualizado_por: this.user.id,
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      await this.logResetarSenha(this.user.id, id);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial("RESETAR_SENHA", "usuarios", id);
-      }
-
-      console.log(`✅ Senha resetada para usuário ${id}`);
-      return {
-        success: true,
-        data,
-        senha_temporaria: senhaTemp,
-      };
-    } catch (error) {
-      console.error("❌ Erro ao resetar senha:", error);
-      return { success: false, error: error.message };
-    }
+      const response = await window.adminApi.resetPassword(id);
+      const data = response.data || response.user || null;
+      if (window.app?.registrarLogPericial) await window.app.registrarLogPericial("RESETAR_SENHA", "usuarios", id);
+      return { success: true, data, senha_temporaria: response.senha_temporaria || response.temporary_password || null };
+    } catch (error) { return { success: false, error: error.message }; }
   }
-
-  gerarSenhaTemporaria() {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()";
-    let senha = "";
-    for (let i = 0; i < 12; i++) {
-      senha += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    // Garantir pelo menos uma letra maiúscula, uma minúscula, um número e um especial
-    senha = "Temp" + senha + "123!";
-    return senha;
-  }
-
-  // ============================================
-  // LISTAGEM DE LOGS DE ACESSO
-  // ============================================
 
   async listarLogsAcesso(filtros = {}) {
     if (!this.isAdministrador()) {
@@ -1396,6 +969,75 @@ class AuthManager {
         cb(event, data);
       } catch (e) {}
     });
+  }
+
+  async logout() {
+    const usuarioId = this.user?.id;
+    if (usuarioId) {
+      await this.logLogout(usuarioId);
+      try {
+        await window.app?.registrarLogPericial?.("LOGOUT", "usuarios", usuarioId);
+      } catch (_) {}
+    }
+    this._isLoggedIn = false;
+    this.user = null;
+    this._currentCpf = null;
+    this.offlineOnly = false;
+    window.offlineVault?.lock();
+    window.syncManager?.lock?.();
+    window.adminApi?.clear?.();
+    localStorage.removeItem("auth_user");
+    const client = supabaseClient.getClient();
+    if (client) await client.auth.signOut({ scope: "local" });
+    this.notifyListeners("logout", null);
+    return { success: true };
+  }
+
+  getUser() { return this.user; }
+  getPerfil() { return this.user?.perfil || null; }
+  getUserId() { return this.user?.id || null; }
+  getNome() { return this.user?.nome_completo || null; }
+  getMatricula() { return this.user?.matricula || null; }
+  isSupervisor() { return this.user?.perfil === "supervisor"; }
+  isAdministrador() { return this.user?.perfil === "administrador"; }
+  isSupervisorOperacional() { return this.isSupervisor(); }
+  isGuarda() { return this.user?.perfil === "guarda"; }
+  isPrimeiroAcesso() {
+    return this.user?.status === "primeiro_acesso" || this.user?.primeiro_acesso === true;
+  }
+  can(permission) {
+    const matrix = {
+      governanca: this.isAdministrador(),
+      logs: this.isAdministrador(),
+      usuarios: this.isAdministrador(),
+      resetar_senha: this.isAdministrador(),
+      relatorios: this.podeAcessarRelatorios(),
+      retificacoes: this.isSupervisor() || this.isAdministrador(),
+    };
+    return Boolean(matrix[permission]);
+  }
+
+  podeEditar(ocorrencia) {
+    if (!this.user || !ocorrencia) return false;
+    return (this.isSupervisor() || ocorrencia.criado_por === this.user.id) && ocorrencia.status === "draft";
+  }
+  podeVisualizar(ocorrencia) { return Boolean(this.user && ocorrencia); }
+  podeFinalizar(ocorrencia) { return this.podeEditar(ocorrencia); }
+  podeCancelar(ocorrencia) {
+    return Boolean(this.user && (this.isSupervisor() || this.isAdministrador()) && ocorrencia?.status !== "cancelled");
+  }
+  podeSolicitarRetificacao(ocorrencia) {
+    if (!this.user || !ocorrencia || !["synced", "pending_sync"].includes(ocorrencia.status)) return false;
+    return this.isSupervisor() || this.isAdministrador() || ocorrencia.criado_por === this.user.id;
+  }
+  podeAprovarRetificacao(ocorrencia) {
+    return Boolean(this.user && (this.isSupervisor() || this.isAdministrador()) && ocorrencia?.status === "pending_rectification");
+  }
+  podeRejeitarRetificacao(ocorrencia) { return this.podeAprovarRetificacao(ocorrencia); }
+  podeVerHistorico() { return this._isLoggedIn; }
+
+  getCPF() {
+    return this._isLoggedIn ? this._currentCpf : null;
   }
 
   // ============================================

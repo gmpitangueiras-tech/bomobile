@@ -46,8 +46,8 @@ const CONFIG = {
   MUNICIPIO: "Pitangueiras",
   ESTADO: "Paraná",
   GUARDA_NOME: "Guarda Municipal de Pitangueiras",
-  VERSAO: "1.0.0-v73",
-  BUILD: "v73-jwt-main-test",
+  VERSAO: "1.0.0-v74",
+  BUILD: "v74-rls-storage-hardening",
 
   // ============================================
   // SINCERONIZAÇÃO (SYNC)
@@ -208,8 +208,6 @@ const CONFIG = {
     API_IP: "https://api.ipify.org?format=json",
     TIMEZONE_API: "https://worldtimeapi.org/api/timezone/America/Sao_Paulo",
     STORAGE_BUCKET: "anexos",
-    STORAGE_PUBLIC_URL:
-      "https://wswezvcxfljzcttpqkch.supabase.co/storage/v1/object/public/anexos",
     MAP_TILE_URL: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     MAP_ATTRIBUTION:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',

@@ -482,11 +482,11 @@ function renderizarLista(container, appInstance) {
           </p>
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          <button onclick="window._retificacoesExportarPDF()" class="btn-primary" 
+          <button onclick="window._retificacoesExportarPDF()" class="btn-primary"
             style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;background:var(--verde-bandeira);">
             <i class="fas fa-file-pdf" style="margin-right:4px;"></i> Exportar PDF
           </button>
-          <button onclick="window._retificacoesRecarregar()" class="btn-secondary" 
+          <button onclick="window._retificacoesRecarregar()" class="btn-secondary"
             style="padding:6px 14px;font-size:12px;min-height:auto;width:auto;border-radius:30px;">
             <i class="fas fa-sync-alt"></i>
           </button>
@@ -536,13 +536,13 @@ function renderizarLista(container, appInstance) {
           </div>
           <div style="flex:1;min-width:100px;">
             <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Início</label>
-            <input type="date" id="filtroDataInicioRet" value="${estado.filtros.dataInicio || ""}" 
+            <input type="date" id="filtroDataInicioRet" value="${estado.filtros.dataInicio || ""}"
               style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;"
               onchange="window._retificacoesAplicarFiltros()">
           </div>
           <div style="flex:1;min-width:100px;">
             <label style="font-size:9px;font-weight:600;color:var(--cinza-medio);text-transform:uppercase;letter-spacing:0.3px;display:block;margin-bottom:1px;">Data Fim</label>
-            <input type="date" id="filtroDataFimRet" value="${estado.filtros.dataFim || ""}" 
+            <input type="date" id="filtroDataFimRet" value="${estado.filtros.dataFim || ""}"
               style="width:100%;padding:6px 8px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:12px;background:var(--branco);color:var(--cinza-escuro);min-height:36px;"
               onchange="window._retificacoesAplicarFiltros()">
           </div>
@@ -560,12 +560,12 @@ function renderizarLista(container, appInstance) {
 
       <!-- 🔥 NOVO: Abas: Pendentes | Histórico -->
       <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--cinza-claro);padding:4px;border-radius:var(--border-radius);">
-        <button onclick="window._retificacoesMudarAba('pendentes')" id="tabPendentes" class="tab-btn" 
+        <button onclick="window._retificacoesMudarAba('pendentes')" id="tabPendentes" class="tab-btn"
           style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "pendentes" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "pendentes" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
           <i class="fas fa-clock"></i> Pendentes
           <span style="background:var(--aviso);color:white;border-radius:9999px;padding:0 8px;font-size:10px;margin-left:4px;">${retificacoes.filter((r) => r._status_retificacao === "pending").length}</span>
         </button>
-        <button onclick="window._retificacoesMudarAba('historico')" id="tabHistorico" class="tab-btn" 
+        <button onclick="window._retificacoesMudarAba('historico')" id="tabHistorico" class="tab-btn"
           style="flex:1;padding:8px 4px;border:none;border-radius:var(--border-radius);font-weight:600;font-size:12px;cursor:pointer;background:${estado.abaAtiva === "historico" ? "var(--branco)" : "none"};color:${estado.abaAtiva === "historico" ? "var(--cinza-escuro)" : "var(--cinza-medio)"};transition:all 0.2s;">
           <i class="fas fa-history"></i> Histórico
         </button>
@@ -773,7 +773,7 @@ function renderRetificacaoItem(ret, appInstance) {
           ? `<div style="position:absolute;top:-8px;right:12px;background:var(--erro);color:white;padding:2px 12px;border-radius:12px;font-size:9px;font-weight:700;text-transform:uppercase;">Urgente</div>`
           : ""
       }
-      
+
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
           <strong style="font-size:15px;color:var(--azul-bandeira);">
@@ -834,8 +834,8 @@ function renderRetificacaoItem(ret, appInstance) {
         <div style="margin-top:8px;">
           <details style="cursor:pointer;">
             <summary style="font-size:13px;font-weight:600;color:var(--azul-bandeira);">
-              <i class="fas fa-edit"></i> 
-              ${camposAlterados.length} campo(s) alterado(s) 
+              <i class="fas fa-edit"></i>
+              ${camposAlterados.length} campo(s) alterado(s)
               <span style="font-size:11px;color:var(--cinza-medio);font-weight:400;">(clique para expandir)</span>
             </summary>
             <div style="margin-top:6px;padding:8px;background:var(--branco-fumaca);border-radius:var(--border-radius);">
@@ -870,15 +870,15 @@ function renderRetificacaoItem(ret, appInstance) {
         isPendente
           ? `
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-          <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}', '${ret._tipo_retificacao}')" 
+          <button class="btn-success" onclick="window._retificacoesAprovar('${ret.id}', '${ret._tipo_retificacao}')"
             style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
             <i class="fas fa-check"></i> Aprovar
           </button>
-          <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}', '${ret._tipo_retificacao}')" 
+          <button class="btn-danger" onclick="window._retificacoesRejeitar('${ret.id}', '${ret._tipo_retificacao}')"
             style="padding:8px 20px;font-size:13px;min-height:auto;width:auto;border-radius:8px;flex:1;">
             <i class="fas fa-times"></i> Rejeitar
           </button>
-          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')" 
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')"
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
             <i class="fas fa-eye"></i> Ver completa
           </button>
@@ -886,11 +886,11 @@ function renderRetificacaoItem(ret, appInstance) {
       `
           : `
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--cinza-claro);padding-top:12px;">
-          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')" 
+          <button class="btn-secondary" onclick="window._retificacoesVerDetalhes('${ret.id}', '${ret._tipo_retificacao}')"
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);flex:1;">
             <i class="fas fa-eye"></i> Ver detalhes
           </button>
-          <button class="btn-secondary" onclick="window._retificacoesExportarDetalhe('${ret.id}', '${ret._tipo_retificacao}')" 
+          <button class="btn-secondary" onclick="window._retificacoesExportarDetalhe('${ret.id}', '${ret._tipo_retificacao}')"
             style="padding:8px 16px;font-size:13px;min-height:auto;width:auto;border-radius:8px;background:var(--verde-muito-claro);color:var(--verde-escuro);flex:1;">
             <i class="fas fa-file-pdf"></i> PDF
           </button>
@@ -917,6 +917,7 @@ export async function aprovarRetificacao(id, tipo, container, appInstance) {
         const ret = result.data;
         nome = ret.numero_ocorrencia || ret.numero_temporario || "Sem número";
         await authManager.logAprovarRetificacao(authManager.getUserId(), id);
+        await emitirNotificacaoRetificacao("occurrence_retification_decided", ret.id, null);
       }
     } else if (tipo === "veiculo" || tipo === "pessoa") {
       // 🔥 NOVO: Aprovar retificação de abordagem
@@ -998,8 +999,9 @@ export async function aprovarRetificacao(id, tipo, container, appInstance) {
         data,
       );
 
-      // 🔥 NOVO: Notificar solicitante
-      await notificarSolicitanteRetificacaoAbordagem(data, tipo, "aprovada");
+      await emitirNotificacaoRetificacao(
+        "approach_retification_decided", data.id, tipo,
+      );
     } else {
       throw new Error("Tipo de retificação inválido");
     }
@@ -1057,6 +1059,7 @@ export async function rejeitarRetificacao(id, tipo, container, appInstance) {
         const ret = result.data;
         nome = ret.numero_ocorrencia || ret.numero_temporario || "Sem número";
         await authManager.logRejeitarRetificacao(authManager.getUserId(), id);
+        await emitirNotificacaoRetificacao("occurrence_retification_decided", ret.id, null);
       }
     } else if (tipo === "veiculo" || tipo === "pessoa") {
       // 🔥 NOVO: Rejeitar retificação de abordagem
@@ -1115,12 +1118,8 @@ export async function rejeitarRetificacao(id, tipo, container, appInstance) {
         data,
       );
 
-      // 🔥 NOVO: Notificar solicitante
-      await notificarSolicitanteRetificacaoAbordagem(
-        data,
-        tipo,
-        "rejeitada",
-        motivo,
+      await emitirNotificacaoRetificacao(
+        "approach_retification_decided", data.id, tipo,
       );
     } else {
       throw new Error("Tipo de retificação inválido");
@@ -1310,7 +1309,7 @@ export async function verDetalhesRetificacao(id, tipo, appInstance) {
             <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
             Detalhes da Retificação
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()"
             style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
             <i class="fas fa-times"></i>
           </button>
@@ -1501,7 +1500,7 @@ export async function verDetalhesRetificacao(id, tipo, appInstance) {
             </button>
           `
           }
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()"
             style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Fechar
           </button>
@@ -1596,49 +1595,18 @@ async function registrarLogPericialRetificacao(
   }
 }
 
-/**
- * 🔥 NOVO: Notificar solicitante sobre aprovação/rejeição de retificação de abordagem
- */
-async function notificarSolicitanteRetificacaoAbordagem(
-  abordagem,
-  tipo,
-  status,
-  motivo = null,
-) {
+async function emitirNotificacaoRetificacao(evento, registroId, entidade = null) {
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    const solicitanteId = abordagem.solicitada_por;
-    if (!solicitanteId) return;
-
-    const identificador = tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-    let titulo = "";
-    let mensagem = "";
-
-    if (status === "aprovada") {
-      titulo = `✅ Retificação Aprovada`;
-      mensagem = `Sua retificação de abordagem (${identificador}) foi aprovada pelo supervisor.`;
-    } else if (status === "rejeitada") {
-      titulo = `❌ Retificação Rejeitada`;
-      mensagem = `Sua retificação de abordagem (${identificador}) foi rejeitada. Motivo: ${motivo}`;
-    }
-
-    await client.from("notificacoes").insert({
-      usuario_id: solicitanteId,
-      titulo: titulo,
-      mensagem: mensagem,
-      tipo:
-        status === "aprovada"
-          ? "retificacao_aprovada"
-          : "retificacao_rejeitada",
-      link: "#consulta",
-      criado_em: globalThis.obterTimestampBrasilSemFuso(),
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client || !registroId) return;
+    const { error } = await client.rpc("gm_emit_notification", {
+      p_event: evento,
+      p_record_id: registroId,
+      p_entity: entidade,
     });
+    if (error) console.warn("Erro ao emitir notificação de retificação:", error);
   } catch (error) {
-    console.error("Erro ao notificar solicitante:", error);
+    console.warn("Erro ao emitir notificação de retificação:", error);
   }
 }
 

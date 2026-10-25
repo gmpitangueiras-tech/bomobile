@@ -236,10 +236,10 @@ class RetificacaoAbordagens {
         novaAbordagem,
       );
 
-      // Notificar supervisor (se não for supervisor)
-      if (!isSupervisor) {
-        await this.notificarSupervisores(novaAbordagem, tipo);
-      }
+      // Emissão de notificação não deve afetar a retificação principal.
+      if (!isSupervisor) await this.notificarEventoRetificacaoAbordagem(
+        "approach_retification_pending", novaAbordagem.id, tipo,
+      );
 
       return {
         success: true,
@@ -349,8 +349,10 @@ class RetificacaoAbordagens {
         data,
       );
 
-      // Notificar o solicitante
-      await this.notificarSolicitante(data, tipo, "aprovada");
+      // Emissão de notificação não deve afetar a aprovação principal.
+      await this.notificarEventoRetificacaoAbordagem(
+        "approach_retification_decided", data.id, tipo,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -433,8 +435,10 @@ class RetificacaoAbordagens {
         data,
       );
 
-      // Notificar o solicitante
-      await this.notificarSolicitante(data, tipo, "rejeitada", motivo);
+      // Emissão de notificação não deve afetar a rejeição principal.
+      await this.notificarEventoRetificacaoAbordagem(
+        "approach_retification_decided", data.id, tipo,
+      );
 
       return { success: true, data };
     } catch (error) {
@@ -557,83 +561,18 @@ class RetificacaoAbordagens {
   // NOTIFICAÇÕES
   // ============================================
 
-  async notificarSupervisores(abordagem, tipo) {
+  async notificarEventoRetificacaoAbordagem(evento, registroId, tipo) {
     try {
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      // Buscar todos os supervisores
-      const { data: supervisores, error } = await client
-        .from("usuarios")
-        .select("id")
-        .eq("perfil", "supervisor")
-        .eq("status", "ativo");
-
-      if (error) throw error;
-      if (!supervisores || supervisores.length === 0) return;
-
-      const identificador =
-        tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-      const notificacoes = supervisores.map((s) => ({
-        usuario_id: s.id,
-        titulo: `📋 Retificação de Abordagem Pendente`,
-        mensagem: `${identificador} solicitou retificação de ${tipo === "veiculo" ? "veículo" : "pessoa"}. Aguarda sua análise.`,
-        tipo: "retificacao_pendente",
-        link: "#retificacoes-abordagens",
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
-      }));
-
-      // Inserir em lote
-      const batchSize = 50;
-      for (let i = 0; i < notificacoes.length; i += batchSize) {
-        const batch = notificacoes.slice(i, i + batchSize);
-        await client.from("notificacoes").insert(batch);
-      }
-
-      console.log(
-        `✅ ${notificacoes.length} notificações enviadas para supervisores`,
-      );
-    } catch (error) {
-      console.error("Erro ao notificar supervisores:", error);
-    }
-  }
-
-  async notificarSolicitante(abordagem, tipo, status, motivo = null) {
-    try {
-      const client = supabaseClient.getClient();
-      if (!client) return;
-
-      const solicitanteId = abordagem.solicitada_por;
-      if (!solicitanteId) return;
-
-      const identificador =
-        tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-      let titulo = "";
-      let mensagem = "";
-
-      if (status === "aprovada") {
-        titulo = `✅ Retificação Aprovada`;
-        mensagem = `Sua retificação de abordagem (${identificador}) foi aprovada pelo supervisor.`;
-      } else if (status === "rejeitada") {
-        titulo = `❌ Retificação Rejeitada`;
-        mensagem = `Sua retificação de abordagem (${identificador}) foi rejeitada. Motivo: ${motivo}`;
-      }
-
-      await client.from("notificacoes").insert({
-        usuario_id: solicitanteId,
-        titulo: titulo,
-        mensagem: mensagem,
-        tipo:
-          status === "aprovada"
-            ? "retificacao_aprovada"
-            : "retificacao_rejeitada",
-        link: "#consulta",
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
+      if (!client || !registroId || !["veiculo", "pessoa"].includes(tipo)) return;
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: evento,
+        p_record_id: registroId,
+        p_entity: tipo,
       });
+      if (error) console.warn("Erro ao emitir notificação de retificação de abordagem:", error);
     } catch (error) {
-      console.error("Erro ao notificar solicitante:", error);
+      console.warn("Erro ao emitir notificação de retificação de abordagem:", error);
     }
   }
 

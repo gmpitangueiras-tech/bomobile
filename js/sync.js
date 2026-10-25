@@ -507,11 +507,11 @@ class SyncManager {
         const path = `${authManager.getUserId()}/${dados.id}/${fileId}.${ext}`;
         const { error: uploadError } = await client.storage.from("anexos").upload(path, anexo.arquivo, { upsert: true, contentType: anexo.arquivo.type || "application/octet-stream" });
         if (uploadError) throw uploadError;
-        const { data: urlData } = client.storage.from("anexos").getPublicUrl(path);
+
         const { error: metaError } = await client.from("anexos").upsert([{
           id: fileId, ocorrencia_id: dados.id, nome_arquivo: anexo.nome || anexo.arquivo.name || "anexo",
           tipo_arquivo: anexo.tipo || "anexo", tamanho: anexo.arquivo.size || anexo.tamanho || 0,
-          url: urlData.publicUrl, mime_type: anexo.arquivo.type || null,
+          url: path, mime_type: anexo.arquivo.type || null,
           hash_arquivo: anexo.hash_pericial || anexo.hash || null, criado_por: authManager.getUserId(),
         }], { onConflict: "id" });
         if (metaError) throw metaError;
@@ -552,8 +552,8 @@ class SyncManager {
         const storagePath = `${authManager.getUserId()}/${tabela}/${registro.id}/${fileId}.${ext}`;
         const { error: uploadError } = await client.storage.from("anexos").upload(storagePath, anexo.arquivo, { upsert: true, contentType: anexo.arquivo.type || "image/jpeg" });
         if (uploadError) throw uploadError;
-        const { data: urlData } = client.storage.from("anexos").getPublicUrl(storagePath);
-        anexosRemotos.push({ url: urlData.publicUrl, nome: anexo.nome || "Foto", tipo: anexo.tipo || "image", tamanho: anexo.arquivo.size || anexo.tamanho || 0, hash: anexo.hash || null });
+
+        anexosRemotos.push({ url: storagePath, nome: anexo.nome || "Foto", tipo: anexo.tipo || "image", tamanho: anexo.arquivo.size || anexo.tamanho || 0, hash: anexo.hash || null });
       }
       registro.anexos = anexosRemotos;
       const { data, error } = await client.from(tabela).upsert([registro], { onConflict: "id" }).select().single();
@@ -976,7 +976,7 @@ class SyncManager {
           self.addEventListener('message', function(e) {
             const { dados, tipo } = e.data;
             let resultado;
-            
+
             switch(tipo) {
               case 'compress':
                 resultado = JSON.stringify(dados);
@@ -987,7 +987,7 @@ class SyncManager {
               default:
                 resultado = dados;
             }
-            
+
             self.postMessage({ success: true, resultado });
           });
         `;

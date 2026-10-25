@@ -280,55 +280,16 @@ class Notificacoes {
 
   async notificarNovaOcorrencia(ocorrencia) {
     try {
-      const user = authManager.getUser();
-      if (!user) return;
-
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      // Buscar todos os guardas (exceto o criador)
-      const { data: usuarios, error } = await client
-        .from("usuarios")
-        .select("id")
-        .eq("status", "ativo")
-        .neq("id", user.id);
-
-      if (error) throw error;
-      if (!usuarios || usuarios.length === 0) return;
-
-      const numero =
-        ocorrencia.numero_ocorrencia ||
-        ocorrencia.numero_temporario ||
-        "Rascunho";
-      const tipo = ocorrencia.tipo_ocorrencia === "flagrante"
-        ? "Flagrante"
-        : ocorrencia.tipo_ocorrencia || "Sem tipo";
-
-      // Criar notificações para todos os guardas
-      const notificacoes = usuarios.map((u) => ({
-        usuario_id: u.id,
-        titulo: `📋 Nova Ocorrência`,
-        mensagem: `#${numero} - ${tipo} registrada por ${user.nome_completo}`,
-        tipo: TIPOS_NOTIFICACAO.NOVA_OCORRENCIA,
-        link: `#detalhe-ocorrencia?id=${ocorrencia.id}`,
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
-      }));
-
-      // Inserir em lote
-      const batchSize = 50;
-      for (let i = 0; i < notificacoes.length; i += batchSize) {
-        const batch = notificacoes.slice(i, i + batchSize);
-        await client.from("notificacoes").insert(batch);
-      }
-
-      console.log(
-        `✅ ${notificacoes.length} notificações enviadas para nova ocorrência`,
-      );
-
-      // Enviar notificação push se disponível
-      this.enviarPushNotificacao("Nova Ocorrência", `#${numero} - ${tipo}`);
+      if (!client || !ocorrencia?.id || ocorrencia.ocorrencia_original_id) return;
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: "new_occurrence",
+        p_record_id: ocorrencia.id,
+        p_entity: null,
+      });
+      if (error) console.warn("Erro ao emitir notificação de ocorrência:", error);
     } catch (error) {
-      console.error("Erro ao notificar nova ocorrência:", error);
+      console.warn("Erro ao emitir notificação de ocorrência:", error);
     }
   }
 
@@ -338,53 +299,16 @@ class Notificacoes {
 
   async notificarNovaAbordagem(abordagem, tipo) {
     try {
-      const user = authManager.getUser();
-      if (!user) return;
-
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      // Buscar todos os guardas (exceto o criador)
-      const { data: usuarios, error } = await client
-        .from("usuarios")
-        .select("id")
-        .eq("status", "ativo")
-        .neq("id", user.id);
-
-      if (error) throw error;
-      if (!usuarios || usuarios.length === 0) return;
-
-      const identificador =
-        tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-      // Criar notificações para todos os guardas
-      const notificacoes = usuarios.map((u) => ({
-        usuario_id: u.id,
-        titulo: `🔍 Nova Abordagem`,
-        mensagem: `${identificador} (${tipo}) abordado por ${user.nome_completo}`,
-        tipo: TIPOS_NOTIFICACAO.NOVA_ABORDAGEM,
-        link: "#consulta",
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
-      }));
-
-      // Inserir em lote
-      const batchSize = 50;
-      for (let i = 0; i < notificacoes.length; i += batchSize) {
-        const batch = notificacoes.slice(i, i + batchSize);
-        await client.from("notificacoes").insert(batch);
-      }
-
-      console.log(
-        `✅ ${notificacoes.length} notificações enviadas para nova abordagem`,
-      );
-
-      // Enviar notificação push se disponível
-      this.enviarPushNotificacao(
-        "Nova Abordagem",
-        `${identificador} (${tipo})`,
-      );
+      if (!client || !abordagem?.id || abordagem.abordagem_original_id || !["veiculo", "pessoa"].includes(tipo)) return;
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: "new_approach",
+        p_record_id: abordagem.id,
+        p_entity: tipo,
+      });
+      if (error) console.warn("Erro ao emitir notificação de abordagem:", error);
     } catch (error) {
-      console.error("Erro ao notificar nova abordagem:", error);
+      console.warn("Erro ao emitir notificação de abordagem:", error);
     }
   }
 
@@ -394,55 +318,16 @@ class Notificacoes {
 
   async notificarNovoMural(aviso) {
     try {
-      const user = authManager.getUser();
-      if (!user) return;
-
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      // Buscar todos os guardas (exceto o criador)
-      const { data: usuarios, error } = await client
-        .from("usuarios")
-        .select("id")
-        .eq("status", "ativo")
-        .neq("id", user.id);
-
-      if (error) throw error;
-      if (!usuarios || usuarios.length === 0) return;
-
-      const tipoLabel =
-        {
-          noticia: "📢 Notícia",
-          alerta: "🚨 Alerta",
-          ordem_servico: "📋 Ordem de Serviço",
-          informativo: "ℹ️ Informativo",
-        }[aviso.tipo] || "📢 Novo Aviso";
-
-      // Criar notificações para todos os guardas
-      const notificacoes = usuarios.map((u) => ({
-        usuario_id: u.id,
-        titulo: tipoLabel,
-        mensagem: `${aviso.titulo} - Publicado por ${user.nome_completo}`,
-        tipo: TIPOS_NOTIFICACAO.NOVO_MURAL,
-        link: "#mural",
-        criado_em: globalThis.obterTimestampBrasilSemFuso(),
-      }));
-
-      // Inserir em lote
-      const batchSize = 50;
-      for (let i = 0; i < notificacoes.length; i += batchSize) {
-        const batch = notificacoes.slice(i, i + batchSize);
-        await client.from("notificacoes").insert(batch);
-      }
-
-      console.log(
-        `✅ ${notificacoes.length} notificações enviadas para novo aviso no mural`,
-      );
-
-      // Enviar notificação push se disponível
-      this.enviarPushNotificacao(tipoLabel, aviso.titulo);
+      if (!client || !aviso?.id) return;
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: "new_mural",
+        p_record_id: aviso.id,
+        p_entity: null,
+      });
+      if (error) console.warn("Erro ao emitir notificação do mural:", error);
     } catch (error) {
-      console.error("Erro ao notificar novo aviso no mural:", error);
+      console.warn("Erro ao emitir notificação do mural:", error);
     }
   }
 
@@ -453,79 +338,16 @@ class Notificacoes {
   async notificarRetificacao(retificacao, tipo, entidade) {
     try {
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      const user = authManager.getUser();
-      if (!user) return;
-
-      // Se for uma retificação pendente, notificar apenas supervisores
-      if (tipo === "pendente") {
-        const { data: supervisores, error } = await client
-          .from("usuarios")
-          .select("id")
-          .eq("perfil", "supervisor")
-          .eq("status", "ativo");
-
-        if (error) throw error;
-        if (!supervisores || supervisores.length === 0) return;
-
-        const identificador =
-          entidade === "veiculo" ? retificacao.placa : retificacao.nome;
-
-        const notificacoes = supervisores.map((s) => ({
-          usuario_id: s.id,
-          titulo: `📋 Retificação Pendente - ${entidade.toUpperCase()}`,
-          mensagem: `${identificador} solicitou retificação de ${entidade}. Aguarda sua análise.`,
-          tipo: TIPOS_NOTIFICACAO.RETIFICACAO_PENDENTE,
-          link: "#retificacoes",
-          criado_em: globalThis.obterTimestampBrasilSemFuso(),
-        }));
-
-        // Inserir em lote
-        const batchSize = 50;
-        for (let i = 0; i < notificacoes.length; i += batchSize) {
-          const batch = notificacoes.slice(i, i + batchSize);
-          await client.from("notificacoes").insert(batch);
-        }
-
-        console.log(
-          `✅ ${notificacoes.length} notificações enviadas para retificação pendente`,
-        );
-      } else {
-        // Retificação aprovada/rejeitada - notificar o solicitante
-        const solicitanteId = retificacao.solicitada_por;
-        if (!solicitanteId) return;
-
-        const identificador =
-          entidade === "veiculo" ? retificacao.placa : retificacao.nome;
-
-        let titulo = "";
-        let mensagem = "";
-
-        if (tipo === "aprovada") {
-          titulo = `✅ Retificação Aprovada - ${entidade.toUpperCase()}`;
-          mensagem = `Sua retificação de ${entidade} (${identificador}) foi aprovada.`;
-        } else if (tipo === "rejeitada") {
-          titulo = `❌ Retificação Rejeitada - ${entidade.toUpperCase()}`;
-          mensagem = `Sua retificação de ${entidade} (${identificador}) foi rejeitada. Motivo: ${retificacao.motivo_rejeicao}`;
-        }
-
-        await client.from("notificacoes").insert({
-          usuario_id: solicitanteId,
-          titulo: titulo,
-          mensagem: mensagem,
-          tipo:
-            tipo === "aprovada"
-              ? TIPOS_NOTIFICACAO.RETIFICACAO_APROVADA
-              : TIPOS_NOTIFICACAO.RETIFICACAO_REJEITADA,
-          link: "#consulta",
-          criado_em: globalThis.obterTimestampBrasilSemFuso(),
-        });
-
-        console.log(`✅ Notificação enviada para solicitante (${tipo})`);
-      }
+      if (!client || !retificacao?.id) return;
+      const pendente = tipo === "pendente";
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: pendente ? "occurrence_retification_pending" : "occurrence_retification_decided",
+        p_record_id: retificacao.id,
+        p_entity: null,
+      });
+      if (error) console.warn("Erro ao emitir notificação de retificação:", error);
     } catch (error) {
-      console.error("Erro ao notificar retificação:", error);
+      console.warn("Erro ao emitir notificação de retificação:", error);
     }
   }
 
@@ -536,79 +358,15 @@ class Notificacoes {
   async notificarRetificacaoAbordagem(retificacao, tipo, entidade) {
     try {
       const client = supabaseClient.getClient();
-      if (!client) return;
-
-      const user = authManager.getUser();
-      if (!user) return;
-
-      // Se for uma retificação pendente, notificar apenas supervisores
-      if (tipo === "pendente") {
-        const { data: supervisores, error } = await client
-          .from("usuarios")
-          .select("id")
-          .eq("perfil", "supervisor")
-          .eq("status", "ativo");
-
-        if (error) throw error;
-        if (!supervisores || supervisores.length === 0) return;
-
-        const identificador =
-          entidade === "veiculo" ? retificacao.placa : retificacao.nome;
-
-        const notificacoes = supervisores.map((s) => ({
-          usuario_id: s.id,
-          titulo: `📋 Retificação de Abordagem Pendente - ${entidade.toUpperCase()}`,
-          mensagem: `${identificador} solicitou retificação de abordagem de ${entidade}. Aguarda sua análise.`,
-          tipo: TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_PENDENTE,
-          link: "#retificacoes-abordagens",
-          criado_em: globalThis.obterTimestampBrasilSemFuso(),
-        }));
-
-        // Inserir em lote
-        const batchSize = 50;
-        for (let i = 0; i < notificacoes.length; i += batchSize) {
-          const batch = notificacoes.slice(i, i + batchSize);
-          await client.from("notificacoes").insert(batch);
-        }
-
-        console.log(
-          `✅ ${notificacoes.length} notificações enviadas para retificação de abordagem pendente`,
-        );
-      } else {
-        // Retificação aprovada/rejeitada - notificar o solicitante
-        const solicitanteId = retificacao.solicitada_por;
-        if (!solicitanteId) return;
-
-        const identificador =
-          entidade === "veiculo" ? retificacao.placa : retificacao.nome;
-
-        let titulo = "";
-        let mensagem = "";
-
-        if (tipo === "aprovada") {
-          titulo = `✅ Retificação de Abordagem Aprovada - ${entidade.toUpperCase()}`;
-          mensagem = `Sua retificação de abordagem de ${entidade} (${identificador}) foi aprovada.`;
-        } else if (tipo === "rejeitada") {
-          titulo = `❌ Retificação de Abordagem Rejeitada - ${entidade.toUpperCase()}`;
-          mensagem = `Sua retificação de abordagem de ${entidade} (${identificador}) foi rejeitada. Motivo: ${retificacao.motivo_rejeicao}`;
-        }
-
-        await client.from("notificacoes").insert({
-          usuario_id: solicitanteId,
-          titulo: titulo,
-          mensagem: mensagem,
-          tipo:
-            tipo === "aprovada"
-              ? TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_APROVADA
-              : TIPOS_NOTIFICACAO.RETIFICACAO_ABORDAGEM_REJEITADA,
-          link: "#consulta",
-          criado_em: globalThis.obterTimestampBrasilSemFuso(),
-        });
-
-        console.log(`✅ Notificação enviada para solicitante (${tipo})`);
-      }
+      if (!client || !retificacao?.id || !["veiculo", "pessoa"].includes(entidade)) return;
+      const { error } = await client.rpc("gm_emit_notification", {
+        p_event: tipo === "pendente" ? "approach_retification_pending" : "approach_retification_decided",
+        p_record_id: retificacao.id,
+        p_entity: entidade,
+      });
+      if (error) console.warn("Erro ao emitir notificação de retificação de abordagem:", error);
     } catch (error) {
-      console.error("Erro ao notificar retificação de abordagem:", error);
+      console.warn("Erro ao emitir notificação de retificação de abordagem:", error);
     }
   }
 

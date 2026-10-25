@@ -288,7 +288,6 @@ async function carregarOcorrencias(pagina = 1) {
             ...occ,
             criador: dadosUsuarios[occ.criado_por] || {
               nome_completo: "Desconhecido",
-              cpf: null,
             },
             // 🔥 Usar apenas anexos reais (sem assinaturas)
             anexos: anexosReais,
@@ -327,7 +326,7 @@ async function buscarDadosUsuariosEmLote(ids) {
 
     const { data, error } = await client
       .from("usuarios")
-      .select("id, nome_completo, cpf")
+      .select("id, nome_completo")
       .in("id", ids);
 
     if (error) throw error;
@@ -674,7 +673,7 @@ function renderPaginacao(atual, total) {
 
   for (let i = inicio; i <= fim; i++) {
     html += `
-      <button onclick="window._ocorrenciasPagina(${i})" 
+      <button onclick="window._ocorrenciasPagina(${i})"
         style="padding:4px 8px;border:1px solid ${i === atual ? "var(--azul-bandeira)" : "var(--cinza-claro)"};border-radius:6px;background:${i === atual ? "var(--azul-bandeira)" : "var(--branco)"};color:${i === atual ? "var(--branco)" : "var(--cinza-escuro)"};font-size:12px;cursor:pointer;min-height:30px;min-width:30px;font-weight:${i === atual ? "700" : "400"};">
         ${i}
       </button>
@@ -1257,7 +1256,7 @@ export function verMaisObservacoes(id, appInstance) {
           <i class="fas fa-pencil-alt" style="margin-right:6px;"></i>
           Observações - #${numero}
         </div>
-        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()"
           style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
           <i class="fas fa-times"></i>
         </button>
@@ -1272,7 +1271,7 @@ export function verMaisObservacoes(id, appInstance) {
         </div>
       </div>
       <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()"
           style="width:100%;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
           Fechar
         </button>

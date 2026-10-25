@@ -146,11 +146,6 @@ export async function renderPerfil(container, appInstance) {
                 <input type="text" id="perfil_nome" class="form-control" value="${escaparHtml(name)}" autocomplete="name" maxlength="160" required>
               </div>
               <div class="perfil-field-group">
-                <label for="perfil_cpf">CPF</label>
-                <input type="text" id="perfil_cpf" class="form-control perfil-readonly-field" value="${escaparHtml(formatarCPFSeguro(user.cpf))}" disabled aria-describedby="perfilCpfHint">
-                <small id="perfilCpfHint">Identificador protegido; não pode ser alterado aqui.</small>
-              </div>
-              <div class="perfil-field-group">
                 <label for="perfil_matricula">Matrícula</label>
                 <input type="text" id="perfil_matricula" class="form-control ${podeEditarMatricula ? "" : "perfil-readonly-field"}" value="${escaparHtml(user.matricula || "")}" ${podeEditarMatricula ? "maxlength=\"40\"" : "disabled"}>
                 ${podeEditarMatricula ? "<small>Alteração disponível para supervisores.</small>" : "<small>Para solicitar alteração, procure a supervisão.</small>"}
@@ -270,7 +265,6 @@ export async function salvarPerfil(appInstance) {
   const apelido = String(document.getElementById("perfil_apelido")?.value || "").trim().replace(/^GM\s+/i, "").replace(/\s+/g, " ");
   const email = document.getElementById("perfil_email")?.value?.trim();
   const telefone = document.getElementById("perfil_telefone")?.value?.trim();
-  const matricula = document.getElementById("perfil_matricula")?.value?.trim();
 
   if (!nome) {
     if (appInstance && appInstance.showToast) {
@@ -301,10 +295,6 @@ export async function salvarPerfil(appInstance) {
   if (email !== undefined && email !== "") dados.email = email;
   if (telefone !== undefined && telefone !== "") dados.telefone = telefone;
 
-  // Apenas supervisor pode editar matrícula
-  if (authManager.isSupervisor() && matricula !== undefined) {
-    dados.matricula = matricula;
-  }
 
   const user = authManager.getUser();
   const result = await authManager.atualizarUsuario(user.id, dados);
@@ -483,11 +473,9 @@ export function modalAlterarSenha(appInstance) {
       }
 
       // Verificar senha atual
-      const { data: senhaValida } = await client.rpc("verificar_senha", {
-        p_cpf: user.cpf,
-        p_senha: senhaAtual,
-      });
+      const { data: senhaValida, error: verifyError } = await client.rpc("gm_verify_my_password", { p_password: senhaAtual });
 
+      if (verifyError) throw verifyError;
       if (!senhaValida) {
         if (appInstance && appInstance.showToast) {
           appInstance.showToast("Senha atual incorreta", "warning");
@@ -497,30 +485,19 @@ export function modalAlterarSenha(appInstance) {
         return;
       }
 
-      // Gerar hash da nova senha
-      const { data: hashData } = await client.rpc("criar_hash_senha", {
-        p_senha: novaSenha,
-      });
-
-      // Atualizar senha
-      const result = await authManager.atualizarUsuario(user.id, {
-        senha_hash: hashData,
-        primeiro_acesso: false,
-        status: "ativo",
-      });
-
-      if (!result.success) {
-        if (appInstance && appInstance.showToast) {
-          appInstance.showToast(
-            "Erro ao alterar senha: " + result.error,
-            "error",
-          );
-        } else {
-          showToast("Erro ao alterar senha: " + result.error, "error");
-        }
+      // Persistir a senha do perfil exclusivamente pela RPC autorizada.
+      const { data: hashData, error: hashError } = await client.rpc("criar_hash_senha", { p_senha: novaSenha });
+      if (hashError) throw hashError;
+      const { error: updateError } = await client.rpc("gm_update_my_password", { p_password_hash: hashData });
+      if (updateError) throw updateError;
+      // A RPC do perfil concluiu; Auth é sincronizado pelo mecanismo existente.
+      const { error: authError } = await client.auth.updateUser({ password: novaSenha });
+      if (authError) {
+        const message = "Senha do perfil alterada, mas a senha Auth não foi sincronizada. Uma tentativa posterior de login pode falhar.";
+        if (appInstance?.showToast) appInstance.showToast(message, "error");
+        else showToast(message, "error");
         return;
       }
-
       // Fechar modal
       const modal = document.querySelector(".modal-overlay");
       if (modal) modal.remove();
@@ -699,8 +676,7 @@ function abrirModalConfirmacaoFoto(avatarBlob, user, appInstance) {
       return;
     }
     const currentUser = typeof authManager !== "undefined" ? authManager.getUser() : null;
-    const cpf = String(currentUser?.cpf || user?.cpf || "").replace(/\D/g, "");
-    if (cpf.length !== 11) {
+    if (!currentUser?.id) {
       status.textContent = "Não foi possível confirmar a identificação da conta.";
       return;
     }
@@ -715,12 +691,14 @@ function abrirModalConfirmacaoFoto(avatarBlob, user, appInstance) {
       const publishableKey = window.CONFIG?.SUPABASE_ANON_KEY || client?.supabaseKey;
       if (!client || !projectUrl || !publishableKey) throw new Error("Serviço de upload indisponível.");
       const formData = new FormData();
-      formData.append("cpf", cpf);
       formData.append("password", password);
       formData.append("avatar", avatarBlob, "perfil." + (avatarBlob.type === "image/png" ? "png" : avatarBlob.type === "image/jpeg" ? "jpg" : "webp"));
       const response = await fetch(`${String(projectUrl).replace(/\/$/, "")}/functions/v1/upload-avatar`, {
         method: "POST",
-        headers: { apikey: publishableKey },
+        headers: {
+          apikey: publishableKey,
+          Authorization: `Bearer ${(await client.auth.getSession()).data.session?.access_token || ""}`,
+        },
         body: formData,
       });
       let data = null;

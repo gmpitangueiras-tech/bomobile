@@ -205,12 +205,11 @@ export async function renderDetalheOcorrencia(container, appInstance) {
         if (client) {
           const { data: criador } = await client
             .from("usuarios")
-            .select("nome_completo, cpf")
+            .select("nome_completo")
             .eq("id", estado.ocorrencia.criado_por)
             .single();
           if (criador) {
             criadorNome = criador.nome_completo;
-            criadorCPF = criador.cpf;
           }
         }
       } catch (error) {
@@ -686,7 +685,7 @@ function renderAbaAssinaturas(appInstance) {
           <i class="fas fa-user-shield"></i> Coletada por: ${nomeGuarda}
         </div>
         <div style="margin-top:8px;border-top:1px solid var(--cinza-claro);padding-top:8px;text-align:center;">
-          <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}" 
+          <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}"
             style="max-width:100%;max-height:80px;border:1px solid var(--cinza-claro);border-radius:4px;cursor:pointer;"
             onclick="window._detalheVerAssinatura(${index})">
           <div style="font-size:9px;color:var(--cinza-medio);margin-top:2px;">
@@ -749,24 +748,24 @@ function verAssinaturaAmpliada(index, appInstance) {
           <span class="badge badge-azul" style="font-size:12px;padding:4px 16px;">${tipoLabel}</span>
           <h3 style="margin:6px 0 0 0;font-size:16px;color:var(--cinza-escuro);">${ass.nome}</h3>
         </div>
-        <button onclick="this.closest('.modal-overlay').remove()" 
+        <button onclick="this.closest('.modal-overlay').remove()"
           style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
           <i class="fas fa-times"></i>
         </button>
       </div>
       ${ass.cpf ? `<div style="font-size:13px;color:var(--cinza-medio);margin-bottom:8px;">CPF: ${ass.cpf}</div>` : ""}
       <div style="font-size:11px;color:var(--cinza-medio);margin-bottom:12px;">
-        <i class="fas fa-calendar"></i> ${dataAssinatura} 
+        <i class="fas fa-calendar"></i> ${dataAssinatura}
         <span style="margin-left:12px;"><i class="fas fa-user-shield"></i> Coletada por: ${ass.nome_guarda || "Desconhecido"}</span>
       </div>
       <div style="background:var(--branco-fumaca);border-radius:var(--border-radius);padding:20px;border:2px solid var(--cinza-claro);text-align:center;">
-        <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}" 
+        <img src="${ass.assinatura_data_url}" alt="Assinatura de ${ass.nome}"
           style="max-width:100%;max-height:300px;border:1px solid var(--cinza-claro);border-radius:4px;">
       </div>
       <div style="margin-top:12px;text-align:center;font-size:11px;color:var(--cinza-medio);">
         <i class="fas fa-info-circle"></i> Assinatura digital coletada em dispositivo móvel
       </div>
-      <button onclick="this.closest('.modal-overlay').remove()" 
+      <button onclick="this.closest('.modal-overlay').remove()"
         class="btn-secondary" style="width:100%;margin-top:12px;border-radius:12px;min-height:44px;">
         Fechar
       </button>
@@ -810,9 +809,9 @@ function renderAbaAnexos(appInstance) {
           ${imagens
             .map(
               (img, index) => `
-            <div onclick="window._detalheVerImagem(${index})" 
+            <div onclick="window._detalheVerImagem(${index})"
               style="aspect-ratio:1;border-radius:var(--border-radius);overflow:hidden;cursor:pointer;background:var(--cinza-claro);position:relative;border:2px solid var(--cinza-claro);">
-              <img src="${img.url_thumb || img.url}" alt="Anexo ${index + 1}" 
+              <img src="${img.url_thumb || img.url}" alt="Anexo ${index + 1}"
                 style="width:100%;height:100%;object-fit:cover;"
                 loading="lazy"
                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
@@ -827,7 +826,7 @@ function renderAbaAnexos(appInstance) {
         ${
           imagens.length > 3
             ? `
-          <button onclick="window._detalheVerImagem(0)" 
+          <button onclick="window._detalheVerImagem(0)"
             style="width:100%;margin-top:8px;padding:6px;border:none;border-radius:var(--border-radius);background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:12px;font-weight:600;cursor:pointer;">
             <i class="fas fa-expand"></i> Ver todas as imagens
           </button>
@@ -858,7 +857,7 @@ function renderAbaAnexos(appInstance) {
             ${
               doc.url
                 ? `
-              <button onclick="window._detalheBaixarAnexo('${doc.url}', '${doc.nome_arquivo}')" 
+              <button onclick="window._detalheBaixarAnexo('${doc.url}', '${doc.nome_arquivo}')"
                 style="padding:6px 10px;border:none;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);cursor:pointer;font-size:12px;min-height:32px;">
                 <i class="fas fa-download"></i>
               </button>
@@ -943,7 +942,7 @@ function renderAbaHistorico(appInstance) {
     html += `
       <div style="position:relative;padding-bottom:${isLast ? "0" : "16px"};${!isLast ? "border-left: none;" : ""}">
         <div style="position:absolute;left:-16px;top:4px;width:12px;height:12px;border-radius:50%;background:${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-medio)"};border:2px solid var(--branco);box-shadow:0 0 0 2px ${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-medio)"};"></div>
-        
+
         <div style="background:${isActiveVersion ? "var(--verde-muito-claro)" : "var(--branco)"};border-radius:var(--border-radius);padding:12px;margin-left:12px;box-shadow:var(--sombra-suave);border-left:3px solid ${isActiveVersion ? "var(--verde-bandeira)" : "var(--cinza-claro)"};">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
@@ -955,7 +954,7 @@ function renderAbaHistorico(appInstance) {
             </div>
             <span style="font-size:11px;color:var(--cinza-medio);">#${numero}</span>
           </div>
-          
+
           <div style="font-size:12px;color:var(--cinza-medio);margin-top:4px;">
             <i class="fas fa-calendar" style="margin-right:4px;"></i> ${data}
           </div>
@@ -1001,7 +1000,7 @@ function renderAbaHistorico(appInstance) {
               : ""
           }
 
-          <button onclick="window.app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })" 
+          <button onclick="window.app.navigateTo('detalhe-ocorrencia', { id: '${item.id}' })"
             style="margin-top:6px;padding:4px 12px;border:none;border-radius:6px;background:var(--azul-muito-claro);color:var(--azul-bandeira);font-size:11px;cursor:pointer;font-weight:600;min-height:28px;">
             <i class="fas fa-eye" style="margin-right:4px;"></i> Ver versão
           </button>
@@ -1033,32 +1032,32 @@ function renderAbaPDF(appInstance) {
         <i class="fas fa-file-pdf" style="font-size:14px;"></i>
         Exportar PDF - #${numero}
       </h4>
-      
+
       <p style="font-size:12px;color:var(--cinza-medio);margin-bottom:12px;">
         Selecione os conteúdos que deseja incluir no PDF:
       </p>
 
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-          <input type="checkbox" ${options.incluirDados ? "checked" : ""} 
+          <input type="checkbox" ${options.incluirDados ? "checked" : ""}
             onchange="window._detalheTogglePDFOption('incluirDados')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
           <span>📋 Dados da ocorrência</span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-          <input type="checkbox" ${options.incluirEnvolvidos ? "checked" : ""} 
+          <input type="checkbox" ${options.incluirEnvolvidos ? "checked" : ""}
             onchange="window._detalheTogglePDFOption('incluirEnvolvidos')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
           <span>👤 Envolvidos (${estado.envolvidos.length})</span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-          <input type="checkbox" ${options.incluirObservacoes ? "checked" : ""} 
+          <input type="checkbox" ${options.incluirObservacoes ? "checked" : ""}
             onchange="window._detalheTogglePDFOption('incluirObservacoes')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
           <span>📝 Observações</span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-          <input type="checkbox" ${options.incluirAnexos ? "checked" : ""} 
+          <input type="checkbox" ${options.incluirAnexos ? "checked" : ""}
             onchange="window._detalheTogglePDFOption('incluirAnexos')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
           <span>📎 Anexos (${estado.anexos.filter((a) => a.tipo !== "assinatura").length})</span>
@@ -1067,7 +1066,7 @@ function renderAbaPDF(appInstance) {
           temAssinaturas
             ? `
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-            <input type="checkbox" ${options.incluirAssinaturas ? "checked" : ""} 
+            <input type="checkbox" ${options.incluirAssinaturas ? "checked" : ""}
               onchange="window._detalheTogglePDFOption('incluirAssinaturas')"
               style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
             <span>✍️ Assinaturas (${normalizarListaAssinaturas(estado.assinaturas).length})</span>
@@ -1076,7 +1075,7 @@ function renderAbaPDF(appInstance) {
             : ""
         }
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-          <input type="checkbox" ${options.incluirHash ? "checked" : ""} 
+          <input type="checkbox" ${options.incluirHash ? "checked" : ""}
             onchange="window._detalheTogglePDFOption('incluirHash')"
             style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
           <span>🔒 Hash de integridade</span>
@@ -1085,7 +1084,7 @@ function renderAbaPDF(appInstance) {
           temHistorico
             ? `
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-            <input type="checkbox" ${options.incluirVersoes ? "checked" : ""} 
+            <input type="checkbox" ${options.incluirVersoes ? "checked" : ""}
               onchange="window._detalheTogglePDFOption('incluirVersoes')"
               style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
             <span>📜 Histórico de versões (${estado.historico.length})</span>
@@ -1097,7 +1096,7 @@ function renderAbaPDF(appInstance) {
           estado.ocorrencia.assinatura
             ? `
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;">
-            <input type="checkbox" ${options.incluirAssinatura ? "checked" : ""} 
+            <input type="checkbox" ${options.incluirAssinatura ? "checked" : ""}
               onchange="window._detalheTogglePDFOption('incluirAssinatura')"
               style="width:18px;height:18px;accent-color:var(--azul-bandeira);">
             <span>✍️ Assinatura</span>
@@ -1107,7 +1106,7 @@ function renderAbaPDF(appInstance) {
         }
       </div>
 
-      <button onclick="window._detalheGerarPDF()" 
+      <button onclick="window._detalheGerarPDF()"
         class="btn-primary" style="border-radius:12px;min-height:44px;gap:8px;">
         <i class="fas fa-file-pdf" style="font-size:18px;"></i>
         Baixar PDF
@@ -1222,8 +1221,8 @@ function renderBarraAcoes(occ, perms, appInstance) {
         ${botoes
           .map(
             (btn) => `
-          <button onclick="${btn.action}" 
-            class="${btn.class}" 
+          <button onclick="${btn.action}"
+            class="${btn.class}"
             style="width:100%;border-radius:12px;min-height:44px;gap:6px;${btn.style || ""}">
             <i class="fas ${btn.icon}" style="font-size:14px;"></i>
             ${btn.label}
@@ -1468,11 +1467,16 @@ export function verImagemGaleria(index, appInstance) {
   if (typeof window._consultaAbrirCarrossel === "function") {
     window._consultaAbrirCarrossel(imagens, index, appInstance);
   } else {
-    window.open(imagens[index]?.url, "_blank");
+    if (typeof window.abrirUrlAnexo === "function") void window.abrirUrlAnexo(imagens[index]?.url);
+    else window.open(imagens[index]?.url, "_blank");
   }
 }
 
 export function baixarAnexo(url, nome) {
+  if (typeof window.abrirUrlAnexo === "function") {
+    void window.abrirUrlAnexo(url, nome || true);
+    return;
+  }
   const link = document.createElement("a");
   link.href = url;
   link.download = nome;

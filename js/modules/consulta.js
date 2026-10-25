@@ -579,7 +579,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
               ${campo.label}
             </label>
-            <input type="datetime-local" id="retificacao_campo_${campo.campo}" 
+            <input type="datetime-local" id="retificacao_campo_${campo.campo}"
               value="${valorFormatado}"
               style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:38px;">
             <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
@@ -595,7 +595,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
               ${campo.label}
             </label>
-            <textarea id="retificacao_campo_${campo.campo}" rows="2" 
+            <textarea id="retificacao_campo_${campo.campo}" rows="2"
               style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:50px;resize:vertical;">${valorAtual}</textarea>
             <div style="font-size:10px;color:var(--cinza-medio);margin-top:2px;">
               Valor atual: ${valorAtual || "Não informado"}
@@ -609,7 +609,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
           <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
             ${campo.label}
           </label>
-          <input type="text" id="retificacao_campo_${campo.campo}" 
+          <input type="text" id="retificacao_campo_${campo.campo}"
             value="${valorAtual}"
             placeholder="Digite o novo valor"
             style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:38px;">
@@ -628,7 +628,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
           <i class="fas fa-sync-alt" style="margin-right:8px;"></i>
           Solicitar Retificação - ${isVeiculo ? "Veículo" : "Pessoa"}
         </div>
-        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()"
           style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
           <i class="fas fa-times"></i>
         </button>
@@ -656,7 +656,7 @@ function abrirModalSolicitarRetificacaoAbordagem(
             <label style="display:block;font-size:12px;font-weight:600;color:var(--cinza-escuro);margin-bottom:3px;">
               Justificativa <span class="required" style="color:var(--erro);">*</span>
             </label>
-            <textarea id="retificacao_justificativa" rows="3" 
+            <textarea id="retificacao_justificativa" rows="3"
               placeholder="Explique o motivo da retificação (mínimo 10 caracteres)"
               style="width:100%;padding:8px 10px;border:2px solid var(--cinza-claro);border-radius:10px;font-size:13px;background:var(--branco);color:var(--cinza-escuro);min-height:60px;resize:vertical;"></textarea>
             <div class="input-hint" style="font-size:11px;color:var(--cinza-medio);margin-top:3px;">
@@ -666,11 +666,11 @@ function abrirModalSolicitarRetificacaoAbordagem(
         </form>
       </div>
       <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:column;gap:8px;position:sticky;bottom:0;background:var(--branco);border-radius:0 0 20px 20px;">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()"
           style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
           Cancelar
         </button>
-        <button type="button" class="btn-primary" onclick="window._confirmarRetificacaoAbordagem('${abordagem.id}', '${tipo}')" 
+        <button type="button" class="btn-primary" onclick="window._confirmarRetificacaoAbordagem('${abordagem.id}', '${tipo}')"
           style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--gradiente-principal);color:var(--branco);">
           <i class="fas fa-paper-plane" style="margin-right:6px;"></i> Solicitar Retificação
         </button>
@@ -829,17 +829,10 @@ function abrirModalSolicitarRetificacaoAbordagem(
         novaAbordagem,
       );
 
-      // 🔥 NOVO: Notificar supervisores (se não for supervisor)
+      // Supervisor aplicando uma retificação diretamente não gera pedido pendente.
       if (!isSupervisor) {
-        await notificarSupervisoresRetificacaoAbordagem(novaAbordagem, tipo);
-      }
-
-      // 🔥 NOVO: Notificar solicitante (se for supervisor)
-      if (isSupervisor) {
-        await notificarSolicitanteRetificacaoAbordagem(
-          novaAbordagem,
-          tipo,
-          "aprovada",
+        await emitirNotificacaoConsulta(
+          "approach_retification_pending", novaAbordagem.id, tipo,
         );
       }
 
@@ -931,92 +924,18 @@ async function registrarLogPericialAbordagem(
   }
 }
 
-/**
- * 🔥 NOVO: Notificar supervisores sobre retificação pendente
- */
-async function notificarSupervisoresRetificacaoAbordagem(abordagem, tipo) {
+async function emitirNotificacaoConsulta(evento, registroId, entidade = null) {
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    const { data: supervisores, error } = await client
-      .from("usuarios")
-      .select("id")
-      .eq("perfil", "supervisor")
-      .eq("status", "ativo");
-
-    if (error) throw error;
-    if (!supervisores || supervisores.length === 0) return;
-
-    const identificador = tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-    const notificacoes = supervisores.map((s) => ({
-      usuario_id: s.id,
-      titulo: `📋 Retificação de Abordagem Pendente`,
-      mensagem: `${identificador} (${tipo}) solicitou retificação. Aguarda sua análise.`,
-      tipo: "retificacao_pendente",
-      link: "#retificacoes-abordagens",
-      criado_em: globalThis.obterTimestampBrasilSemFuso(),
-    }));
-
-    const batchSize = 50;
-    for (let i = 0; i < notificacoes.length; i += batchSize) {
-      const batch = notificacoes.slice(i, i + batchSize);
-      await client.from("notificacoes").insert(batch);
-    }
-
-    console.log(
-      `✅ ${notificacoes.length} notificações enviadas para supervisores`,
-    );
-  } catch (error) {
-    console.error("Erro ao notificar supervisores:", error);
-  }
-}
-
-/**
- * 🔥 NOVO: Notificar solicitante sobre aprovação/rejeição
- */
-async function notificarSolicitanteRetificacaoAbordagem(
-  abordagem,
-  tipo,
-  status,
-  motivo = null,
-) {
-  try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    const solicitanteId = abordagem.solicitada_por;
-    if (!solicitanteId) return;
-
-    const identificador = tipo === "veiculo" ? abordagem.placa : abordagem.nome;
-
-    let titulo = "";
-    let mensagem = "";
-
-    if (status === "aprovada") {
-      titulo = `✅ Retificação Aprovada`;
-      mensagem = `Sua retificação de abordagem (${identificador}) foi aprovada pelo supervisor.`;
-    } else if (status === "rejeitada") {
-      titulo = `❌ Retificação Rejeitada`;
-      mensagem = `Sua retificação de abordagem (${identificador}) foi rejeitada. Motivo: ${motivo}`;
-    }
-
-    await client.from("notificacoes").insert({
-      usuario_id: solicitanteId,
-      titulo: titulo,
-      mensagem: mensagem,
-      tipo:
-        status === "aprovada"
-          ? "retificacao_aprovada"
-          : "retificacao_rejeitada",
-      link: "#consulta",
-      criado_em: globalThis.obterTimestampBrasilSemFuso(),
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client || !registroId) return;
+    const { error } = await client.rpc("gm_emit_notification", {
+      p_event: evento,
+      p_record_id: registroId,
+      p_entity: entidade,
     });
+    if (error) console.warn("Erro ao emitir notificação:", error);
   } catch (error) {
-    console.error("Erro ao notificar solicitante:", error);
+    console.warn("Erro ao emitir notificação:", error);
   }
 }
 
@@ -1052,7 +971,16 @@ function verificarCamposPreenchidos() {
 // CARROSSEL DE FOTOS
 // ============================================
 
-function abrirCarrosselFotos(imagens, indexInicial = 0, appInstance) {
+async function abrirCarrosselFotos(imagens, indexInicial = 0, appInstance) {
+  // Converter paths do bucket privado e URLs públicas legadas em URLs assinadas.
+  if (Array.isArray(imagens) && typeof window.resolverUrlAnexo === "function") {
+    imagens = await Promise.all(imagens.map(async (imagem) => {
+      if (!imagem || typeof imagem !== "object") return imagem;
+      const url = await window.resolverUrlAnexo(imagem.url);
+      const url_thumb = await window.resolverUrlAnexo(imagem.url_thumb || imagem.url);
+      return { ...imagem, url: url || "", url_thumb: url_thumb || url || "" };
+    }));
+  }
   // Verificar se há imagens
   if (!imagens || imagens.length === 0) {
     if (appInstance && appInstance.showToast) {
@@ -1164,6 +1092,10 @@ function abrirCarrosselFotos(imagens, indexInicial = 0, appInstance) {
       e.stopPropagation();
       const currentImg = imagens[currentIndex];
       if (currentImg && currentImg.url) {
+        if (typeof window.abrirUrlAnexo === "function") {
+          void window.abrirUrlAnexo(currentImg.url, currentImg.nome || `imagem_${currentIndex + 1}.jpg`);
+          return;
+        }
         const link = document.createElement("a");
         link.href = currentImg.url;
         link.download = currentImg.nome || `imagem_${currentIndex + 1}.jpg`;
@@ -1583,7 +1515,8 @@ function abrirCarrosselFotos(imagens, indexInicial = 0, appInstance) {
     if (imagens && imagens.length > 0) {
       const url = imagens[0].url || imagens[0].url_thumb;
       if (url) {
-        window.open(url, "_blank");
+        if (typeof window.abrirUrlAnexo === "function") void window.abrirUrlAnexo(url);
+        else window.open(url, "_blank");
       } else if (appInstance && appInstance.showToast) {
         appInstance.showToast("Erro ao abrir imagem", "error");
       }
@@ -1973,7 +1906,7 @@ export function abrirFormularioAbordagem(appInstance, termoPreenchido = "", tipo
       <input type="text" id="formLocal" placeholder="Endereço, cruzamento ou ponto de referência" style="width:100%;padding:10px 12px;border:2px solid var(--cinza-claro);border-radius:8px;font-size:14px;min-height:44px;">
       <small class="approach-field-hint">Se o GPS não estiver disponível, registre uma referência que permita localizar o atendimento.</small>
     </div>
-    
+
     <!-- 🔥 NOVO: Data/Hora Início e Encerramento -->
     <div class="approach-form-time-grid">
       <div style="min-width:0;">
@@ -2381,6 +2314,12 @@ export async function salvarAbordagemComAnexos(appInstance) {
     }
     const { data, error } = await client.from(tabela).insert([dados]).select();
     if (error) throw error;
+    const registroCriado = Array.isArray(data) ? data[0] : data;
+    if (registroCriado?.id) {
+      await emitirNotificacaoConsulta(
+        "new_approach", registroCriado.id, isVeiculo ? "veiculo" : "pessoa",
+      );
+    }
 
     estado.arquivosTemp = [];
     const previewArea = document.getElementById("abordagemPreviewArea");
@@ -2861,7 +2800,7 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
             <i class="fas fa-question-circle" style="margin-right:8px;color:var(--aviso);"></i>
             ${titulo}
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
             style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
             <i class="fas fa-times"></i>
           </button>
@@ -2870,11 +2809,11 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
           <p style="font-size:15px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;">${mensagem}</p>
         </div>
         <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:10px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
             style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Continuar Editando
           </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);" 
+          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);"
             style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--erro);color:var(--branco);">
             <i class="fas fa-trash" style="margin-right:6px;"></i> Descartar
           </button>
@@ -3096,7 +3035,7 @@ function renderizarRanking(ranking) {
           <i class="fas fa-link" style="color:#5c7d95;margin-right:8px;"></i>
           Resumo de correspondências exatas
         </div>
-        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()"
           style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
           <i class="fas fa-times"></i>
         </button>
@@ -3115,7 +3054,7 @@ function renderizarRanking(ranking) {
         <p class="consulta-repeat-note">Correspondências exatas em registros ativos; este resumo não classifica pessoas ou veículos nem indica risco ou autoria.</p>
       </div>
       <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()"
           style="width:100%;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
           Fechar
         </button>
@@ -3267,7 +3206,7 @@ async function carregarAbordagens(container, appInstance) {
             <i class="fas fa-search"></i>
           </div>
           <p style="font-size:14px;color:var(--cinza-medio);">Nenhum registro encontrado com estes filtros</p><p style="font-size:12px;color:var(--cinza-medio);">Tente ampliar o período, alterar o tipo ou limpar a busca.</p>
-          
+
         </div>
       `;
       estado.temMais = false;
@@ -4325,16 +4264,13 @@ async function uploadAnexosAbordagem(anexos, isVeiculo) {
   for (const anexo of anexos) {
     try {
       const fileExt = anexo.arquivo.name.split(".").pop();
-      const fileName = `${prefix}/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const fileName = `${authManager.getUserId()}/${prefix}/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
       const { error: uploadError } = await client.storage
         .from("anexos")
         .upload(fileName, anexo.arquivo);
       if (uploadError) throw uploadError;
-      const { data: urlData } = client.storage
-        .from("anexos")
-        .getPublicUrl(fileName);
       resultados.push({
-        url: urlData.publicUrl,
+        url: fileName,
         nome: anexo.nome,
         tipo: anexo.tipo,
         tamanho: anexo.tamanho,
@@ -4376,7 +4312,8 @@ export default {
     if (todasImagens && todasImagens.length > 0) {
       abrirCarrosselFotos(todasImagens, index || 0, window._consultaApp);
     } else if (url) {
-      window.open(url, "_blank");
+      if (typeof window.abrirUrlAnexo === "function") void window.abrirUrlAnexo(url, nome || undefined);
+      else window.open(url, "_blank");
     }
   },
 };

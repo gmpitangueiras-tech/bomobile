@@ -491,7 +491,7 @@ function renderPaginacao(atual, total) {
 
   for (let i = inicio; i <= fim; i++) {
     html += `
-      <button onclick="window._muralPagina(${i})" 
+      <button onclick="window._muralPagina(${i})"
         style="padding:4px 8px;border:1px solid ${i === atual ? "var(--azul-bandeira)" : "var(--cinza-claro)"};border-radius:6px;background:${i === atual ? "var(--azul-bandeira)" : "var(--branco)"};color:${i === atual ? "var(--branco)" : "var(--cinza-escuro)"};font-size:12px;cursor:pointer;min-height:30px;min-width:30px;font-weight:${i === atual ? "700" : "400"};">
         ${i}
       </button>
@@ -855,7 +855,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
             <i class="fas fa-comments" style="margin-right:6px;"></i>
             Comentários (${comentarios?.length || 0})
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()" 
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove()"
             style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
             <i class="fas fa-times"></i>
           </button>
@@ -887,7 +887,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
           }
         </div>
         <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()" 
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove()"
             style="width:100%;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Fechar
           </button>
@@ -1016,7 +1016,8 @@ export function verImagensAviso(id, appInstance) {
     window._consultaAbrirCarrossel(imagens, 0, appInstance);
   } else {
     // Fallback: abrir em nova aba
-    window.open(imagens[0].url, "_blank");
+    if (typeof window.abrirUrlAnexo === "function") void window.abrirUrlAnexo(imagens[0].url);
+    else window.open(imagens[0].url, "_blank");
   }
 }
 
@@ -1163,7 +1164,7 @@ export function abrirFormularioMural(container, appInstance) {
             <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
               Título <span class="required" style="color:var(--erro);">*</span>
             </label>
-            <input type="text" id="muralTitulo" placeholder="Título do aviso" 
+            <input type="text" id="muralTitulo" placeholder="Título do aviso"
               style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
           </div>
 
@@ -1183,7 +1184,7 @@ export function abrirFormularioMural(container, appInstance) {
             <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
               Localização
             </label>
-            <input type="text" id="muralLocalizacao" placeholder="Ex: Astorga - PR, Vila Rural" 
+            <input type="text" id="muralLocalizacao" placeholder="Ex: Astorga - PR, Vila Rural"
               style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
           </div>
 
@@ -1191,7 +1192,7 @@ export function abrirFormularioMural(container, appInstance) {
             <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
               Tag
             </label>
-            <input type="text" id="muralTag" placeholder="Ex: Veículo, Pessoa, Patrulhamento" 
+            <input type="text" id="muralTag" placeholder="Ex: Veículo, Pessoa, Patrulhamento"
               style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
           </div>
 
@@ -1199,7 +1200,7 @@ export function abrirFormularioMural(container, appInstance) {
             <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
               Conteúdo <span class="required" style="color:var(--erro);">*</span>
             </label>
-            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..." 
+            <textarea id="muralConteudo" rows="4" placeholder="Descreva os detalhes do aviso..."
               style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:80px;resize:vertical;"></textarea>
           </div>
 
@@ -1209,9 +1210,9 @@ export function abrirFormularioMural(container, appInstance) {
               <i class="fas fa-camera"></i> Fotos (ilimitado) 🔥
             </label>
             <div style="display:flex;flex-direction:column;gap:6px;">
-              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;" 
+              <input type="file" id="muralArquivo" accept="image/*" multiple style="display:none;"
                 onchange="window._muralPreviewImagens(this)">
-              <button type="button" onclick="document.getElementById('muralArquivo').click()" 
+              <button type="button" onclick="document.getElementById('muralArquivo').click()"
                 class="btn-secondary" style="width:100%;font-size:12px;padding:8px;border-radius:12px;min-height:40px;">
                 <i class="fas fa-camera"></i> Selecionar Fotos
               </button>
@@ -1277,7 +1278,7 @@ function previewMultiplasImagensMural(input) {
         "position:relative;width:70px;height:70px;border-radius:8px;overflow:hidden;border:2px solid var(--cinza-claro);";
       div.innerHTML = `
         <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">
-        <button type="button" onclick="window._muralRemoverImagem(this)" 
+        <button type="button" onclick="window._muralRemoverImagem(this)"
           style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.8);color:white;border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;">
           <i class="fas fa-times"></i>
         </button>
@@ -1455,7 +1456,7 @@ async function uploadAnexosMural(anexos) {
   for (const anexo of anexos) {
     try {
       const fileExt = anexo.arquivo.name.split(".").pop();
-      const fileName = `mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const fileName = `${authManager.getUserId()}/mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
       const { error: uploadError } = await client.storage
         .from("anexos")
@@ -1463,25 +1464,18 @@ async function uploadAnexosMural(anexos) {
 
       if (uploadError) throw uploadError;
 
-      const { data: urlData } = client.storage
-        .from("anexos")
-        .getPublicUrl(fileName);
-
-      const thumbFileName = `mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}_thumb.${fileExt}`;
+      const thumbFileName = `${authManager.getUserId()}/mural/${timestamp}-${Math.random().toString(36).substring(2, 8)}_thumb.${fileExt}`;
       const { error: thumbError } = await client.storage
         .from("anexos")
         .upload(thumbFileName, anexo.arquivo);
 
-      let thumbUrl = urlData.publicUrl;
+      let thumbUrl = fileName;
       if (!thumbError) {
-        const { data: thumbData } = client.storage
-          .from("anexos")
-          .getPublicUrl(thumbFileName);
-        thumbUrl = thumbData.publicUrl;
+        thumbUrl = thumbFileName;
       }
 
       resultados.push({
-        url: urlData.publicUrl,
+        url: fileName,
         url_thumb: thumbUrl,
         nome: anexo.nome,
         tipo: anexo.tipo,
@@ -1545,44 +1539,16 @@ function comprimirImagem(file, maxWidth = 800, quality = 0.8) {
 
 async function notificarNovoAviso(aviso) {
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) return;
-
-    const { data: usuarios, error } = await client
-      .from("usuarios")
-      .select("id")
-      .eq("status", "ativo")
-      .neq("id", aviso.criado_por);
-
-    if (error) throw error;
-    if (usuarios.length === 0) return;
-
-    const notificacoes = usuarios.map((u) => ({
-      usuario_id: u.id,
-      titulo: `📢 Novo aviso: ${aviso.titulo}`,
-      mensagem: `Um novo aviso "${aviso.titulo}" foi publicado no mural.`,
-      tipo: "sistema",
-      link: "#mural",
-      criado_em: globalThis.obterTimestampBrasilSemFuso(),
-    }));
-
-    const batchSize = 50;
-    for (let i = 0; i < notificacoes.length; i += batchSize) {
-      const batch = notificacoes.slice(i, i + batchSize);
-      const { error: insertError } = await client
-        .from("notificacoes")
-        .insert(batch);
-      if (insertError) {
-        console.warn("Erro ao inserir notificações em lote:", insertError);
-      }
-    }
-
-    console.log(
-      `✅ ${notificacoes.length} notificações enviadas para o novo aviso`,
-    );
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!client || !aviso?.id) return;
+    const { error } = await client.rpc("gm_emit_notification", {
+      p_event: "new_mural",
+      p_record_id: aviso.id,
+      p_entity: null,
+    });
+    if (error) console.warn("Erro ao emitir notificação do mural:", error);
   } catch (error) {
-    console.error("Erro ao enviar notificações:", error);
+    console.warn("Erro ao emitir notificação do mural:", error);
   }
 }
 
@@ -1627,7 +1593,7 @@ export async function editarAvisoMural(id, container, appInstance) {
               <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
                 Título <span class="required">*</span>
               </label>
-              <input type="text" id="muralTitulo" value="${aviso.titulo}" 
+              <input type="text" id="muralTitulo" value="${aviso.titulo}"
                 style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
             </div>
 
@@ -1647,7 +1613,7 @@ export async function editarAvisoMural(id, container, appInstance) {
               <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
                 Localização
               </label>
-              <input type="text" id="muralLocalizacao" value="${aviso.localizacao || ""}" 
+              <input type="text" id="muralLocalizacao" value="${aviso.localizacao || ""}"
                 style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
             </div>
 
@@ -1655,7 +1621,7 @@ export async function editarAvisoMural(id, container, appInstance) {
               <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
                 Tag
               </label>
-              <input type="text" id="muralTag" value="${aviso.tag || ""}" 
+              <input type="text" id="muralTag" value="${aviso.tag || ""}"
                 style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:40px;">
             </div>
 
@@ -1663,12 +1629,12 @@ export async function editarAvisoMural(id, container, appInstance) {
               <label style="display:block;font-size:12px;margin-bottom:4px;font-weight:600;">
                 Conteúdo <span class="required">*</span>
               </label>
-              <textarea id="muralConteudo" rows="4" 
+              <textarea id="muralConteudo" rows="4"
                 style="width:100%;padding:8px 12px;border:2px solid var(--cinza-claro);border-radius:12px;font-size:14px;min-height:80px;resize:vertical;">${aviso.conteudo}</textarea>
             </div>
 
             <div class="form-group" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""} 
+              <input type="checkbox" id="muralPrioridade" ${aviso.prioridade ? "checked" : ""}
                 style="width:18px;height:18px;accent-color:var(--erro);">
               <label style="font-size:12px;font-weight:700;color:var(--erro);">🚨 Aviso Prioritário (Urgente)</label>
             </div>
@@ -1827,7 +1793,7 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
             <i class="fas fa-question-circle" style="margin-right:6px;"></i>
             ${titulo}
           </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
+          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
             style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
             <i class="fas fa-times"></i>
           </button>
@@ -1836,11 +1802,11 @@ function confirmarModal(mensagem, titulo = "Confirmar") {
           <p style="font-size:14px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;white-space:pre-wrap;">${mensagem}</p>
         </div>
         <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:8px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" 
+          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
             style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
             Cancelar
           </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);" 
+          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);"
             style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--gradiente-principal);color:var(--branco);">
             <i class="fas fa-check" style="margin-right:4px;"></i> Confirmar
           </button>

@@ -150,7 +150,7 @@ class OcorrenciaManager {
 
       const { data, error } = await client
         .from("usuarios")
-        .select("nome_completo, cpf")
+        .select("nome_completo")
         .eq("id", usuarioId)
         .single();
 
@@ -160,10 +160,10 @@ class OcorrenciaManager {
       }
 
       if (data) {
-        this.cacheUsuarios[usuarioId] = data;
+        this.cacheUsuarios[usuarioId] = { nome_completo: data.nome_completo, cpf: null };
       }
 
-      return data || { nome_completo: null, cpf: null };
+      return data ? { nome_completo: data.nome_completo, cpf: null } : { nome_completo: null, cpf: null };
     } catch (error) {
       console.warn("Erro ao buscar dados do usuário:", error);
       return { nome_completo: null, cpf: null };
@@ -192,7 +192,7 @@ class OcorrenciaManager {
 
       const { data, error } = await client
         .from("usuarios")
-        .select("id, nome_completo, cpf")
+        .select("id, nome_completo")
         .in("id", idsParaBuscar);
 
       if (error) {
@@ -204,7 +204,7 @@ class OcorrenciaManager {
       data.forEach((usuario) => {
         this.cacheUsuarios[usuario.id] = {
           nome_completo: usuario.nome_completo,
-          cpf: usuario.cpf,
+          cpf: null,
         };
         resultado[usuario.id] = this.cacheUsuarios[usuario.id];
       });
@@ -1181,6 +1181,7 @@ class OcorrenciaManager {
         numero_temporario: `RET-${Date.now()}`,
         criado_por: original.criado_por,
         criado_em: original.criado_em,
+        atualizado_por: user.id,
         data_hora_inicio: original.data_hora_inicio,
         data_hora_encerramento: original.data_hora_encerramento,
         forma_solicitacao: original.forma_solicitacao,
@@ -1917,7 +1918,7 @@ class OcorrenciaManager {
       const hash = await this.gerarHashAnexo(arquivoProcessado);
 
       const fileExt = arquivoProcessado.name.split(".").pop();
-      const fileName = `${ocorrenciaId}/${Date.now()}-${arquivoProcessado.name}`;
+      const fileName = `${authManager.getUserId()}/${ocorrenciaId}/${Date.now()}-${arquivoProcessado.name}`;
 
       const { error: uploadError } = await client.storage
         .from("anexos")
@@ -1925,16 +1926,13 @@ class OcorrenciaManager {
 
       if (uploadError) throw uploadError;
 
-      const { data: urlData } = client.storage
-        .from("anexos")
-        .getPublicUrl(fileName);
 
       const anexo = {
         ocorrencia_id: ocorrenciaId,
         nome_arquivo: arquivoProcessado.name,
         tipo_arquivo: tipo || this.determinarTipo(arquivoProcessado),
         tamanho: arquivoProcessado.size,
-        url: urlData.publicUrl,
+        url: fileName,
         mime_type: arquivoProcessado.type,
         hash_arquivo: hash,
         metadata: {
@@ -2540,7 +2538,7 @@ class OcorrenciaManager {
           hash = await this.gerarHashAnexo(arquivo);
 
           const fileExt = arquivo.name.split(".").pop();
-          const fileName = `${ocorrenciaId}/${Date.now()}-${arquivo.name}`;
+          const fileName = `${authManager.getUserId()}/${ocorrenciaId}/${Date.now()}-${arquivo.name}`;
 
           const { error: uploadError } = await client.storage
             .from("anexos")
@@ -2556,11 +2554,7 @@ class OcorrenciaManager {
             continue;
           }
 
-          const { data: urlData } = client.storage
-            .from("anexos")
-            .getPublicUrl(fileName);
-
-          urlFinal = urlData.publicUrl;
+          urlFinal = fileName;
         }
 
         if (urlFinal) {

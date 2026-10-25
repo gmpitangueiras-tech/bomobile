@@ -91,12 +91,12 @@ export function abrirBuscaProfunda(appInstance) {
                     <i class="fas fa-search" style="color:#8b5cf6; font-size:20px;"></i>
                     Busca Profunda
                 </div>
-                <button type="button" class="close-btn" onclick="this.closest('.busca-profunda-modal').remove()" 
+                <button type="button" class="close-btn" onclick="this.closest('.busca-profunda-modal').remove()"
                     style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--cinza-medio); padding:4px 8px; border-radius:50%; transition:all 0.3s ease; line-height:1;">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            
+
             <!-- Body -->
             <div class="modal-body" style="padding: 20px; overflow-y: auto; flex: 1; background: var(--branco-fumaca);">
                 <!-- Descrição -->
@@ -104,7 +104,7 @@ export function abrirBuscaProfunda(appInstance) {
                     <i class="fas fa-info-circle" style="color:var(--azul-bandeira);"></i>
                     Digite CPF, RG, Nome completo ou Placa para buscar em todo o sistema.
                 </p>
-                
+
                 <!-- Campo de busca -->
                 <div class="form-group" style="margin-bottom:16px;">
                     <label for="buscaTermo" style="display:block; font-size:13px; font-weight:600; color:var(--cinza-escuro); margin-bottom:6px;">
@@ -112,19 +112,19 @@ export function abrirBuscaProfunda(appInstance) {
                         Termo de busca <span class="required" style="color:var(--erro);">*</span>
                     </label>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <input type="text" id="buscaTermo" class="form-control" 
+                        <input type="text" id="buscaTermo" class="form-control"
                             placeholder="Ex: 123.456.789-00, João Silva, ABC1D23..."
                             style="flex:1; min-width:200px; padding:12px 16px; border:2px solid var(--cinza-claro); border-radius:12px; font-size:16px; background:var(--branco); color:var(--cinza-escuro); min-height:48px; transition:border-color 0.3s ease;"
                             autofocus
                             onkeydown="if(event.key==='Enter') window._buscaProfundaExecutar()">
-                        <button onclick="window._buscaProfundaExecutar()" class="btn-primary" 
+                        <button onclick="window._buscaProfundaExecutar()" class="btn-primary"
                             style="padding:12px 24px; border-radius:12px; font-size:15px; font-weight:700; background:var(--gradiente-principal); color:var(--branco); border:none; cursor:pointer; transition:all 0.3s ease; min-height:48px; white-space:nowrap;">
-                            <i class="fas fa-search" style="margin-right:8px;"></i> 
+                            <i class="fas fa-search" style="margin-right:8px;"></i>
                             Buscar
                         </button>
                     </div>
                 </div>
-                
+
                 <!-- Opções de busca -->
                 <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding:12px 16px; background:var(--branco); border-radius:12px; border:1px solid var(--cinza-claro);">
                     <span style="font-size:12px; font-weight:600; color:var(--cinza-medio); display:flex; align-items:center; margin-right:4px;">
@@ -147,10 +147,10 @@ export function abrirBuscaProfunda(appInstance) {
                         Placa
                     </label>
                 </div>
-                
+
                 <!-- Área de resultados -->
                 <div id="buscaResultadosArea" style="display:none; margin-top:4px;"></div>
-                
+
                 <!-- Loading (inicialmente oculto) -->
                 <div id="buscaLoadingArea" style="display:none; text-align:center; padding:30px;">
                     <div class="spinner-azul" style="margin:0 auto; width:40px; height:40px; border-width:4px; border-color:var(--cinza-claro); border-top-color:var(--azul-bandeira); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
@@ -158,14 +158,14 @@ export function abrirBuscaProfunda(appInstance) {
                     <p style="color:var(--cinza-medio); font-size:12px;">Isso pode levar alguns segundos</p>
                 </div>
             </div>
-            
+
             <!-- Footer -->
             <div class="modal-footer" style="padding:12px 20px 16px 20px; border-top:1px solid var(--cinza-claro); display:flex; gap:10px; flex-shrink: 0; border-radius: 0 0 20px 20px; background: var(--branco);">
-                <button onclick="this.closest('.busca-profunda-modal').remove()" class="btn-secondary" 
+                <button onclick="this.closest('.busca-profunda-modal').remove()" class="btn-secondary"
                     style="flex:1; padding:12px; border-radius:12px; font-size:14px; font-weight:600; background:var(--cinza-claro); color:var(--cinza-escuro); border:none; cursor:pointer; transition:all 0.3s ease; min-height:44px;">
                     <i class="fas fa-times" style="margin-right:6px;"></i> Fechar
                 </button>
-                <button onclick="window._buscaProfundaLimpar()" class="btn-secondary" 
+                <button onclick="window._buscaProfundaLimpar()" class="btn-secondary"
                     style="flex:1; padding:12px; border-radius:12px; font-size:14px; font-weight:600; background:var(--azul-muito-claro); color:var(--azul-bandeira); border:none; cursor:pointer; transition:all 0.3s ease; min-height:44px;">
                     <i class="fas fa-undo" style="margin-right:6px;"></i> Limpar
                 </button>
@@ -399,7 +399,7 @@ async function buscarEmTodasTabelas(client, termo, tipos) {
     try {
       let query = client
         .from("ocorrencias")
-        .select("*, usuarios(nome_completo)");
+        .select("id, criado_por, numero_ocorrencia, numero_temporario, status, tipo_ocorrencia, local_ocorrencia, criado_em, cpf_solicitante, nome_solicitante, bairro_ocorrencia");
       const conditions = [];
       if (tipos.includes("cpf")) {
         conditions.push(`cpf_solicitante.ilike.${termoLike}`);
@@ -427,7 +427,7 @@ async function buscarEmTodasTabelas(client, termo, tipos) {
       let query = client
         .from("envolvidos")
         .select(
-          "*, ocorrencias(id, numero_ocorrencia, numero_temporario, status, tipo_ocorrencia, local_ocorrencia, criado_em)",
+          "id, ocorrencia_id, nome_completo, cpf, rg, criado_em, ocorrencias(id, numero_ocorrencia, numero_temporario, status, tipo_ocorrencia, local_ocorrencia, criado_em)",
         );
       const conditions = [];
       if (tipos.includes("cpf")) {
@@ -462,7 +462,7 @@ async function buscarEmTodasTabelas(client, termo, tipos) {
     try {
       let query = client
         .from("abordagens_veiculos")
-        .select("*, usuarios(nome_completo)");
+        .select("id, criado_por, placa, condutor_cpf, condutor_nome, criado_em");
       const conditions = [];
       if (tipos.includes("placa")) {
         conditions.push(`placa.ilike.${termoLike}`);
@@ -492,7 +492,7 @@ async function buscarEmTodasTabelas(client, termo, tipos) {
     try {
       let query = client
         .from("abordagens_pessoas")
-        .select("*, usuarios(nome_completo)");
+        .select("id, criado_por, nome, alcunha, cpf, rg, criado_em");
       const conditions = [];
       if (tipos.includes("cpf")) {
         conditions.push(`cpf.ilike.${termoLike}`);
@@ -518,28 +518,19 @@ async function buscarEmTodasTabelas(client, termo, tipos) {
     }
   }
 
-  // --- BUSCAR EM USUÁRIOS (apenas para supervisores) ---
+  // --- BUSCAR EM USUÁRIOS (apenas por nome; CPF de terceiros não é pesquisável no cliente) ---
   if (
     authManager.isSupervisor() &&
-    (tipos.includes("cpf") || tipos.includes("nome"))
+    tipos.includes("nome")
   ) {
     try {
       let query = client
         .from("usuarios")
-        .select("id, nome_completo, cpf, matricula, perfil, status");
-      const conditions = [];
-      if (tipos.includes("cpf")) {
-        conditions.push(`cpf.ilike.${termoLike}`);
-      }
-      if (tipos.includes("nome")) {
-        conditions.push(`nome_completo.ilike.${termoLike}`);
-      }
-      if (conditions.length > 0) {
-        query = query.or(conditions.join(","));
-        const { data, error } = await query.limit(10);
-        if (!error && data) {
-          results.usuarios = data;
-        }
+        .select("id, nome_completo, matricula, perfil, status");
+      query = query.ilike("nome_completo", termoLike);
+      const { data, error } = await query.limit(10);
+      if (!error && data) {
+        results.usuarios = data;
       }
     } catch (e) {
       console.warn("Erro ao buscar usuários:", e);
@@ -587,11 +578,11 @@ function renderizarResultados(results, termo, appInstance) {
                     </h4>
                 </div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button id="btnExportarResultados" class="btn-secondary" 
+                    <button id="btnExportarResultados" class="btn-secondary"
                         style="padding:6px 14px; font-size:11px; min-height:auto; width:auto; border-radius:8px; background:var(--verde-muito-claro); color:var(--verde-escuro); border:1px solid var(--verde-bandeira);">
                         <i class="fas fa-file-export" style="margin-right:4px;"></i> Exportar CSV
                     </button>
-                    <button id="btnFecharResultados" class="btn-secondary" 
+                    <button id="btnFecharResultados" class="btn-secondary"
                         style="padding:6px 14px; font-size:11px; min-height:auto; width:auto; border-radius:8px; background:var(--cinza-claro); color:var(--cinza-escuro); border:1px solid var(--cinza-claro);">
                         <i class="fas fa-times"></i> Fechar
                     </button>
@@ -807,7 +798,6 @@ function renderizarResultados(results, termo, appInstance) {
                                 <span class="badge ${statusClass}" style="font-size:9px; padding:2px 10px;">${statusLabel}</span>
                             </span>
                             <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--cinza-medio);">
-                                <span><i class="fas fa-id-card"></i> ${u.cpf}</span>
                                 ${u.matricula ? `<span><i class="fas fa-hashtag"></i> ${u.matricula}</span>` : ""}
                             </span>
                         </div>
@@ -826,7 +816,7 @@ function renderizarResultados(results, termo, appInstance) {
                 <p style="margin:0; font-size:13px; color:#92400e; display:flex; align-items:flex-start; gap:8px;">
                     <i class="fas fa-exclamation-triangle" style="color:var(--aviso); margin-top:2px;"></i>
                     <span>
-                        <strong>Reincidência detectada:</strong> 
+                        <strong>Reincidência detectada:</strong>
                         ${reincidentes
                           .map(
                             (r, i) =>

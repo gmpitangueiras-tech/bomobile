@@ -448,9 +448,8 @@ class PDFExport {
         }
       };
 
-      // Narrative text is set as an official, fully aligned paragraph. Explicitly
-      // normalize paragraph breaks and use an inset content box to keep both edges
-      // inside the printable area on every page.
+      // Narrative text is set as an official, fully aligned paragraph. Keep its
+      // left and right edges consistent with the document's standard content box.
       const drawNarrativeSection = (label, value) => {
         const text = safe(value, "").replace(/\r\n?/g, "\n").replace(/\u00a0/g, " ").trim();
         if (!text) return;
@@ -459,8 +458,8 @@ class PDFExport {
           .split(/\n\s*\n/)
           .map((paragraph) => paragraph.replace(/\s*\n\s*/g, " ").trim())
           .filter(Boolean);
-        const bodyX = margin + 2;
-        const bodyWidth = contentWidth - 4;
+        const bodyX = margin;
+        const bodyWidth = contentWidth;
         const lineHeight = 4.2;
         const drawAlignedLine = (line, baseline, width, justify) => {
           const words = String(line).trim().split(/\s+/).filter(Boolean);

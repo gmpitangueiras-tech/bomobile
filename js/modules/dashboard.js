@@ -950,9 +950,6 @@ function renderizarDashboard(container, appInstance) {
               <span class="dashboard-eyebrow">ABORDAGENS</span>
               <h2 id="dashboardApproachesTitle">Abordagens recentes</h2>
             </div>
-            <button onclick="window.app.navigateTo('consulta')" class="dashboard-text-action">
-              Ver todas <i class="fas fa-arrow-right" aria-hidden="true"></i>
-            </button>
           </div>
           <div id="listaAbordagensContainer" class="dashboard-record-list">
             ${renderAbordagensLista(abordagens, appInstance, Boolean(estado.erros.abordagens))}
@@ -1517,6 +1514,13 @@ function renderAbordagensLista(abordagens, appInstance, indisponivel = false) {
       </div>
     `;
   });
+
+  html += `
+    <button type="button" class="dashboard-list-more" onclick="window.app.navigateTo('consulta')" aria-label="Ver mais abordagens na consulta operacional">
+      <i class="fas fa-arrow-right" style="margin-right:6px;" aria-hidden="true"></i>
+      Ver mais abordagens
+    </button>
+  `;
 
   return html;
 }

@@ -1548,6 +1548,17 @@ class PDFExport {
         ["Pendentes", rows.filter((r) => r.status === "pending_rectification").length],
         ["Rejeitadas", rows.filter((r) => r.status === "rectification_rejected").length]);
     }
+    if (reportType === "por-tipo") {
+      const grupos = countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia));
+      const top = grupos[0];
+      const top3 = grupos.slice(0, 3).reduce((sum, item) => sum + item[1], 0);
+      summary.splice(0, summary.length,
+        ["Registros analisados", occurrences.length],
+        ["Tipos observados", grupos.length],
+        ["Maior volume", top ? `${top[0]} (${top[1]})` : "—"],
+        ["Concentração nos 3 maiores", percent(top3, occurrences.length)],
+        ["Filtro aplicado", dados.tipoFiltro || "Todos os tipos"]);
+    }
     if (isApproachReport) {
       const veiculos = list(dados.veiculos), pessoas = list(dados.pessoas);
       if (reportType === "abordagens-veiculos") {
@@ -1581,10 +1592,14 @@ class PDFExport {
         drawTable("Evolução mensal observada", ["Mês", "Registros"], monthly);
         break;
       }
-      case "por-tipo":
-        drawHorizontalBars("Distribuição por tipo de ocorrência", countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia)), { limit: 10 });
+      case "por-tipo": {
+        const grupos = countBy(occurrences, (o) => this.getTipoLabel(o.tipo_ocorrencia));
+        const chartColors = [[30, 91, 153], [33, 128, 75], [220, 38, 38], [210, 138, 0], [124, 58, 237], [219, 39, 119], [8, 145, 178], [234, 88, 12], [13, 148, 136], [79, 70, 229]];
+        drawCompositionBar("Composição do período por tipo", grupos.slice(0, 10).map(([label, value], index) => ({ label, value, color: chartColors[index % chartColors.length] })), occurrences.length);
+        drawHorizontalBars("Ranking de ocorrências por tipo", grupos, { limit: 10, colors: chartColors });
         drawTypeStatusTables();
         break;
+      }
 
 
       case "por-local": {
@@ -1885,7 +1900,38 @@ class PDFExport {
     doc.text(`Total de Abordagens: ${totalAbordagens}`, margin, y);
     y += 10;
 
-    if (dados.ranking && dados.ranking.length > 0) {
+    if (dados.atendimento) {
+      const a = dados.atendimento;
+      const tempo = (minutos) => {
+        if (!Number.isFinite(minutos)) return "—";
+        if (minutos < 60) return `${Math.round(minutos)} min`;
+        return `${Math.floor(minutos / 60)}h ${Math.round(minutos % 60)}min`;
+      };
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 63, 135);
+      doc.text("Resumo do tempo de atendimento", margin, y);
+      y += 7;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(30, 41, 59);
+      doc.text(`Média: ${tempo(a.mediaMinutos)} | Mediana: ${tempo(a.medianaMinutos)} | Maior duração: ${tempo(a.maiorDuracaoMinutos)}`, margin, y);
+      y += 6;
+      doc.text(`Durações válidas: ${a.amostrasValidas} | Sem duração válida: ${a.semDuracaoValida}`, margin, y);
+      y += 9;
+      doc.autoTable({
+        startY: y,
+        head: [["Registro", "Tipo", "Início", "Encerramento", "Duração"]],
+        body: (a.ocorrencias || []).map((item) => [
+          item.numero || "Sem número",
+          item.tipo || "Não informado",
+          item.inicio ? new Date(item.inicio).toLocaleString("pt-BR") : "—",
+          item.encerramento ? new Date(item.encerramento).toLocaleString("pt-BR") : "—",
+          tempo(item.tempoMinutos),
+        ]),
+        headStyles: { fillColor: [0, 63, 135], textColor: [255, 255, 255], fontSize: 8 },
+        styles: { fontSize: 7, cellPadding: 2.5 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
+      });
+    } else if (dados.ranking && dados.ranking.length > 0) {
       const tableData = dados.ranking.map((item, index) => [
         index + 1,
         item.nome || "Desconhecido",

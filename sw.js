@@ -24,13 +24,13 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v51";
+const CACHE_NAME = "guarda-pitangueiras-v72";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v2";
 const API_CACHE = "guarda-api-v2";
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v2";
-const CACHE_VERSION = "v51";
+const CACHE_VERSION = "v72";
 
 const STATIC_ASSETS = [
   BASE_PATH,

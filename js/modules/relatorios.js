@@ -508,7 +508,7 @@ async function buscarAbordagensPeriodo(dataInicio, dataFim) {
   const limites = limitesPeriodoSP(dataInicio, dataFim);
   const criarConsultaAbordagens = (tabela) => {
     let consulta = client.from(tabela).select("*, usuarios(nome_completo)")
-      .is("deleted_at", null).gte("criado_em", limites.inicio).lte("criado_em", limites.fim);
+      .gte("criado_em", limites.inicio).lte("criado_em", limites.fim);
     const escopo = obterEscopoRelatorio();
     if (escopo) consulta = consulta.eq("criado_por", escopo);
     return consulta.order("criado_em", { ascending: true }).order("id", { ascending: true });
@@ -1040,8 +1040,8 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#DC2626",
       },
       atendimento: {
-        nome: "Tempo Médio de Atendimento",
-        icone: "fa-clock",
+        nome: "Tempo de atendimento",
+        icone: "fa-stopwatch",
         cor: "#F59E0B",
       },
       desempenho: {
@@ -1050,23 +1050,23 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#8b5cf6",
       },
       retificacoes: {
-        nome: "Relatório de Retificações",
+        nome: "Retificações",
         icone: "fa-sync-alt",
         cor: "#003F87",
       },
       cancelamentos: {
-        nome: "Relatório de Cancelamentos",
+        nome: "Cancelamentos",
         icone: "fa-times-circle",
         cor: "#DC2626",
       },
       tendencias: {
-        nome: "Tendências e Sazonalidade",
+        nome: "Tendências observadas",
         icone: "fa-chart-line",
         cor: "#00843D",
       },
       produtividade: {
-        nome: "Produtividade do Setor",
-        icone: "fa-rocket",
+        nome: "Ocorrências por Período",
+        icone: "fa-calendar-days",
         cor: "#003F87",
       },
       detalhado: {
@@ -1100,7 +1100,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         cor: "#00843D",
       },
       "abordagens-geral": {
-        nome: "Abordagens Geral",
+        nome: "Abordagens — visão geral",
         icone: "fa-chart-bar",
         cor: "#8b5cf6",
       },
@@ -1146,6 +1146,7 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
               <label for="relatorioDetalheDataFim">Até</label>
               <input type="date" id="relatorioDetalheDataFim" value="${escaparHTML(dataFim)}">
             </div>
+            ${tipo === "por-tipo" ? `<div class="report-period-field"><label for="relatorioDetalheTipoOcorrencia">Tipo de ocorrência</label><select id="relatorioDetalheTipoOcorrencia"><option value="">Todos os tipos</option>${TIPOS_OCORRENCIA.map((item) => `<option value="${item.value}" ${item.value === (estado.filtros.tipoOcorrencia || "") ? "selected" : ""}>${escaparHTML(item.label)}</option>`).join("")}</select></div>` : ""}
             <button type="button" onclick="window._relatoriosAplicarPeriodoDetalhe()" class="btn-primary" aria-label="Aplicar período personalizado">
               <i class="fas fa-filter" aria-hidden="true"></i><span>Aplicar período</span>
             </button>
@@ -1272,8 +1273,9 @@ export async function renderRelatorioDetalhado(container, tipo, appInstance) {
         return informarErro("A data final deve ser igual ou posterior à data inicial.", "relatorioDetalheDataFim");
       }
 
-      const periodoMudou = estado.filtros.dataInicio !== novaDataInicio || estado.filtros.dataFim !== novaDataFim;
-      estado.filtros = { dataInicio: novaDataInicio, dataFim: novaDataFim };
+      const novoTipoOcorrencia = document.getElementById("relatorioDetalheTipoOcorrencia")?.value || estado.filtros.tipoOcorrencia || null;
+      const periodoMudou = estado.filtros.dataInicio !== novaDataInicio || estado.filtros.dataFim !== novaDataFim || estado.filtros.tipoOcorrencia !== novoTipoOcorrencia;
+      estado.filtros = { dataInicio: novaDataInicio, dataFim: novaDataFim, tipoOcorrencia: novoTipoOcorrencia };
       if (statusEl) statusEl.textContent = "Período válido. Atualizando os dados do relatório…";
 
       if (periodoMudou || forcarAtualizacao) {
@@ -1369,14 +1371,39 @@ async function renderConteudoExecutivo(ocorrencias, dataInicio, dataFim) {
 
 async function renderConteudoPorTipo(ocorrencias) {
   const porTipo = agruparPorTipo(ocorrencias);
+  const total = ocorrencias.length;
+  const lider = porTipo[0];
+  const top3 = porTipo.slice(0, 3).reduce((sum, item) => sum + item.total, 0);
+  const eventosRetificacao = porTipo.reduce((sum, t) => sum + t.retificadas + t.retificacoesPendentes + t.retificacoesRejeitadas, 0);
+  const taxaGeral = total ? (ocorrencias.filter((o) => o.status === "synced").length / total * 100).toFixed(1) : "—";
+  const linhas = porTipo.map((item, index) => {
+    const taxa = item.total ? (item.finalizadas / item.total * 100).toFixed(1) : "0.0";
+    const largura = Math.min(100, Math.max(3, Number(item.percentual)));
+    return `<tr>
+      <td class="report-type-rank">${index + 1}</td>
+      <td><strong>${escaparHTML(item.tipo)}</strong><span class="report-type-subtext">${item.total === 1 ? "1 registro" : `${item.total} registros`}</span></td>
+      <td><strong>${item.total}</strong></td>
+      <td><div class="report-type-share"><span>${item.percentual}%</span><span class="report-type-progress"><i style="width:${largura}%"></i></span></div></td>
+      <td><span class="report-status-pill report-status-synced">${item.finalizadas} finalizadas</span><span class="report-type-status-note">${taxa}% do tipo</span></td>
+      <td>${item.pendentes}</td><td>${item.canceladas}</td><td>${item.retificadas + item.retificacoesPendentes + item.retificacoesRejeitadas}</td>
+    </tr>`;
+  }).join("");
   return `
-    <p class="report-method-note">Percentuais usam todos os registros válidos no período. “Sincronizada” descreve o envio ao sistema, não o encerramento do atendimento. “Rascunhos / outros” reúne estados não listados; retificações aparecem em quadro separado para facilitar conferência.</p>
-    <div class="report-kpi-grid report-kpi-grid-compact">
-      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros no período</span></div>
-      <div class="report-kpi"><strong>${porTipo.length}</strong><span>Tipos observados</span></div>
-      <div class="report-kpi"><strong>${porTipo.reduce((sum, t) => sum + t.retificadas + t.retificacoesPendentes + t.retificacoesRejeitadas, 0)}</strong><span>Eventos de retificação</span></div>
+    <section class="report-attendance-intro report-type-intro" aria-labelledby="tipoTitulo"><div class="report-attendance-intro-icon"><i class="fas fa-tags" aria-hidden="true"></i></div><div><span class="report-section-kicker">LEITURA OPERACIONAL</span><h3 id="tipoTitulo">Como os registros se distribuem?</h3><p>O ranking está ordenado do maior para o menor volume. Use a concentração dos três primeiros tipos como sinal de prioridade, sem interpretar o indicador como medida de desempenho.</p></div><span class="report-type-filter-badge"><i class="fas fa-filter" aria-hidden="true"></i> ${estado.filtros.tipoOcorrencia ? escaparHTML(getTipoLabel(estado.filtros.tipoOcorrencia)) : "Todos os tipos"}</span></section>
+    <p class="report-method-note">Percentuais usam todos os registros válidos no período. “Finalizada” descreve a sincronização do registro; cancelamentos e retificações são apresentados separadamente.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact report-type-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-database" aria-hidden="true"></i></div><strong>${total}</strong><span>Registros no período</span><small>Base analisada</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-tags" aria-hidden="true"></i></div><strong>${porTipo.length}</strong><span>Tipos observados</span><small>Naturezas distintas</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-ranking-star" aria-hidden="true"></i></div><strong>${lider ? escaparHTML(lider.tipo) : "—"}</strong><span>Maior volume</span><small>${lider ? `${lider.total} registros · ${lider.percentual}%` : "Sem dados"}</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-layer-group" aria-hidden="true"></i></div><strong>${total ? `${((top3 / total) * 100).toFixed(1)}%` : "—"}</strong><span>Concentração nos 3 maiores</span><small>${top3} registros acumulados</small></div>
+      <div class="report-kpi report-kpi-accent-slate"><div class="report-attendance-kpi-icon"><i class="fas fa-check-double" aria-hidden="true"></i></div><strong>${taxaGeral === "—" ? "—" : `${taxaGeral}%`}</strong><span>Taxa geral de finalização</span><small>Enviadas ao sistema</small></div>
+      <div class="report-kpi report-kpi-accent-red"><div class="report-attendance-kpi-icon"><i class="fas fa-arrows-rotate" aria-hidden="true"></i></div><strong>${eventosRetificacao}</strong><span>Eventos de retificação</span><small>Aplicados, pendentes ou rejeitados</small></div>
     </div>
-    ${renderTabelasPorTipoHTML(porTipo, true)}
+    <div class="report-type-chart-grid">
+      <div class="report-content-card report-type-chart-card"><div class="report-card-heading"><div><span class="report-section-kicker">RANKING</span><h3>Volume por tipo</h3></div><span class="report-chart-hint">maior → menor</span></div><div class="report-chart-wrap report-chart-wrap-tall"><canvas id="chartPorTipoBarras" aria-label="Gráfico horizontal de ocorrências por tipo"></canvas></div></div>
+      <div class="report-content-card report-type-chart-card"><div class="report-card-heading"><div><span class="report-section-kicker">COMPOSIÇÃO</span><h3>Participação no período</h3></div><span class="report-chart-hint">percentual</span></div><div class="report-chart-wrap report-chart-wrap-tall"><canvas id="chartPorTipoPizza" aria-label="Gráfico de composição por tipo"></canvas></div></div>
+    </div>
+    <div class="report-content-card report-type-table-card"><div class="report-card-heading"><div><span class="report-section-kicker">DETALHAMENTO</span><h3>Ranking e situação dos registros</h3></div><span class="report-chart-hint">${porTipo.length} tipos</span></div><div class="table-wrapper report-table-wide"><table class="report-type-table"><thead><tr><th>#</th><th>Tipo</th><th>Total</th><th>Participação</th><th>Finalização</th><th>Pendentes</th><th>Canceladas</th><th>Retificações</th></tr></thead><tbody>${linhas || `<tr><td colspan="8" class="report-empty-cell">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
   `;
 }
 
@@ -1390,18 +1417,26 @@ async function renderConteudoPorLocal(ocorrencias) {
   const topBairros = porBairro.slice(0, 8);
   const semLocal = ocorrencias.filter((o) => !(o.bairro_ocorrencia || o.local_ocorrencia)).length;
   const primeiro = porBairro[0];
+  const top3 = porBairro.slice(0, 3).reduce((s, b) => s + b.total, 0);
+  const cobertura = ocorrencias.length ? (((ocorrencias.length - semLocal) / ocorrencias.length) * 100).toFixed(1) : "0.0";
   return `
-    <p class="report-method-note">Agrupamento prioriza bairro/localidade e usa o campo de local como alternativa. Registros sem ambos os campos permanecem em “Não informado”; percentuais usam todos os registros no período.</p>
-    <div class="report-kpi-grid report-kpi-grid-compact">
-      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros no período</span></div>
-      <div class="report-kpi"><strong>${porBairro.length}</strong><span>Localidades agrupadas</span></div>
-      <div class="report-kpi"><strong>${semLocal}</strong><span>Sem local informado</span></div>
-      <div class="report-kpi"><strong>${primeiro ? primeiro.total : "—"}</strong><span>${primeiro ? `Maior volume: ${escaparHTML(primeiro.bairro)}` : "Sem registros"}</span></div>
+    <section class="report-attendance-intro report-local-intro" aria-labelledby="localidadeTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-map-location-dot" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">LEITURA OPERACIONAL</span><h3 id="localidadeTitulo">Onde os registros estão se concentrando?</h3><p>O ranking ajuda a visualizar a distribuição territorial e a concentração dos atendimentos no período selecionado.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-location-dot" aria-hidden="true"></i> ${cobertura}% com local</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> O agrupamento prioriza bairro/localidade e usa o campo de local como alternativa. Registros sem ambos permanecem em “Não informado”; percentuais usam todos os registros do período.</p>
+    <div class="report-kpi-grid report-kpi-grid-compact report-attendance-kpis report-local-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-layer-group" aria-hidden="true"></i></div><strong>${ocorrencias.length}</strong><span>Registros no período</span><small>Base analisada</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-map-marker-alt" aria-hidden="true"></i></div><strong>${porBairro.length}</strong><span>Localidades agrupadas</span><small>Inclui “Não informado”</small></div>
+      <div class="report-kpi report-kpi-accent-red"><div class="report-attendance-kpi-icon"><i class="fas fa-location-crosshairs" aria-hidden="true"></i></div><strong>${semLocal}</strong><span>Sem local informado</span><small>${ocorrencias.length ? `${(100 - Number(cobertura)).toFixed(1)}% do período` : "Sem dados"}</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-ranking-star" aria-hidden="true"></i></div><strong>${primeiro ? primeiro.total : "—"}</strong><span>Maior concentração</span><small>${primeiro ? escaparHTML(primeiro.bairro) : "Sem registros"}</small></div>
     </div>
-    <div class="report-content-card"><h3>Distribuição por localidade</h3>
-      <div class="report-chart-wrap"><canvas id="chartLocalBairros"></canvas></div>
+    <div class="report-content-card report-attendance-section report-local-chart-section">
+      <div class="report-section-heading"><div><span class="report-section-kicker">RANKING</span><h3>Distribuição por localidade</h3><p>As localidades com maior volume aparecem primeiro.</p></div><span class="report-chart-hint">top ${topBairros.length}</span></div>
+      <div class="report-chart-wrap report-chart-wrap-tall"><canvas id="chartLocalBairros" aria-label="Gráfico de ocorrências por localidade"></canvas></div>
     </div>
-    <div class="report-content-card"><h3>Todas as localidades</h3>
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">DETALHAMENTO</span><h3>Todas as localidades</h3><p>Concentração nos três maiores locais: ${ocorrencias.length ? `${((top3 / ocorrencias.length) * 100).toFixed(1)}%` : "—"}.</p></div><i class="fas fa-list-ol report-section-heading-icon" aria-hidden="true"></i></div>
       <div class="table-wrapper"><table><thead><tr><th>Localidade</th><th>Registros</th><th>% do período</th></tr></thead><tbody>
       ${porBairro.map((b) => `<tr><td>${escaparHTML(b.bairro)}</td><td>${b.total}</td><td>${b.percentual}%</td></tr>`).join("") || `<tr><td colspan="3">Nenhum registro no período.</td></tr>`}
       </tbody></table></div>
@@ -1423,6 +1458,8 @@ async function renderConteudoAtendimento(ocorrencias) {
     return { ...o, tempoMinutos: minutos };
   }).filter((o) => Number.isFinite(o.tempoMinutos) && o.tempoMinutos > 0);
   const mediaGeral = tempos.length ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length : NaN;
+  const medianaGeral = medianaNumerica(tempos.map((t) => t.tempoMinutos));
+  const maiorDuracao = tempos.length ? Math.max(...tempos.map((t) => t.tempoMinutos)) : NaN;
   const formatarTempo = (minutos) => {
     if (!Number.isFinite(minutos)) return "—";
     if (minutos < 1) return "< 1 min";
@@ -1446,16 +1483,43 @@ async function renderConteudoAtendimento(ocorrencias) {
   const rapido = tempos.filter((t) => t.tempoMinutos < 15).length;
   const lento = tempos.filter((t) => t.tempoMinutos > 45).length;
   const semDuracao = ocorrencias.length - tempos.length;
+  const faixas = [
+    { label: "Até 15 min", total: tempos.filter((t) => t.tempoMinutos <= 15).length, cor: "#00843D" },
+    { label: "16 a 30 min", total: tempos.filter((t) => t.tempoMinutos > 15 && t.tempoMinutos <= 30).length, cor: "#06B6D4" },
+    { label: "31 a 60 min", total: tempos.filter((t) => t.tempoMinutos > 30 && t.tempoMinutos <= 60).length, cor: "#F59E0B" },
+    { label: "1 a 2 horas", total: tempos.filter((t) => t.tempoMinutos > 60 && t.tempoMinutos <= 120).length, cor: "#F97316" },
+    { label: "Acima de 2 horas", total: tempos.filter((t) => t.tempoMinutos > 120).length, cor: "#DC2626" },
+  ];
+  const maiorFaixa = Math.max(1, ...faixas.map((f) => f.total));
+  const maisLongos = [...tempos].sort((a, b) => b.tempoMinutos - a.tempoMinutos).slice(0, 10);
+  const taxaValidade = ocorrencias.length ? ((tempos.length / ocorrencias.length) * 100).toFixed(1) : "0.0";
   return `
-    <p class="report-method-note">Tempo entre início e encerramento. Quando o encerramento não foi informado, usa-se a finalização registrada. ${tempos.length} amostra(s) positiva(s) e válida(s); ${semDuracao} registro(s) sem duração válida. Tempos não positivos são excluídos; faixas: rápido &lt; 15 min, lento &gt; 45 min.</p>
-    <div class="report-kpi-grid">
-      <div class="report-kpi"><strong>${formatarTempo(mediaGeral)}</strong><span>Média das durações válidas</span></div>
-      <div class="report-kpi"><strong>${rapido}</strong><span>Atendimentos abaixo de 15 min</span></div>
-      <div class="report-kpi"><strong>${lento}</strong><span>Atendimentos acima de 45 min</span></div>
+    <section class="report-attendance-intro" aria-labelledby="tempoAtendimentoTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-stopwatch" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">LEITURA OPERACIONAL</span><h3 id="tempoAtendimentoTitulo">Quanto tempo os atendimentos estão levando?</h3><p>Use a mediana para enxergar o comportamento típico e a distribuição por faixas para localizar concentrações de demora.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-database" aria-hidden="true"></i> ${taxaValidade}% aproveitado</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> Tempo entre início e encerramento. Quando o encerramento não foi informado, usa-se a finalização registrada. Foram consideradas ${tempos.length} duração(ões) positiva(s) e válida(s), com ${semDuracao} registro(s) sem duração válida.</p>
+    <div class="report-kpi-grid report-type-kpis report-attendance-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-gauge-high" aria-hidden="true"></i></div><strong>${formatarTempo(mediaGeral)}</strong><span>Tempo médio</span><small>Todos os válidos</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-scale-balanced" aria-hidden="true"></i></div><strong>${formatarTempo(medianaGeral)}</strong><span>Tempo mediano</span><small>Comportamento típico</small></div>
+      <div class="report-kpi report-kpi-accent-red"><div class="report-attendance-kpi-icon"><i class="fas fa-hourglass-end" aria-hidden="true"></i></div><strong>${formatarTempo(maiorDuracao)}</strong><span>Maior duração</span><small>Entre os válidos</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-circle-check" aria-hidden="true"></i></div><strong>${tempos.length}/${ocorrencias.length}</strong><span>Durações válidas</span><small>${semDuracao} sem duração</small></div>
     </div>
-    <div class="report-content-card"><h3>Tempo por tipo de ocorrência</h3>
+    <div class="report-content-card report-attendance-section">
+      <div class="report-section-heading"><div><h3>Distribuição por faixa de duração</h3><p>Quantidade de atendimentos válidos em cada intervalo.</p></div><span class="report-chart-hint">${tempos.length} válidos</span></div>
+      <div class="report-duration-bars" role="img" aria-label="Distribuição dos atendimentos por faixa de duração">
+        ${faixas.map((f) => `<div class="report-duration-row"><span class="report-duration-label">${f.label}</span><div class="report-duration-track"><span style="width:${(f.total / maiorFaixa) * 100}%;background:${f.cor}"></span></div><strong>${f.total}</strong><small>${tempos.length ? ((f.total / tempos.length) * 100).toFixed(0) : 0}%</small></div>`).join("")}
+      </div>
+    </div>
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><h3>Tempo por tipo de ocorrência</h3><p>Compare o comportamento típico sem confundir volume com duração.</p></div><i class="fas fa-tags report-section-heading-icon" aria-hidden="true"></i></div>
       <div class="table-wrapper"><table><thead><tr><th>Tipo</th><th>Amostras</th><th>Média</th><th>Mediana</th><th>Rápidos (&lt; 15 min)</th><th>Lentos (&gt; 45 min)</th></tr></thead><tbody>
       ${mediaPorTipo.map((t) => `<tr><td>${escaparHTML(t.tipo)}</td><td>${t.total}</td><td>${escaparHTML(formatarTempo(t.media))}</td><td>${escaparHTML(formatarTempo(t.mediana))}</td><td>${t.rapido}</td><td>${t.lento}</td></tr>`).join("") || `<tr><td colspan="6">Nenhuma duração válida no período.</td></tr>`}
+      </tbody></table></div>
+    </div>
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><h3>Atendimentos mais longos</h3><p>Lista de apoio para supervisão, limitada aos 10 maiores tempos registrados.</p></div><i class="fas fa-list-ol report-section-heading-icon" aria-hidden="true"></i></div>
+      <div class="table-wrapper"><table><thead><tr><th>Registro</th><th>Tipo</th><th>Início</th><th>Encerramento</th><th>Duração</th></tr></thead><tbody>
+      ${maisLongos.map((t) => `<tr><td>${escaparHTML(t.numero_ocorrencia || t.numero_temporario || "Sem número")}</td><td>${escaparHTML(getTipoLabel(t.tipo_ocorrencia))}</td><td>${escaparHTML(formatarDataHoraSP(t.data_hora_inicio))}</td><td>${escaparHTML(formatarDataHoraSP(t.data_hora_encerramento || t.data_hora_finalizacao))}</td><td><strong>${escaparHTML(formatarTempo(t.tempoMinutos))}</strong></td></tr>`).join("") || `<tr><td colspan="5">Nenhuma duração válida no período.</td></tr>`}
       </tbody></table></div>
     </div>
   `;
@@ -1534,15 +1598,22 @@ async function renderConteudoRetificacoes(ocorrencias) {
     rectified: "Aplicada", pending_rectification: "Pendente", rectification_rejected: "Rejeitada",
   };
   const classeStatus = (status) => `report-status-pill report-status-${getStatusClass(status)}`;
+  const taxaAplicacao = retificacoes.length ? ((aplicadas.length / retificacoes.length) * 100).toFixed(1) : "0.0";
   return `
-    <p class="report-method-note">O período considera o evento vigente: solicitação pendente, aplicação ou rejeição. Registros legados sem data específica usam a data de criação como aproximação.</p>
-    <div class="report-kpi-grid">
-      <div class="report-kpi"><strong>${aplicadas.length}</strong><span>Retificações aplicadas</span></div>
-      <div class="report-kpi"><strong>${pendentes.length}</strong><span>Solicitações pendentes</span></div>
-      <div class="report-kpi"><strong>${rejeitadas.length}</strong><span>Solicitações rejeitadas</span></div>
+    <section class="report-attendance-intro report-rectification-intro" aria-labelledby="retificacoesTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-arrows-rotate" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">GOVERNANÇA OPERACIONAL</span><h3 id="retificacoesTitulo">Como estão evoluindo as retificações?</h3><p>Veja o volume de solicitações, o que já foi aplicado e os pontos que ainda exigem análise da supervisão.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-check-double" aria-hidden="true"></i> ${taxaAplicacao}% aplicadas</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> O período considera o evento vigente: solicitação pendente, aplicação ou rejeição. Registros legados sem data específica usam a data de criação como aproximação.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-rectification-kpis">
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-check-circle" aria-hidden="true"></i></div><strong>${aplicadas.length}</strong><span>Retificações aplicadas</span><small>Alterações efetivadas</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-hourglass-half" aria-hidden="true"></i></div><strong>${pendentes.length}</strong><span>Solicitações pendentes</span><small>Aguardam decisão</small></div>
+      <div class="report-kpi report-kpi-accent-red"><div class="report-attendance-kpi-icon"><i class="fas fa-ban" aria-hidden="true"></i></div><strong>${rejeitadas.length}</strong><span>Solicitações rejeitadas</span><small>Não aplicadas</small></div>
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-list-check" aria-hidden="true"></i></div><strong>${retificacoes.length}</strong><span>Total de eventos</span><small>${taxaAplicacao}% aplicados</small></div>
     </div>
-    ${topCampos.length ? `<div class="report-content-card"><h3>Campos alterados nas retificações aplicadas</h3>${topCampos.map(([campo, total]) => `<div class="report-inline-stat"><span>${escaparHTML(campo)}</span><strong>${total}</strong></div>`).join("")}</div>` : ""}
-    <div class="report-content-card"><h3>Eventos de retificação</h3>
+    ${topCampos.length ? `<div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">PADRÃO DE ALTERAÇÃO</span><h3>Campos mais alterados</h3><p>Itens identificados nas retificações aplicadas.</p></div><i class="fas fa-list-check report-section-heading-icon" aria-hidden="true"></i></div>${topCampos.map(([campo, total]) => `<div class="report-inline-stat"><span>${escaparHTML(campo)}</span><strong>${total}</strong></div>`).join("")}</div>` : ""}
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">ACOMPANHAMENTO</span><h3>Eventos de retificação</h3><p>Mostrando os eventos mais recentes para o período selecionado.</p></div><span class="report-chart-hint">${retificacoes.length} evento(s)</span></div>
       <div class="table-wrapper"><table><thead><tr><th>Nº GM</th><th>Data do evento</th><th>Tipo</th><th>Situação atual</th><th>Justificativa</th><th>Motivo de rejeição</th></tr></thead><tbody>
         ${retificacoes.slice(0, 100).map((r) => `<tr><td>${escaparHTML(r.numero_ocorrencia || r.numero_temporario || "Sem número")}</td><td>${escaparHTML(formatarDataHoraSP(obterDataEventoRetificacao(r)))}</td><td>${escaparHTML(getTipoLabel(r.tipo_ocorrencia))}</td><td><span class="${classeStatus(r.status)}">${rotuloStatus[r.status] || "Não informado"}</span></td><td>${escaparHTML(r.solicitacao_retificacao_justificativa || r.justificativa_retificacao || "—")}</td><td>${escaparHTML(r.motivo_rejeicao || "—")}</td></tr>`).join("") || `<tr><td colspan="6">Nenhum evento de retificação no período.</td></tr>`}
       </tbody></table></div>
@@ -1574,48 +1645,19 @@ async function renderConteudoCancelamentos(ocorrencias) {
     : "—";
 
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          O período considera a data de criação da ocorrência: o schema não possui timestamp de cancelamento. A proporção é canceladas ÷ total de ocorrências consultadas no intervalo (inclusive canceladas); sem base, exibimos “—”.
-        </p>
-      </div>
+    <section class="report-attendance-intro report-cancellation-intro" aria-labelledby="cancelamentosTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-circle-xmark" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">CONTROLE OPERACIONAL</span><h3 id="cancelamentosTitulo">O que está sendo cancelado?</h3><p>Visualize o volume cancelado e os motivos informados para apoiar a revisão dos registros.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-percent" aria-hidden="true"></i> ${taxaCancelamento} do total</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> O período considera a data de criação da ocorrência, pois o schema não possui timestamp específico de cancelamento. A proporção é canceladas ÷ total consultado no intervalo.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-cancellation-kpis">
+      <div class="report-kpi report-kpi-accent-red"><div class="report-attendance-kpi-icon"><i class="fas fa-circle-xmark" aria-hidden="true"></i></div><strong>${canceladas.length}</strong><span>Ocorrências canceladas</span><small>No período selecionado</small></div>
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-percent" aria-hidden="true"></i></div><strong>${taxaCancelamento}</strong><span>Proporção cancelada</span><small>Sobre todos os registros</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-list" aria-hidden="true"></i></div><strong>${topMotivos.length}</strong><span>Motivos identificados</span><small>Entre os cinco principais</small></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--erro);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${canceladas.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Ocorrências canceladas</div>
-      </div>
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:12px;text-align:center;color:white;">
-        <div style="font-size:22px;font-weight:800;">${taxaCancelamento}</div>
-        <div style="font-size:9px;opacity:0.8;">Proporção cancelada do total</div>
-      </div>
-    </div>
-
-    ${
-      topMotivos.length > 0
-        ? `
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <h4 style="color:var(--azul-bandeira);margin:0 0 6px 0;font-size:13px;font-weight:700;">
-          <i class="fas fa-list" style="margin-right:6px;"></i>
-          Principais Motivos
-        </h4>
-        ${topMotivos
-          .map(
-            (m) => `
-          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-            <span>${escaparHTML(m.motivo)}</span>
-            <span style="font-weight:700;color:var(--erro);">${m.total}</span>
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
-    `
-        : ""
-    }
+    ${topMotivos.length ? `<div class="report-content-card report-attendance-section report-cancellation-motives"><div class="report-section-heading"><div><span class="report-section-kicker">JUSTIFICATIVAS</span><h3>Principais motivos</h3><p>Motivos informados nos cancelamentos do período.</p></div><i class="fas fa-list report-section-heading-icon" aria-hidden="true"></i></div>${topMotivos.map((m) => `<div class="report-inline-stat"><span>${escaparHTML(m.motivo)}</span><strong>${m.total}</strong></div>`).join("")}</div>` : ""}
+    <div class="report-content-card report-attendance-section report-cancellation-empty"><div class="report-section-heading"><div><span class="report-section-kicker">LEITURA</span><h3>Interpretação do indicador</h3></div><i class="fas fa-shield-halved report-section-heading-icon" aria-hidden="true"></i></div><p>O percentual representa a proporção de registros com status cancelado entre os registros consultados. Ele não mede motivo, responsabilidade ou qualidade do atendimento.</p></div>
   `;
 }
 
@@ -1639,17 +1681,29 @@ async function renderConteudoTendencias(ocorrencias, dataInicio, dataFim) {
   const dadosMes = agruparPorMes(ocorrencias, dataInicio, dataFim);
   const diaPico = ocorrencias.length ? dadosDiaSemana.reduce((a,b) => a.total > b.total ? a : b) : null;
   const horaPico = ocorrencias.length ? dadosHora.reduce((a,b) => a.total > b.total ? a : b) : null;
+  const mesPico = dadosMes.length ? dadosMes.reduce((a,b) => a.value > b.value ? a : b) : null;
+  const diasAtivos = new Set(ocorrencias.map((o) => {
+    const d = obterPartesDataSP(criarDateBanco(o.criado_em));
+    return Number.isFinite(d.year) ? `${d.year}-${d.month}-${d.day}` : null;
+  }).filter(Boolean)).size;
+  const mediaDiaria = calcularDiasPeriodo(dataInicio, dataFim) ? (ocorrencias.length / calcularDiasPeriodo(dataInicio, dataFim)).toFixed(1) : "—";
   return `
-    <p class="report-method-note">Distribuição usa o instante de criação convertido para America/Sao_Paulo. Dias da semana e horas incluem categorias com zero registros; os meses seguem o intervalo selecionado.</p>
-    <div class="report-kpi-grid">
-      <div class="report-kpi"><strong>${diaPico ? escaparHTML(diaPico.dia) : "—"}</strong><span>Dia mais frequente</span><small>${diaPico ? `${diaPico.total} registro(s)` : "Sem registros no período"}</small></div>
-      <div class="report-kpi"><strong>${horaPico ? `${String(horaPico.hora).padStart(2, "0")}:00` : "—"}</strong><span>Faixa horária mais frequente</span><small>${horaPico ? `${horaPico.total} registro(s)` : "Sem registros no período"}</small></div>
-      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros observados</span></div>
+    <section class="report-attendance-intro report-trends-intro" aria-labelledby="tendenciasTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-chart-line" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">LEITURA OPERACIONAL</span><h3 id="tendenciasTitulo">Quando os registros estão acontecendo?</h3><p>Observe a evolução no período e os padrões de dia e horário sem confundir concentração histórica com previsão.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-clock" aria-hidden="true"></i> ${diasAtivos} dia(s) ativo(s)</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> A distribuição usa o instante de criação convertido para America/Sao_Paulo. Dias da semana e horas incluem categorias com zero registros; os meses seguem o intervalo selecionado. Os dados são observados, não uma previsão.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-trends-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-database" aria-hidden="true"></i></div><strong>${ocorrencias.length}</strong><span>Registros observados</span><small>No período selecionado</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-calendar-day" aria-hidden="true"></i></div><strong>${diasAtivos}</strong><span>Dias ativos</span><small>Com ao menos um registro</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-calendar-week" aria-hidden="true"></i></div><strong>${diaPico ? escaparHTML(diaPico.dia) : "—"}</strong><span>Dia mais frequente</span><small>${diaPico ? `${diaPico.total} registro(s)` : "Sem registros"}</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-clock" aria-hidden="true"></i></div><strong>${horaPico ? `${String(horaPico.hora).padStart(2, "0")}:00` : "—"}</strong><span>Faixa horária de pico</span><small>${horaPico ? `${horaPico.total} registro(s)` : "Sem registros"}</small></div>
     </div>
-    <div class="report-content-card"><h3>Evolução mensal observada</h3><div class="report-chart-wrap"><canvas id="chartTendenciasMensal"></canvas></div></div>
-    <div class="report-kpi-grid report-kpi-grid-compact">
-      <div class="report-content-card"><h3>Distribuição por dia da semana</h3><div class="report-chart-wrap"><canvas id="chartTendenciasDiaSemana"></canvas></div></div>
-      <div class="report-content-card"><h3>Distribuição por hora local</h3><div class="report-chart-wrap"><canvas id="chartTendenciasHora"></canvas></div></div>
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">EVOLUÇÃO</span><h3>Evolução mensal observada</h3><p>Volume registrado em cada mês do intervalo selecionado.</p></div><span class="report-chart-hint">${mesPico ? `pico: ${mesPico.label}` : "sem dados"}</span></div><div class="report-chart-wrap report-chart-wrap-tall"><canvas id="chartTendenciasMensal" aria-label="Evolução mensal das ocorrências"></canvas></div></div>
+    <div class="report-type-chart-grid report-trends-chart-grid">
+      <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">PADRÃO SEMANAL</span><h3>Dia da semana</h3></div><i class="fas fa-calendar-week report-section-heading-icon" aria-hidden="true"></i></div><div class="report-chart-wrap"><canvas id="chartTendenciasDiaSemana" aria-label="Distribuição por dia da semana"></canvas></div></div>
+      <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">PADRÃO DIÁRIO</span><h3>Hora local</h3></div><i class="fas fa-clock report-section-heading-icon" aria-hidden="true"></i></div><div class="report-chart-wrap"><canvas id="chartTendenciasHora" aria-label="Distribuição por hora local"></canvas></div></div>
     </div>
   `;
 }
@@ -1673,16 +1727,22 @@ async function renderConteudoProdutividade(ocorrencias, dataInicio, dataFim) {
   const topDias = [...porDia.entries()].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0])).slice(0, 10);
   const maiorDia = topDias[0];
   const porMes = agruparPorMes(ocorrencias, dataInicio, dataFim);
+  const maiorMes = porMes.length ? porMes.reduce((a, b) => a.value > b.value ? a : b) : null;
   return `
-    <p class="report-method-note">Este relatório mede volume de registros criados no período — não produtividade individual, esforço operacional, qualidade ou resultado. A média diária divide o total por todos os dias corridos do intervalo, inclusive dias sem registro. Datas convertidas para America/Sao_Paulo.</p>
-    <div class="report-kpi-grid">
-      <div class="report-kpi"><strong>${ocorrencias.length}</strong><span>Registros criados</span></div>
-      <div class="report-kpi"><strong>${media === null ? "—" : media.toFixed(1)}</strong><span>Média por dia corrido</span></div>
-      <div class="report-kpi"><strong>${diasAtivos}</strong><span>Dias com ao menos um registro</span></div>
-      <div class="report-kpi"><strong>${maiorDia ? maiorDia[1] : "—"}</strong><span>${maiorDia ? `Maior volume em ${formatarData(maiorDia[0])}` : "Sem registros no período"}</span></div>
+    <section class="report-attendance-intro report-period-intro" aria-labelledby="periodoTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-calendar-days" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">VOLUME TEMPORAL</span><h3 id="periodoTitulo">Como os registros se distribuem no período?</h3><p>Acompanhe o volume criado, a média diária e os dias de maior concentração no intervalo selecionado.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-calendar" aria-hidden="true"></i> ${dias} dia(s)</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> Este relatório mede volume de registros criados — não produtividade individual, esforço, qualidade ou resultado. A média divide o total por todos os dias corridos, inclusive dias sem registro. Datas convertidas para America/Sao_Paulo.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-period-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-database" aria-hidden="true"></i></div><strong>${ocorrencias.length}</strong><span>Registros criados</span><small>No período selecionado</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-chart-line" aria-hidden="true"></i></div><strong>${media === null ? "—" : media.toFixed(1)}</strong><span>Média por dia corrido</span><small>Inclui dias sem registro</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-calendar-check" aria-hidden="true"></i></div><strong>${diasAtivos}</strong><span>Dias com registros</span><small>Dos ${dias} dias corridos</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-ranking-star" aria-hidden="true"></i></div><strong>${maiorDia ? maiorDia[1] : "—"}</strong><span>Maior volume diário</span><small>${maiorDia ? formatarData(maiorDia[0]) : "Sem registros"}</small></div>
     </div>
-    <div class="report-content-card"><h3>Volume mensal observado</h3><div class="table-wrapper"><table><thead><tr><th>Mês</th><th>Registros criados</th></tr></thead><tbody>${porMes.map((m) => `<tr><td>${escaparHTML(m.label)}</td><td>${m.value}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
-    <div class="report-content-card"><h3>Dias com maior volume de registros</h3><div class="table-wrapper"><table><thead><tr><th>Data local</th><th>Registros</th></tr></thead><tbody>${topDias.map(([date,count]) => `<tr><td>${escaparHTML(formatarData(date))}</td><td>${count}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
+    <div class="report-content-card report-attendance-section report-period-months"><div class="report-section-heading"><div><span class="report-section-kicker">EVOLUÇÃO</span><h3>Volume mensal observado</h3><p>Comparação dos registros criados em cada mês.</p></div><span class="report-chart-hint">${maiorMes ? `pico: ${maiorMes.label}` : "sem dados"}</span></div><div class="table-wrapper"><table><thead><tr><th>Mês</th><th>Registros criados</th></tr></thead><tbody>${porMes.map((m) => `<tr><td>${escaparHTML(m.label)}</td><td>${m.value}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
+    <div class="report-content-card report-attendance-section report-period-days"><div class="report-section-heading"><div><span class="report-section-kicker">CONCENTRAÇÃO</span><h3>Dias com maior volume</h3><p>Os dez dias com mais registros no período.</p></div><i class="fas fa-calendar-day report-section-heading-icon" aria-hidden="true"></i></div><div class="table-wrapper"><table><thead><tr><th>Data local</th><th>Registros</th></tr></thead><tbody>${topDias.map(([date,count]) => `<tr><td>${escaparHTML(formatarData(date))}</td><td>${count}</td></tr>`).join("") || `<tr><td colspan="2">Nenhum registro no período.</td></tr>`}</tbody></table></div></div>
   `;
 }
 
@@ -1696,9 +1756,19 @@ async function renderConteudoDetalhado(ocorrencias) {
   const tiposResumo = porTipo.slice(0, 5);
   const restantes = Math.max(0, porTipo.length - tiposResumo.length);
   return `
-    <p class="report-method-note">Lista dos principais campos operacionais. Selecione uma linha para abrir o registro completo; o número do BO externo é separado do número interno GM.</p>
+    <section class="report-attendance-intro report-detail-intro" aria-labelledby="detalhadoTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-list-ul" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">CONSULTA OPERACIONAL</span><h3 id="detalhadoTitulo">Todos os registros em uma visão</h3><p>Consulte os principais campos e selecione uma linha para abrir o registro completo da ocorrência.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-database" aria-hidden="true"></i> ${ocorrencias.length} registros</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> O número do BO externo é separado do número interno GM. Datas e horários seguem o padrão local de São Paulo.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-detail-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-database" aria-hidden="true"></i></div><strong>${ocorrencias.length}</strong><span>Registros no período</span><small>Base consultada</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-tags" aria-hidden="true"></i></div><strong>${porTipo.length}</strong><span>Tipos observados</span><small>Naturezas distintas</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-eye" aria-hidden="true"></i></div><strong>7</strong><span>Campos exibidos</span><small>Leitura resumida</small></div>
+    </div>
     ${tiposResumo.length ? `<div class="report-type-chips">${tiposResumo.map((t) => `<span class="report-type-chip">${escaparHTML(t.tipo)}: ${t.total}</span>`).join("")}${restantes ? `<span class="report-type-chip report-type-chip-muted">+ ${restantes} outros tipos</span>` : ""}</div>` : ""}
-    <div class="report-content-card"><h3>Registros do período (${ocorrencias.length})</h3>
+    <div class="report-content-card report-attendance-section report-detail-table-card"><div class="report-section-heading"><div><span class="report-section-kicker">DETALHAMENTO</span><h3>Registros do período</h3><p>Selecione uma linha para abrir os detalhes completos.</p></div><span class="report-chart-hint">${ocorrencias.length} registro(s)</span></div>
       <div class="table-wrapper report-detail-table-wrap"><table><thead><tr><th>Nº GM</th><th>BO externo</th><th>Data/hora</th><th>Tipo</th><th>Gravidade</th><th>Localidade</th><th>Situação</th></tr></thead><tbody>
         ${ocorrencias.map((o) => `<tr data-relatorio-id="${escaparHTML(o.id)}" onclick="window._relatoriosVerDetalhes(this.dataset.relatorioId)" tabindex="0" role="button" aria-label="Abrir ocorrência ${escaparHTML(o.numero_ocorrencia || o.numero_temporario || "sem número")}"><td>${escaparHTML(o.numero_ocorrencia || o.numero_temporario || "Rascunho")}</td><td>${escaparHTML(o.numero_bo || "—")}</td><td>${escaparHTML(formatarDataHoraSP(o.criado_em))}</td><td>${escaparHTML(getTipoLabel(o.tipo_ocorrencia))}</td><td>${escaparHTML(o.gravidade || "—")}</td><td>${escaparHTML(o.bairro_ocorrencia || o.local_ocorrencia || "—")}</td><td><span class="badge badge-${getStatusClass(o.status)}">${escaparHTML(getStatusLabel(o.status))}</span></td></tr>`).join("") || `<tr><td colspan="7">Nenhuma ocorrência no período.</td></tr>`}
       </tbody></table></div>
@@ -1733,27 +1803,19 @@ async function renderConteudoMapa(
     }));
 
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Visualização geográfica das ocorrências com localização registrada.
-        </p>
-      </div>
+    <section class="report-attendance-intro report-map-intro" aria-labelledby="mapaTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-map-marked-alt" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">VISÃO TERRITORIAL</span><h3 id="mapaTitulo">Onde as ocorrências estão acontecendo?</h3><p>Visualização geográfica das ocorrências que possuem localização registrada.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-location-dot" aria-hidden="true"></i> ${dadosMapa.length} localizadas</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> O mapa considera somente registros com latitude e longitude válidas. A posição dos marcadores é uma referência operacional.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-map-kpis">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-location-dot" aria-hidden="true"></i></div><strong>${dadosMapa.length}</strong><span>Com localização</span><small>Marcadores disponíveis</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-tags" aria-hidden="true"></i></div><strong>${new Set(dadosMapa.map((o) => o.tipo)).size}</strong><span>Tipos diferentes</span><small>Entre os marcadores</small></div>
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-database" aria-hidden="true"></i></div><strong>${ocorrencias.length ? `${((dadosMapa.length / ocorrencias.length) * 100).toFixed(1)}%` : "—"}</strong><span>Cobertura geográfica</span><small>Do total consultado</small></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${dadosMapa.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Com Localização</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${new Set(dadosMapa.map((o) => o.tipo)).size}</div>
-        <div style="font-size:9px;opacity:0.8;">Tipos Diferentes</div>
-      </div>
-    </div>
-
-    <div id="mapaContainer" class="mapa-container" style="width:100%;height:350px;border-radius:var(--border-radius);overflow:hidden;box-shadow:var(--sombra-suave);position:relative;background:#f1f5f9;border:2px solid var(--cinza-claro);">
+    <div id="mapaContainer" class="mapa-container report-map-card" style="width:100%;height:350px;border-radius:var(--border-radius);overflow:hidden;box-shadow:var(--sombra-suave);position:relative;background:#f1f5f9;border:2px solid var(--cinza-claro);">
       ${
         dadosMapa.length === 0
           ? `
@@ -1791,133 +1853,49 @@ async function renderConteudoMapa(
 async function renderConteudoPorGuarda(ocorrencias, dataInicio, dataFim) {
   const criadoresIds = [...new Set(ocorrencias.map((o) => o.criado_por))];
   const dadosUsuarios = await buscarDadosUsuariosEmLote(criadoresIds);
-
-  const client =
-    typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+  const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
   let abordagens = [];
   if (client) {
     try {
       const [veiculosResult, pessoasResult] = await Promise.all([
-        client
-          .from("abordagens_veiculos")
-          .select("*")
-          .gte("criado_em", dataInicio)
-          .lte("criado_em", dataFim + "T23:59:59"),
-        client
-          .from("abordagens_pessoas")
-          .select("*")
-          .gte("criado_em", dataInicio)
-          .lte("criado_em", dataFim + "T23:59:59"),
+        client.from("abordagens_veiculos").select("*").gte("criado_em", dataInicio).lte("criado_em", dataFim + "T23:59:59"),
+        client.from("abordagens_pessoas").select("*").gte("criado_em", dataInicio).lte("criado_em", dataFim + "T23:59:59"),
       ]);
       abordagens = [
-        ...(veiculosResult.data || []).map((v) => ({
-          ...v,
-          tipo_abordagem: "veiculo",
-        })),
-        ...(pessoasResult.data || []).map((p) => ({
-          ...p,
-          tipo_abordagem: "pessoa",
-        })),
-      ];
-    } catch (e) {
-      console.warn("Erro ao buscar abordagens:", e);
-    }
+        ...(veiculosResult.data || []).map((v) => ({ ...v, tipo_abordagem: "veiculo" })),
+        ...(pessoasResult.data || []).map((p) => ({ ...p, tipo_abordagem: "pessoa" })),
+      ].filter((a) => a.esta_ativa !== false);
+    } catch (e) { console.warn("Erro ao buscar abordagens:", e); }
   }
-
   const agrupado = {};
   ocorrencias.forEach((o) => {
     const id = o.criado_por;
     const nome = dadosUsuarios[id]?.nome_completo || "Usuário não identificado";
-    if (!agrupado[id])
-      agrupado[id] = { nome, total: 0, tipos: {}, abordagens: 0 };
+    if (!agrupado[id]) agrupado[id] = { nome, total: 0, tipos: {}, abordagens: 0 };
     agrupado[id].total++;
     const tipo = getTipoLabel(o.tipo_ocorrencia);
     agrupado[id].tipos[tipo] = (agrupado[id].tipos[tipo] || 0) + 1;
   });
-
-  abordagens.forEach((a) => {
-    const id = a.criado_por;
-    if (agrupado[id]) agrupado[id].abordagens++;
-  });
-
-  const ranking = Object.values(agrupado).sort(
-    (a, b) => b.total + b.abordagens - (a.total + a.abordagens),
-  );
+  abordagens.forEach((a) => { if (agrupado[a.criado_por]) agrupado[a.criado_por].abordagens++; });
+  const ranking = Object.values(agrupado).sort((a, b) => b.total + b.abordagens - (a.total + a.abordagens));
   const top5 = ranking.slice(0, 5);
-
   return `
-    <div style="margin-bottom:12px;">
-      <div style="background:var(--branco);border-radius:var(--border-radius);padding:12px;box-shadow:var(--sombra-suave);">
-        <p style="font-size:12px;color:var(--cinza-medio);margin:0;">
-          <i class="fas fa-info-circle" style="color:var(--azul-bandeira);margin-right:4px;"></i>
-          Produtividade individual dos guardas, consolidando ocorrências e abordagens.
-        </p>
-      </div>
+    <section class="report-attendance-intro report-guard-intro" aria-labelledby="guardaTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas fa-user-shield" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">DISTRIBUIÇÃO OPERACIONAL</span><h3 id="guardaTitulo">Como os registros se distribuem por guarda?</h3><p>Consolidação de ocorrências e abordagens cadastradas no período, sem interpretar o volume como avaliação individual.</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-users" aria-hidden="true"></i> ${ranking.length} guarda(s)</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> A contagem considera o usuário responsável pelo cadastro e consolida ocorrências e abordagens. Não mede escala, esforço, qualidade ou resultado individual.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-guard-kpis">
+      <div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-users" aria-hidden="true"></i></div><strong>${ranking.length}</strong><span>Guardas com registros</span><small>No período selecionado</small></div>
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-file-lines" aria-hidden="true"></i></div><strong>${ocorrencias.length}</strong><span>Ocorrências cadastradas</span><small>Registros operacionais</small></div>
+      <div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-hand" aria-hidden="true"></i></div><strong>${abordagens.length}</strong><span>Abordagens cadastradas</span><small>Pessoas e veículos</small></div>
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-ranking-star" aria-hidden="true"></i></div><strong>${top5.length ? top5[0].total + top5[0].abordagens : "—"}</strong><span>Maior volume consolidado</span><small>${top5.length ? escaparHTML(top5[0].nome) : "Sem registros"}</small></div>
     </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      <div style="background:var(--gradiente-principal);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${ranking.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Guardas Ativos</div>
-      </div>
-      <div style="background:var(--verde-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${ocorrencias.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Ocorrências</div>
-      </div>
-      <div style="background:var(--azul-bandeira);border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-        <div style="font-size:20px;font-weight:800;">${abordagens.length}</div>
-        <div style="font-size:9px;opacity:0.8;">Abordagens</div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-      ${top5
-        .map(
-          (item, i) => `
-        <div style="background:${i === 0 ? "var(--gradiente-principal)" : i === 1 ? "var(--azul-bandeira)" : "var(--azul-escuro)"};border-radius:var(--border-radius);padding:10px;text-align:center;color:white;">
-          <div style="font-size:18px;font-weight:800;">${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}º`}</div>
-          <div style="font-size:10px;font-weight:600;margin-top:2px;">${item.nome}</div>
-          <div style="font-size:14px;font-weight:800;margin-top:4px;">${item.total + item.abordagens}</div>
-          <div style="font-size:8px;opacity:0.7;">total</div>
-        </div>
-      `,
-        )
-        .join("")}
-    </div>
-
-    <div style="background:var(--branco);border-radius:var(--border-radius);padding:14px;box-shadow:var(--sombra-suave);">
-      <h4 style="color:var(--azul-bandeira);margin:0 0 8px 0;font-size:13px;font-weight:700;">
-        <i class="fas fa-list" style="margin-right:6px;"></i>
-        Lista Completa
-      </h4>
-      ${ranking
-        .map(
-          (item, i) => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--cinza-claro);font-size:12px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:700;color:${i < 3 ? "var(--azul-bandeira)" : "var(--cinza-medio)"};min-width:20px;">${i + 1}</span>
-            <span style="font-weight:500;">${item.nome}</span>
-          </div>
-          <div style="display:flex;gap:12px;font-size:11px;">
-            <span><span style="color:var(--azul-bandeira);">📋 ${item.total}</span></span>
-            <span><span style="color:var(--verde-bandeira);">👮 ${item.abordagens}</span></span>
-            <span style="font-weight:700;color:var(--roxo);">${item.total + item.abordagens}</span>
-          </div>
-        </div>
-      `,
-        )
-        .join("")}
-      ${
-        ranking.length === 0
-          ? `
-        <p style="text-align:center;color:var(--cinza-medio);padding:16px;">Nenhum guarda com registros no período</p>
-      `
-          : ""
-      }
-    </div>
+    <div class="report-content-card report-attendance-section report-guard-ranking"><div class="report-section-heading"><div><span class="report-section-kicker">RANKING</span><h3>Maiores volumes consolidados</h3><p>Primeiros colocados por total de ocorrências e abordagens.</p></div><span class="report-chart-hint">top ${top5.length}</span></div><div class="report-guard-top-grid">${top5.map((item, i) => `<div class="report-guard-top-card"><span class="report-guard-rank">${i + 1}º</span><strong>${escaparHTML(item.nome)}</strong><b>${item.total + item.abordagens}</b><small>ocorrências + abordagens</small></div>`).join("") || `<p class="report-empty-cell">Nenhum guarda com registros no período.</p>`}</div></div>
+    <div class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">DETALHAMENTO</span><h3>Lista completa</h3><p>Ocorrências, abordagens e total consolidado por responsável.</p></div><i class="fas fa-list-ol report-section-heading-icon" aria-hidden="true"></i></div><div class="report-guard-list">${ranking.map((item, i) => `<div class="report-guard-row"><span class="report-guard-position">${i + 1}</span><strong>${escaparHTML(item.nome)}</strong><span class="report-guard-metric report-guard-occ"><i class="fas fa-file-lines" aria-hidden="true"></i>${item.total}</span><span class="report-guard-metric report-guard-abord"><i class="fas fa-hand" aria-hidden="true"></i>${item.abordagens}</span><b>${item.total + item.abordagens}</b></div>`).join("") || `<p class="report-empty-cell">Nenhum guarda com registros no período.</p>`}</div></div>
   `;
 }
-
 // ============================================
 // CONTEÚDO - RELATÓRIO DE PREVISÃO
 // ============================================
@@ -1943,6 +1921,13 @@ async function renderConteudoAbordagens(veiculos, pessoas, dataInicio, dataFim, 
   const faseLabel = (valor) => ({ advertencia: "Advertência", multa: "Multa" }[valor] || esc(valor));
   const statusLabel = (valor) => ({ ativa: "Ativa", encerrada: "Encerrada", finalizada: "Finalizada", cancelada: "Cancelada" }[valor] || esc(valor));
   const atendimentoLabel = (valor) => valor === "legado_nao_classificado" ? "Legado — contexto não classificado" : esc(valor);
+  const leituraTitulo = tipo === "veiculos" ? "Como estão as abordagens de veículos?" : tipo === "pessoas" ? "Como estão as abordagens de pessoas?" : "Como se distribuem as abordagens?";
+  const leituraDescricao = tipo === "veiculos"
+    ? "Analise identificação, local, motivos e providências dos atendimentos envolvendo veículos."
+    : tipo === "pessoas"
+      ? "Analise identificação, local, motivos e providências dos atendimentos envolvendo pessoas."
+      : "Pessoas e veículos são apresentados separadamente para preservar o contexto do registro, sem inferir vínculo com boletins de ocorrência.";
+  const leituraIcone = tipo === "veiculos" ? "fa-car-side" : tipo === "pessoas" ? "fa-user" : "fa-chart-column";
   const agruparMotivos = (lista) => {
     const contagem = new Map();
     lista.forEach((item) => {
@@ -1953,15 +1938,22 @@ async function renderConteudoAbordagens(veiculos, pessoas, dataInicio, dataFim, 
   };
   const tabelaMotivos = (titulo, lista) => {
     const motivos = agruparMotivos(lista);
-    return `<section class="report-content-card"><h3>${titulo}</h3><div class="table-wrapper"><table><thead><tr><th>Motivo informado</th><th>Registros</th><th>% do grupo</th></tr></thead><tbody>${motivos.map(([motivo, quantidade]) => `<tr><td>${esc(motivo)}</td><td>${quantidade}</td><td>${lista.length ? ((quantidade / lista.length) * 100).toFixed(1) + "%" : "—"}</td></tr>`).join("") || `<tr><td colspan="3">Nenhum motivo registrado no período.</td></tr>`}</tbody></table></div></section>`;
+    return `<section class="report-content-card report-attendance-section"><div class="report-section-heading"><div><span class="report-section-kicker">DISTRIBUIÇÃO</span><h3>${titulo}</h3><p>Motivos informados no grupo selecionado.</p></div><span class="report-chart-hint">${lista.length} registro(s)</span></div><div class="table-wrapper"><table><thead><tr><th>Motivo informado</th><th>Registros</th><th>% do grupo</th></tr></thead><tbody>${motivos.map(([motivo, quantidade]) => `<tr><td>${esc(motivo)}</td><td>${quantidade}</td><td>${lista.length ? ((quantidade / lista.length) * 100).toFixed(1) + "%" : "—"}</td></tr>`).join("") || `<tr><td colspan="3">Nenhum motivo registrado no período.</td></tr>`}</tbody></table></div></section>`;
   };
 
-  let html = `<p class="report-method-note">Contagem de abordagens registradas no período selecionado. Pessoas e veículos permanecem em grupos separados; este relatório não infere vínculo entre abordagem e boletim de ocorrência. ${naoClassificados} registro(s) legado(s) sem classificação de atendimento.</p>
-    <div class="report-kpi-grid report-kpi-grid-compact">
-      <div class="report-kpi"><strong>${total}</strong><span>Total de abordagens</span></div>
-      ${incluiVeiculos ? `<div class="report-kpi"><strong>${listaVeiculos.length}</strong><span>Abordagens de veículos</span></div>` : ""}
-      ${incluiPessoas ? `<div class="report-kpi"><strong>${listaPessoas.length}</strong><span>Abordagens de pessoas</span></div>` : ""}
-      <div class="report-kpi"><strong>${naoClassificados}</strong><span>Legado sem classificação</span></div>
+  const veiculosPct = total ? ((listaVeiculos.length / total) * 100).toFixed(1) : "0.0";
+  const pessoasPct = total ? ((listaPessoas.length / total) * 100).toFixed(1) : "0.0";
+  let html = `<section class="report-attendance-intro report-approaches-intro report-approaches-${tipo}" aria-labelledby="abordagensTitulo">
+      <div class="report-attendance-intro-icon"><i class="fas ${leituraIcone}" aria-hidden="true"></i></div>
+      <div><span class="report-section-kicker">LEITURA OPERACIONAL</span><h3 id="abordagensTitulo">${leituraTitulo}</h3><p>${leituraDescricao}</p></div>
+      <span class="report-attendance-validity"><i class="fas fa-layer-group" aria-hidden="true"></i> ${total} total</span>
+    </section>
+    <p class="report-method-note"><i class="fas fa-circle-info" aria-hidden="true"></i> Contagem de abordagens registradas no período selecionado. ${naoClassificados} registro(s) legado(s) permanecem sem classificação de atendimento.</p>
+    <div class="report-kpi-grid report-attendance-kpis report-approaches-kpis report-approaches-kpis-${tipo}">
+      <div class="report-kpi report-kpi-accent-blue"><div class="report-attendance-kpi-icon"><i class="fas fa-layer-group" aria-hidden="true"></i></div><strong>${total}</strong><span>Total de abordagens</span><small>No período selecionado</small></div>
+      ${incluiVeiculos ? `<div class="report-kpi report-kpi-accent-purple"><div class="report-attendance-kpi-icon"><i class="fas fa-car-side" aria-hidden="true"></i></div><strong>${listaVeiculos.length}</strong><span>Abordagens de veículos</span><small>${veiculosPct}% do total</small></div>` : ""}
+      ${incluiPessoas ? `<div class="report-kpi report-kpi-accent-green"><div class="report-attendance-kpi-icon"><i class="fas fa-user" aria-hidden="true"></i></div><strong>${listaPessoas.length}</strong><span>Abordagens de pessoas</span><small>${pessoasPct}% do total</small></div>` : ""}
+      <div class="report-kpi report-kpi-accent-amber"><div class="report-attendance-kpi-icon"><i class="fas fa-tag" aria-hidden="true"></i></div><strong>${naoClassificados}</strong><span>Legado sem classificação</span><small>Requer contexto adicional</small></div>
     </div>`;
 
   if (incluiVeiculos) {
@@ -2024,6 +2016,9 @@ function inicializarGraficos(tipo, container) {
         case "executivo":
           inicializarGraficoExecutivo();
           break;
+        case "por-tipo":
+          inicializarGraficoPorTipo();
+          break;
         case "por-local":
           inicializarGraficoLocal();
           break;
@@ -2043,6 +2038,25 @@ function inicializarGraficos(tipo, container) {
       console.warn("Erro ao inicializar gráficos:", error);
     }
   }, 400);
+}
+
+async function inicializarGraficoPorTipo() {
+  await carregarChartJS();
+  const dados = agruparPorTipo(estado.dadosCache || []);
+  if (!dados.length || typeof Chart === "undefined") return;
+  const labels = dados.map((item) => item.tipo);
+  const valores = dados.map((item) => item.total);
+  const cores = dados.map((item, index) => TIPOS_OCORRENCIA.find((tipo) => tipo.label === item.tipo)?.cor || CORES_PIZZA[index % CORES_PIZZA.length]);
+  const canvasBarras = document.getElementById("chartPorTipoBarras");
+  if (canvasBarras) {
+    estado.chartInstances.porTipoBarras?.destroy();
+    estado.chartInstances.porTipoBarras = new Chart(canvasBarras, { type: "bar", data: { labels, datasets: [{ label: "Registros", data: valores, backgroundColor: cores, borderRadius: 6, borderSkipped: false, barThickness: 18 }] }, options: { indexAxis: "y", responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${ctx.raw} registro${ctx.raw === 1 ? "" : "s"}` } } }, scales: { x: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } }, grid: { color: "rgba(100,116,139,.13)" } }, y: { ticks: { font: { size: 10 } }, grid: { display: false } } } } });
+  }
+  const canvasPizza = document.getElementById("chartPorTipoPizza");
+  if (canvasPizza) {
+    estado.chartInstances.porTipoPizza?.destroy();
+    estado.chartInstances.porTipoPizza = new Chart(canvasPizza, { type: "doughnut", data: { labels, datasets: [{ data: valores, backgroundColor: cores, borderColor: "#ffffff", borderWidth: 3, hoverOffset: 6 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: "62%", plugins: { legend: { position: "bottom", labels: { font: { size: 10 }, boxWidth: 11, padding: 8, usePointStyle: true } }, tooltip: { callbacks: { label: (ctx) => { const total = ctx.dataset.data.reduce((sum, value) => sum + value, 0); return ` ${ctx.label}: ${ctx.raw} (${total ? ((ctx.raw / total) * 100).toFixed(1) : 0}%)`; } } } } } });
+  }
 }
 
 async function inicializarGraficoExecutivo() {
@@ -2789,16 +2803,15 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
       }
       case "por-tipo": {
         const porTipo = agruparPorTipo(ocorrencias);
+        const lider = porTipo[0];
         dados = {
-          ocorrencias: ocorrencias.map((o) => ({
-            ...o,
-            tipo_ocorrencia: getTipoLabel(o.tipo_ocorrencia),
-            status: o.status,
-          })),
+          ocorrencias: ocorrencias.map((o) => ({ ...o, tipo_ocorrencia: getTipoLabel(o.tipo_ocorrencia), status: o.status })),
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
+          tipoFiltro: estado.filtros.tipoOcorrencia ? getTipoLabel(estado.filtros.tipoOcorrencia) : "Todos os tipos",
+          notaMetodologica: lider ? `Maior volume: ${lider.tipo} (${lider.total} registros; ${lider.percentual}% do período).` : "Não há registros válidos no período.",
         };
         titulo = "Ocorrências por Tipo";
-        descricao = "Análise detalhada por natureza";
+        descricao = "Distribuição, concentração e situação por natureza registrada";
         break;
       }
       case "por-local": {
@@ -2815,20 +2828,17 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
         break;
       }
       case "atendimento": {
-        const comTempo = ocorrencias.filter(
-          (o) => o.data_hora_inicio && o.data_hora_encerramento,
-        );
-        const tempos = comTempo
-          .map((o) => {
-            const inicio = new Date(o.data_hora_inicio);
-            const fim = new Date(o.data_hora_encerramento);
-            return { ...o, tempoMinutos: (fim - inicio) / (1000 * 60) };
-          })
-          .filter((t) => t.tempoMinutos > 0);
+        const tempos = ocorrencias.map((o) => {
+          const inicio = criarDateBanco(o.data_hora_inicio);
+          const fim = criarDateBanco(o.data_hora_encerramento || o.data_hora_finalizacao);
+          return { ...o, tempoMinutos: Number.isFinite(inicio.getTime()) && Number.isFinite(fim.getTime()) ? (fim - inicio) / 60000 : NaN };
+        }).filter((t) => Number.isFinite(t.tempoMinutos) && t.tempoMinutos > 0);
         const mediaGeral =
           tempos.length > 0
             ? tempos.reduce((s, t) => s + t.tempoMinutos, 0) / tempos.length
             : 0;
+        const medianaGeral = medianaNumerica(tempos.map((t) => t.tempoMinutos));
+        const maiorDuracao = tempos.length ? Math.max(...tempos.map((t) => t.tempoMinutos)) : 0;
 
         const ranking = [
           {
@@ -2854,12 +2864,26 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
 
         dados = {
           ranking,
+          atendimento: {
+            amostrasValidas: tempos.length,
+            semDuracaoValida: ocorrencias.length - tempos.length,
+            mediaMinutos: mediaGeral,
+            medianaMinutos: medianaGeral,
+            maiorDuracaoMinutos: maiorDuracao,
+            ocorrencias: tempos.slice(0, 100).map((t) => ({
+              numero: t.numero_ocorrencia || t.numero_temporario || "Sem número",
+              tipo: getTipoLabel(t.tipo_ocorrencia),
+              tempoMinutos: t.tempoMinutos,
+              inicio: t.data_hora_inicio,
+              encerramento: t.data_hora_encerramento || t.data_hora_finalizacao,
+            })),
+          },
           totalOcorrencias: ocorrencias.length,
           totalAbordagens: 0,
           totalGuardas: 1,
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Tempo Médio de Atendimento";
+        titulo = "Tempo de Atendimento";
         descricao = "Análise de eficiência operacional";
         break;
       }
@@ -2936,7 +2960,7 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           })),
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Relatório de Retificações";
+        titulo = "Retificações";
         descricao = "Acompanhamento de correções";
         break;
       }
@@ -2952,7 +2976,7 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           notaMetodologica: "O período considera a data de criação da ocorrência. O schema não possui timestamp de cancelamento; proporção = ocorrências canceladas ÷ total de ocorrências consultadas no intervalo, inclusive canceladas.",
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Relatório de Cancelamentos";
+        titulo = "Cancelamentos";
         descricao = "Análise de ocorrências canceladas";
         break;
       }
@@ -2985,13 +3009,13 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           totalGuardas: 1,
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Tendências e Sazonalidade";
+        titulo = "Tendências observadas";
         descricao = "Padrões temporais das ocorrências";
         break;
       }
       case "produtividade": {
         dados = { totalRegistrosPeriodo: ocorrencias.length, periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}` };
-        titulo = "Produtividade do Setor — volume registrado";
+        titulo = "Ocorrências por Período";
         descricao = "Contagem de registros por período; não mede desempenho individual";
         break;
       }
@@ -3224,7 +3248,7 @@ export async function exportarRelatorioPDF(tipo, appInstance) {
           pessoas: dadosPessoas,
           periodo: `${formatarData(dataInicio)} até ${formatarData(dataFim)}`,
         };
-        titulo = "Abordagens Geral";
+        titulo = "Abordagens — visão geral";
         descricao = "Consolidado de todas as abordagens";
         break;
       }

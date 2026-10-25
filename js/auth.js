@@ -1130,15 +1130,36 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      if (!this.isAdministrador()) {
+      const atualizaProprioPerfil = id === this.user?.id;
+      if (!this.isAdministrador() && !atualizaProprioPerfil) {
         return {
           success: false,
-          error: "Permissão negada. Apenas administradores podem editar usuários.",
+          error: "Permissão negada. Você só pode atualizar o próprio perfil.",
         };
       }
 
-      // O administrador só pode alterar os campos recebidos pela operação administrativa.
-      delete dados.senha_hash;
+      if (atualizaProprioPerfil && !this.isAdministrador()) {
+        // Guarda e supervisor podem editar somente dados pessoais do próprio perfil.
+        // Perfil, status, CPF, senha e demais campos administrativos permanecem protegidos.
+        const camposPermitidos = ["nome_completo", "apelido", "email", "telefone"];
+        const dadosProprios = {};
+        camposPermitidos.forEach((campo) => {
+          if (Object.prototype.hasOwnProperty.call(dados, campo)) dadosProprios[campo] = dados[campo];
+        });
+        if (this.isSupervisor() && Object.prototype.hasOwnProperty.call(dados, "matricula")) {
+          dadosProprios.matricula = dados.matricula;
+        }
+        // Fluxo de troca da própria senha: aceita somente o hash já gerado pelo RPC.
+        if (Object.prototype.hasOwnProperty.call(dados, "senha_hash")) {
+          dadosProprios.senha_hash = dados.senha_hash;
+          dadosProprios.primeiro_acesso = false;
+          if (dados.status === "ativo") dadosProprios.status = "ativo";
+        }
+        dados = dadosProprios;
+      } else {
+        // O administrador só pode alterar os campos recebidos pela operação administrativa.
+        delete dados.senha_hash;
+      }
 
       // Processar dados sensíveis se presentes
       if (dados.cpf || dados.telefone) {
@@ -1187,6 +1208,7 @@ class AuthManager {
             cpf: this.user.cpf,
             perfil: this.user.perfil,
             matricula: this.user.matricula,
+            foto_url: this.user.foto_url || null,
           }),
         );
       }

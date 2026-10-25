@@ -1019,7 +1019,11 @@ class AuthManager {
 
   podeEditar(ocorrencia) {
     if (!this.user || !ocorrencia) return false;
-    return (this.isSupervisor() || ocorrencia.criado_por === this.user.id) && ocorrencia.status === "draft";
+    const gestor = this.isSupervisor() || this.isAdministrador();
+    const autor = ocorrencia.criado_por === this.user.id;
+    const rascunho = ocorrencia.status === "draft";
+    const rapidoIncompleto = autor && ocorrencia.modo_criacao === "rapido" && !ocorrencia.completado_em && ["synced", "pending_sync"].includes(ocorrencia.status);
+    return (gestor || autor) && (rascunho || rapidoIncompleto);
   }
   podeVisualizar(ocorrencia) { return Boolean(this.user && ocorrencia); }
   podeFinalizar(ocorrencia) { return this.podeEditar(ocorrencia); }
@@ -1027,8 +1031,8 @@ class AuthManager {
     return Boolean(this.user && (this.isSupervisor() || this.isAdministrador()) && ocorrencia?.status !== "cancelled");
   }
   podeSolicitarRetificacao(ocorrencia) {
-    if (!this.user || !ocorrencia || !["synced", "pending_sync"].includes(ocorrencia.status)) return false;
-    return this.isSupervisor() || this.isAdministrador() || ocorrencia.criado_por === this.user.id;
+    if (!this.user || !ocorrencia || ocorrencia.status !== "synced" || ocorrencia.ocorrencia_original_id) return false;
+    return this.isSupervisor() || this.isAdministrador() || ocorrencia.criado_por === this.user.id || ocorrencia._guarda_designado === true;
   }
   podeAprovarRetificacao(ocorrencia) {
     return Boolean(this.user && (this.isSupervisor() || this.isAdministrador()) && ocorrencia?.status === "pending_rectification");

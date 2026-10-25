@@ -907,23 +907,45 @@ async function finalizarRapido(container, appInstance) {
     return;
   }
 
+  const guardas = estado.dados.guardasParticipantes || [];
+  const errosFilhos = [];
   const guardasResult = await ocorrenciaManager.salvarGuardas(
     result.data.id,
-    estado.dados.guardasParticipantes || [],
+    guardas,
   );
-  if (!guardasResult.success) {
-    appInstance.showToast("BO criado, mas a equipe não foi salva: " + guardasResult.error, "warning");
-    return;
-  }
+  if (!guardasResult.success) errosFilhos.push("equipe: " + guardasResult.error);
 
   if (anexos.length > 0) {
     const anexoResult = await ocorrenciaManager.salvarAnexos(
       result.data.id,
       anexos,
     );
-    if (!anexoResult.success) {
-      console.warn("Erro ao salvar anexos:", anexoResult.error);
-    }
+    if (!anexoResult.success) errosFilhos.push("anexos: " + anexoResult.error);
+  }
+
+  if (errosFilhos.length) {
+    const enfileirado = await enfileirarRetentativaOcorrencia(
+      result.data, [], anexos, guardas, [],
+    );
+    appInstance.showToast(
+      enfileirado
+        ? "BO salvo; equipe/anexos seguem pendentes de sincronização automática."
+        : "BO salvo como pendente. Não feche a sessão; a equipe/anexos precisam ser sincronizados.",
+      "warning",
+    );
+    return;
+  }
+
+  const finalizacao = await ocorrenciaManager.finalizarPendenteSync(result.data.id);
+  if (!finalizacao.success) {
+    const enfileirado = await enfileirarRetentativaOcorrencia(
+      result.data, [], anexos, guardas, [],
+    );
+    appInstance.showToast(
+      enfileirado ? "BO salvo; finalização será tentada novamente." : "BO salvo, mas permanece pendente de finalização.",
+      "warning",
+    );
+    return;
   }
 
   appInstance.showToast("BO Rápido finalizado com sucesso! ⚡", "success");
@@ -2315,6 +2337,25 @@ function removerAnexo(index, appInstance) {
 // 🔥 CORRIGIDO: FINALIZAR OCORRÊNCIA (COM DATA/HORA ENCERRAMENTO DA ETAPA 7)
 // ============================================
 
+async function enfileirarRetentativaOcorrencia(ocorrencia, envolvidos = [], anexos = [], guardasParticipantes = [], assinaturas = []) {
+  if (!ocorrencia?.id || !window.syncManager?.addToQueue) return false;
+  try {
+    const bundle = {
+      ocorrencia: { ...ocorrencia, status: "pending_sync" },
+      envolvidos,
+      anexos,
+      guardasParticipantes,
+      assinaturas,
+    };
+    const idempotencyKey = `ocorrencia:${ocorrencia.id}:${ocorrencia.atualizado_em || ocorrencia.criado_em || "pendente"}`;
+    await window.syncManager.addToQueue(bundle, "ocorrencia", 0, { idempotencyKey });
+    return true;
+  } catch (error) {
+    console.warn("Não foi possível enfileirar a retentativa da ocorrência:", error?.message || error);
+    return false;
+  }
+}
+
 async function finalizarOcorrencia(container, appInstance) {
   salvarDadosEtapa();
 
@@ -2518,12 +2559,28 @@ async function finalizarOcorrencia(container, appInstance) {
   // 🔥 Assinaturas já foram salvas com a ocorrência (campo assinaturas)
 
   if (erros.length > 0) {
-    appInstance.showToast(
-      "Ocorrência salva, mas com erros: " + erros.join(" | "),
-      "warning",
+    const enfileirado = await enfileirarRetentativaOcorrencia(
+      result.data, envolvidos, anexos, guardas, assinaturas,
     );
+    if (!enfileirado) {
+      appInstance.showToast("Ocorrência permanece pendente; falhas: " + erros.join(" | "), "warning");
+      return;
+    }
+    appInstance.showToast("Ocorrência salva; itens complementares pendentes serão sincronizados automaticamente.", "warning");
   } else {
-    appInstance.showToast("Ocorrência finalizada com sucesso!", "success");
+    const finalizacao = await ocorrenciaManager.finalizarPendenteSync(ocorrenciaId);
+    if (!finalizacao.success) {
+      const enfileirado = await enfileirarRetentativaOcorrencia(
+        result.data, envolvidos, anexos, guardas, assinaturas,
+      );
+      if (!enfileirado) {
+        appInstance.showToast("Ocorrência salva, mas permanece pendente de finalização.", "warning");
+        return;
+      }
+      appInstance.showToast("Ocorrência salva; finalização será tentada novamente.", "warning");
+    } else {
+      appInstance.showToast("Ocorrência finalizada com sucesso!", "success");
+    }
   }
 
   await authManager.logCriarOcorrencia(authManager.getUserId(), ocorrenciaId);
@@ -2683,13 +2740,18 @@ async function salvarCompletarRapido(appInstance) {
     envolvidos: estado.dados.envolvidos || [],
     anexos: estado.dados.anexos || [],
     assinaturas: estado.dados.assinaturas || [],
+    status: "pending_sync",
   };
 
+  delete dadosAtualizados.envolvidos;
+  delete dadosAtualizados.anexos;
   delete dadosAtualizados.guardasParticipantes;
   delete dadosAtualizados.assinaturas_objeto;
 
   if (estado.dadosOriginais) {
-    const alteracoes = compararObjetos(estado.dadosOriginais, dadosAtualizados);
+    const dadosComparacao = { ...dadosAtualizados };
+    delete dadosComparacao.status;
+    const alteracoes = compararObjetos(estado.dadosOriginais, dadosComparacao);
     if (Object.keys(alteracoes).length === 0) {
       appInstance.showToast("Nenhuma alteração detectada", "info");
       return;
@@ -2707,18 +2769,42 @@ async function salvarCompletarRapido(appInstance) {
     }
 
     const envolvidos = estado.dados.envolvidos || [];
-    if (envolvidos.length > 0) {
-      await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
-    }
-    await ocorrenciaManager.salvarGuardas(id, guardas);
-
     const anexos = estado.dados.anexos || [];
+    const errosFilhos = [];
+    if (envolvidos.length > 0) {
+      const envResult = await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
+      if (!envResult.success) errosFilhos.push("envolvidos: " + envResult.error);
+    }
+    const guardasResult = await ocorrenciaManager.salvarGuardas(id, guardas);
+    if (!guardasResult.success) errosFilhos.push("equipe: " + guardasResult.error);
     if (anexos.length > 0) {
-      await ocorrenciaManager.salvarAnexos(id, anexos);
+      const anexoResult = await ocorrenciaManager.salvarAnexos(id, anexos);
+      if (!anexoResult.success) errosFilhos.push("anexos: " + anexoResult.error);
+    }
+
+    const ocorrenciaPendente = result.data || { ...dadosAtualizados, id, criado_por: authManager.getUserId(), status: "pending_sync" };
+    if (errosFilhos.length) {
+      const enfileirado = await enfileirarRetentativaOcorrencia(ocorrenciaPendente, envolvidos, anexos, guardas, dadosAtualizados.assinaturas || []);
+      if (!enfileirado) {
+        appInstance.showToast("Alterações permanecem pendentes; falhas: " + errosFilhos.join(" | "), "warning");
+        return;
+      }
+      appInstance.showToast("Alterações salvas; itens complementares pendentes serão sincronizados automaticamente.", "warning");
+    } else {
+      const finalizacao = await ocorrenciaManager.finalizarPendenteSync(id);
+      if (!finalizacao.success) {
+        const enfileirado = await enfileirarRetentativaOcorrencia(ocorrenciaPendente, envolvidos, anexos, guardas, dadosAtualizados.assinaturas || []);
+        if (!enfileirado) {
+          appInstance.showToast("Alterações permanecem pendentes de finalização.", "warning");
+          return;
+        }
+        appInstance.showToast("Alterações salvas; finalização será tentada novamente.", "warning");
+      } else {
+        appInstance.showToast("Alterações salvas com sucesso!", "success");
+      }
     }
 
     estado.dadosOriginais = JSON.parse(JSON.stringify(estado.dados));
-    appInstance.showToast("Alterações salvas com sucesso!", "success");
     appInstance.alteracoesNaoSalvas = false;
 
     const container = document.getElementById("page-nova-ocorrencia");
@@ -2782,10 +2868,12 @@ async function finalizarCompletarRapido(appInstance) {
       completado_em: dataFinalizacao,
       completado_por: authManager.getUserId(),
       data_hora_finalizacao: dataFinalizacao,
-      status: "synced",
+      status: "pending_sync",
     };
 
     delete dadosAtualizados.assinaturas_objeto;
+    delete dadosAtualizados.envolvidos;
+    delete dadosAtualizados.anexos;
 
     const result = await ocorrenciaManager.atualizar(id, dadosAtualizados);
     if (!result.success) {
@@ -2794,18 +2882,46 @@ async function finalizarCompletarRapido(appInstance) {
     }
 
     const envolvidos = estado.dados.envolvidos || [];
-    if (envolvidos.length > 0) {
-      await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
-    }
-    await ocorrenciaManager.salvarGuardas(id, estado.dados.guardasParticipantes || []);
-
     const anexos = estado.dados.anexos || [];
+    const guardas = estado.dados.guardasParticipantes || [];
+    const errosFilhos = [];
+    if (envolvidos.length > 0) {
+      const envResult = await ocorrenciaManager.salvarEnvolvidos(id, envolvidos);
+      if (!envResult.success) errosFilhos.push("envolvidos: " + envResult.error);
+    }
+    const guardasResult = await ocorrenciaManager.salvarGuardas(id, guardas);
+    if (!guardasResult.success) errosFilhos.push("equipe: " + guardasResult.error);
+
     if (anexos.length > 0) {
-      await ocorrenciaManager.salvarAnexos(id, anexos);
+      const anexoResult = await ocorrenciaManager.salvarAnexos(id, anexos);
+      if (!anexoResult.success) errosFilhos.push("anexos: " + anexoResult.error);
     }
 
-    await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
-    appInstance.showToast("Ocorrência completada com sucesso! ✅", "success");
+    const ocorrenciaPendente = result.data || { ...dadosAtualizados, id, criado_por: authManager.getUserId(), status: "pending_sync" };
+    let finalizou = false;
+    if (errosFilhos.length) {
+      const enfileirado = await enfileirarRetentativaOcorrencia(ocorrenciaPendente, envolvidos, anexos, guardas, dadosAtualizados.assinaturas || []);
+      if (!enfileirado) {
+        appInstance.showToast("Ocorrência permanece pendente; falhas: " + errosFilhos.join(" | "), "warning");
+        return;
+      }
+      appInstance.showToast("Ocorrência salva; itens complementares pendentes serão sincronizados automaticamente.", "warning");
+    } else {
+      const finalizacao = await ocorrenciaManager.finalizarPendenteSync(id);
+      if (!finalizacao.success) {
+        const enfileirado = await enfileirarRetentativaOcorrencia(ocorrenciaPendente, envolvidos, anexos, guardas, dadosAtualizados.assinaturas || []);
+        if (!enfileirado) {
+          appInstance.showToast("Ocorrência salva, mas permanece pendente de finalização.", "warning");
+          return;
+        }
+        appInstance.showToast("Ocorrência salva; finalização será tentada novamente.", "warning");
+      } else {
+        finalizou = true;
+        appInstance.showToast("Ocorrência completada com sucesso! ✅", "success");
+      }
+    }
+
+    if (finalizou) await authManager.logFinalizarOcorrencia(authManager.getUserId(), id);
 
     resetarEstado();
     setTimeout(() => appInstance.navigateTo("ocorrencias"), 1500);

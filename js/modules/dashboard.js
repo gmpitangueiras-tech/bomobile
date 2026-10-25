@@ -49,6 +49,7 @@ const PULL_REFRESH_THRESHOLD = 80;
 
 let estado = {
   filtroStatusAtual: null,
+  escopoOcorrencias: "minhas",
   statsData: null,
   ocorrenciasData: [],
   abordagensData: [],
@@ -56,11 +57,52 @@ let estado = {
   briefingsData: null,
   pendentesRetificacoes: [],
   isRefreshing: false,
+  erros: {},
+  lastUpdatedAt: null,
+  userId: null,
   touchStartY: 0,
   touchCurrentY: 0,
   isPulling: false,
   pullProgress: 0,
 };
+
+function getDashboardRole() {
+  const manager = typeof authManager !== "undefined" ? authManager : null;
+  const isAdministrator = Boolean(manager?.isAdministrador?.());
+  const isSupervisor = Boolean(manager?.isSupervisor?.());
+  const podeRevisarRetificacoes = Boolean(
+    manager?.can?.("retificacoes") || isSupervisor || isAdministrator,
+  );
+
+  if (isAdministrator) {
+    return {
+      key: "administrador",
+      label: "PAINEL ADMINISTRATIVO",
+      description: "Acompanhe a saúde do sistema e acesse as ferramentas de gestão.",
+      isAdministrator,
+      isSupervisor,
+      podeRevisarRetificacoes,
+    };
+  }
+  if (isSupervisor) {
+    return {
+      key: "supervisor",
+      label: "PAINEL DA SUPERVISÃO",
+      description: "Acompanhe a movimentação recente e as solicitações que aguardam análise.",
+      isAdministrator,
+      isSupervisor,
+      podeRevisarRetificacoes,
+    };
+  }
+  return {
+    key: "guarda",
+    label: "PAINEL OPERACIONAL",
+    description: "Acesse os registros, as novidades e os atalhos do atendimento.",
+    isAdministrator,
+    isSupervisor,
+    podeRevisarRetificacoes,
+  };
+}
 
 // ============================================
 // FUNÇÕES PRINCIPAIS
@@ -74,6 +116,22 @@ let estado = {
 export async function renderDashboard(container, appInstance) {
   const user =
     typeof authManager !== "undefined" ? authManager.getUser() : null;
+
+  const userId = user?.id || null;
+  if (estado.userId !== userId) {
+    const role = getDashboardRole();
+    dashboardMemoryCache.clear();
+    estado.userId = userId;
+    estado.escopoOcorrencias = role.isSupervisor || role.isAdministrator ? "geral" : "minhas";
+    estado.statsData = null;
+    estado.ocorrenciasData = [];
+    estado.abordagensData = [];
+    estado.abordagensHoje = null;
+    estado.briefingsData = null;
+    estado.pendentesRetificacoes = [];
+    estado.erros = {};
+    estado.lastUpdatedAt = null;
+  }
 
   if (!user) {
     container.innerHTML = `
@@ -90,6 +148,8 @@ export async function renderDashboard(container, appInstance) {
     return;
   }
 
+  estado.erros = {};
+
   // Mostrar loader com animação
   container.innerHTML = `
     <div class="container" style="text-align:center;padding:40px 20px;">
@@ -105,8 +165,10 @@ export async function renderDashboard(container, appInstance) {
     await carregarOcorrencias();
     await carregarAbordagens();
     await carregarAbordagensHoje();
+    estado.lastUpdatedAt = new Date();
 
     renderizarDashboard(container, appInstance);
+    vincularAcoesDashboard(container, appInstance);
 
     // Configurar pull-to-refresh
     configurarPullToRefresh(container, appInstance);
@@ -133,13 +195,60 @@ export async function renderDashboard(container, appInstance) {
           <i class="fas fa-exclamation-triangle"></i>
         </div>
         <h3>Erro ao carregar dashboard</h3>
-        <p style="color:var(--cinza-medio);">${error.message}</p>
-        <button onclick="window._dashboardRecarregar()" class="btn-primary" style="margin-top:16px;border-radius:12px;">
+      <p style="color:var(--cinza-medio);">${escapeDashboardHtml(error.message || "Falha inesperada")}</p>
+        <button data-dashboard-refresh class="btn-primary" style="margin-top:16px;border-radius:12px;">
           Tentar novamente
         </button>
       </div>
     `;
+    vincularAcoesDashboard(container, appInstance);
   }
+}
+
+function vincularAcoesDashboard(container, appInstance) {
+  container.querySelectorAll("[data-dashboard-refresh]").forEach((button) => {
+    button.addEventListener("click", () => refreshDashboard(container, appInstance));
+  });
+  container.querySelectorAll("[data-dashboard-scope]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const novoEscopo = button.dataset.dashboardScope;
+      if (!["minhas", "geral"].includes(novoEscopo) || estado.escopoOcorrencias === novoEscopo) return;
+      estado.escopoOcorrencias = novoEscopo;
+      renderDashboard(container, appInstance);
+    });
+  });
+  container.querySelectorAll("[data-dashboard-bo]").forEach((button) => {
+    const abrir = () => verBORapido(button.dataset.dashboardBo, appInstance);
+    button.addEventListener("click", abrir);
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        abrir();
+      }
+    });
+  });
+  container.querySelectorAll("[data-dashboard-approach]").forEach((button) => {
+    const abrir = () => verAbordagemDetalhe(
+        button.dataset.dashboardApproach,
+        button.dataset.dashboardApproachType,
+        appInstance,
+      );
+    button.addEventListener("click", abrir);
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        abrir();
+      }
+    });
+  });
+  container.querySelectorAll("[data-dashboard-briefing-bo]").forEach((button) => {
+    button.addEventListener("click", () =>
+      verDetalhes(button.dataset.dashboardBriefingBo, appInstance),
+    );
+  });
+  container.querySelectorAll("[data-dashboard-mural]").forEach((button) => {
+    button.addEventListener("click", () => appInstance.navigateTo("mural"));
+  });
 }
 
 // ============================================
@@ -293,10 +402,8 @@ async function refreshDashboard(container, appInstance) {
   estado.isRefreshing = true;
 
   try {
-    localStorage.removeItem(CACHE_KEY_STATS);
-    localStorage.removeItem(CACHE_KEY_OCORRENCIAS);
-    localStorage.removeItem(CACHE_KEY_ABORDAGENS);
-    localStorage.removeItem(CACHE_KEY_ABORDAGENS_HOJE);
+    dashboardMemoryCache.clear();
+    estado.erros = {};
 
     await carregarStats();
     await carregarBriefings();
@@ -304,10 +411,17 @@ async function refreshDashboard(container, appInstance) {
     await carregarAbordagens();
     await carregarAbordagensHoje();
 
+    estado.lastUpdatedAt = new Date();
     renderizarDashboard(container, appInstance);
+    vincularAcoesDashboard(container, appInstance);
+    configurarPullToRefresh(container, appInstance);
 
     if (appInstance && appInstance.showToast) {
-      appInstance.showToast("Dashboard atualizado!", "success");
+      const cargaParcial = Object.values(estado.erros).some(Boolean);
+      appInstance.showToast(
+        cargaParcial ? "Atualizado parcialmente; confira os dados indisponíveis." : "Dashboard atualizado!",
+        cargaParcial ? "warning" : "success",
+      );
     }
   } catch (error) {
     console.error("Erro ao atualizar dashboard:", error);
@@ -411,54 +525,36 @@ async function carregarStats() {
   if (cachedStats) {
     estado.statsData = cachedStats;
     console.log("📊 Estatísticas carregadas do cache");
-    return;
   }
-
-  try {
-    const result = await ocorrenciaManager.getStats();
-    if (result.success) {
+  if (!cachedStats) {
+    try {
+      const result = await ocorrenciaManager.getStats();
+      if (!result?.success) throw result?.error || new Error("Consulta de indicadores não confirmada");
       estado.statsData = result.data;
+      estado.erros.stats = false;
       setCachedData(CACHE_KEY_STATS, result.data);
-    } else {
-      estado.statsData = {
-        total: 0,
-        hoje: 0,
-        draft: 0,
-        pending: 0,
-        synced: 0,
-        cancelled: 0,
-        rectified: 0,
-        pending_rectification: 0,
-      };
+    } catch (error) {
+      console.warn("Erro ao carregar estatísticas:", error);
+      estado.statsData = null;
+      estado.erros.stats = true;
     }
-  } catch (error) {
-    console.warn("Erro ao carregar estatísticas:", error);
-    estado.statsData = {
-      total: 0,
-      hoje: 0,
-      draft: 0,
-      pending: 0,
-      synced: 0,
-      cancelled: 0,
-      rectified: 0,
-      pending_rectification: 0,
-    };
   }
 
-  if (typeof authManager !== "undefined" && authManager.isSupervisor()) {
+  const role = getDashboardRole();
+  if (role.podeRevisarRetificacoes) {
     try {
       const result = await ocorrenciaManager.buscarRetificacoesPendentes();
-      if (result.success) {
-        estado.pendentesRetificacoes = result.data || [];
-      } else {
-        estado.pendentesRetificacoes = [];
-      }
+      if (!result?.success) throw result?.error || new Error("Consulta de retificações não confirmada");
+      estado.pendentesRetificacoes = result.data || [];
+      estado.erros.retificacoes = false;
     } catch (error) {
       console.warn("Erro ao carregar retificações pendentes:", error);
       estado.pendentesRetificacoes = [];
+      estado.erros.retificacoes = true;
     }
   } else {
     estado.pendentesRetificacoes = [];
+    estado.erros.retificacoes = false;
   }
 }
 
@@ -468,6 +564,7 @@ async function carregarBriefings() {
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) {
       estado.briefingsData = { ocorrencias: [], avisos: [] };
+      estado.erros.briefings = true;
       return;
     }
 
@@ -475,7 +572,7 @@ async function carregarBriefings() {
 
     const { data: novasOcorrencias, error: occError } = await client
       .from("ocorrencias")
-      .select("id, tipo_ocorrencia, criado_em, local_ocorrencia")
+      .select("id, tipo_ocorrencia, criado_em, local_ocorrencia, criado_por")
       .gte("criado_em", dozeHorasAtras)
       .eq("esta_ativa", true)
       .limit(5);
@@ -490,30 +587,15 @@ async function carregarBriefings() {
 
     if (avisoError) throw avisoError;
 
-    const ocorrenciasComNomes = await Promise.all(
-      (novasOcorrencias || []).map(async (occ) => {
-        let nomeCriador = "Desconhecido";
-        if (occ.criado_por) {
-          try {
-            const { data: usuario } = await client
-              .from("usuarios")
-              .select("nome_completo")
-              .eq("id", occ.criado_por)
-              .single();
-            if (usuario) nomeCriador = usuario.nome_completo;
-          } catch (e) {}
-        }
-        return { ...occ, criador: { nome_completo: nomeCriador } };
-      }),
-    );
-
     estado.briefingsData = {
-      ocorrencias: ocorrenciasComNomes || [],
+      ocorrencias: novasOcorrencias || [],
       avisos: novosAvisos || [],
     };
+    estado.erros.briefings = false;
   } catch (error) {
     console.warn("Erro ao carregar briefings:", error);
     estado.briefingsData = { ocorrencias: [], avisos: [] };
+    estado.erros.briefings = true;
   }
 }
 
@@ -537,8 +619,12 @@ async function associarAnexosOcorrenciasDashboard(ocorrencias) {
 
   if (error) throw error;
 
+  const anexosResolvidos = await resolverAnexosDashboard(data || []);
+  estado.erros.anexos = (data || []).some((anexo, index) =>
+    Boolean(anexo.url || anexo.caminho_arquivo || anexo.path) && !anexosResolvidos[index]?.url,
+  );
   const anexosPorOcorrencia = new Map(ids.map((id) => [String(id), []]));
-  (data || []).forEach((anexo) => {
+  anexosResolvidos.forEach((anexo) => {
     const chave = String(anexo.ocorrencia_id || "");
     if (!anexosPorOcorrencia.has(chave)) anexosPorOcorrencia.set(chave, []);
     anexosPorOcorrencia.get(chave).push(anexo);
@@ -547,6 +633,22 @@ async function associarAnexosOcorrenciasDashboard(ocorrencias) {
   lista.forEach((ocorrencia) => {
     ocorrencia.anexos = anexosPorOcorrencia.get(String(ocorrencia.id)) || [];
   });
+}
+
+async function resolverAnexosDashboard(anexos) {
+  const lista = Array.isArray(anexos) ? anexos : [];
+  const resolver = window.resolverUrlAnexo;
+  if (typeof resolver !== "function") {
+    if (lista.length > 0) estado.erros.anexos = true;
+    return lista.map((anexo) => ({ ...anexo, url: null, url_thumb: null }));
+  }
+  return Promise.all(lista.map(async (anexo) => {
+    const origem = anexo.url || anexo.caminho_arquivo || anexo.path;
+    const url = await resolver(origem);
+    const thumbOrigem = anexo.url_thumb || anexo.thumbnail_url || origem;
+    const urlThumb = await resolver(thumbOrigem);
+    return { ...anexo, url, url_thumb: urlThumb || url };
+  }));
 }
 
 function isDashboardImageAttachment(anexo) {
@@ -559,15 +661,22 @@ function isDashboardImageAttachment(anexo) {
 }
 
 async function carregarOcorrencias() {
-  const cachedOcorrencias = getCachedData(CACHE_KEY_OCORRENCIAS);
+  const scopeCacheKey = `${CACHE_KEY_OCORRENCIAS}_${estado.escopoOcorrencias}_${estado.filtroStatusAtual || "all"}`;
+  const cachedOcorrencias = getCachedData(scopeCacheKey);
   if (cachedOcorrencias) {
     estado.ocorrenciasData = cachedOcorrencias;
+    estado.erros.ocorrencias = false;
     console.log("📋 Ocorrências e fotos carregadas do cache");
     return;
   }
 
   try {
     const filtros = { limit: estado.filtroStatusAtual ? 100 : 5 };
+    if (estado.escopoOcorrencias === "minhas") {
+      const currentUser = typeof authManager !== "undefined" ? authManager.getUser() : null;
+      if (!currentUser?.id) throw new Error("Não foi possível confirmar a sessão para filtrar suas ocorrências.");
+      filtros.criado_por = currentUser.id;
+    }
     if (estado.filtroStatusAtual) {
       filtros.status = estado.filtroStatusAtual;
     }
@@ -579,16 +688,20 @@ async function carregarOcorrencias() {
         await associarAnexosOcorrenciasDashboard(ocorrencias);
       } catch (anexoError) {
         console.warn("Não foi possível carregar miniaturas das ocorrências:", anexoError);
+        estado.erros.anexos = true;
         ocorrencias.forEach((ocorrencia) => { ocorrencia.anexos = []; });
       }
       estado.ocorrenciasData = ocorrencias;
-      setCachedData(CACHE_KEY_OCORRENCIAS, ocorrencias);
+      estado.erros.ocorrencias = false;
+      setCachedData(scopeCacheKey, ocorrencias);
     } else {
       estado.ocorrenciasData = [];
+      estado.erros.ocorrencias = true;
     }
   } catch (error) {
     console.warn("Erro ao carregar ocorrências:", error);
     estado.ocorrenciasData = [];
+    estado.erros.ocorrencias = true;
   }
 }
 
@@ -596,6 +709,7 @@ async function carregarAbordagens() {
   const cachedAbordagens = getCachedData(CACHE_KEY_ABORDAGENS);
   if (cachedAbordagens) {
     estado.abordagensData = cachedAbordagens;
+    estado.erros.abordagens = false;
     console.log("🚗 Abordagens carregadas do cache");
     return;
   }
@@ -605,6 +719,7 @@ async function carregarAbordagens() {
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) {
       estado.abordagensData = [];
+      estado.erros.abordagens = true;
       return;
     }
 
@@ -621,6 +736,8 @@ async function carregarAbordagens() {
         .limit(5),
     ]);
 
+    if (veiculosResult.error) throw veiculosResult.error;
+    if (pessoasResult.error) throw pessoasResult.error;
     const veiculos = veiculosResult.data || [];
     const pessoas = pessoasResult.data || [];
 
@@ -634,10 +751,12 @@ async function carregarAbordagens() {
     );
 
     estado.abordagensData = todasAbordagens.slice(0, 5);
+    estado.erros.abordagens = false;
     setCachedData(CACHE_KEY_ABORDAGENS, estado.abordagensData);
   } catch (error) {
     console.warn("Erro ao carregar abordagens:", error);
     estado.abordagensData = [];
+    estado.erros.abordagens = true;
   }
 }
 
@@ -645,6 +764,7 @@ async function carregarAbordagensHoje() {
   const cachedCount = getCachedData(CACHE_KEY_ABORDAGENS_HOJE);
   if (cachedCount !== null && cachedCount !== undefined && Number.isFinite(Number(cachedCount))) {
     estado.abordagensHoje = Number(cachedCount);
+    estado.erros.abordagensHoje = false;
     return;
   }
 
@@ -653,6 +773,7 @@ async function carregarAbordagensHoje() {
       typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) {
       estado.abordagensHoje = null;
+      estado.erros.abordagensHoje = true;
       return;
     }
 
@@ -691,11 +812,13 @@ async function carregarAbordagensHoje() {
     if (pessoas.error) throw pessoas.error;
 
     estado.abordagensHoje = (veiculos.count || 0) + (pessoas.count || 0);
+    estado.erros.abordagensHoje = false;
     setCachedData(CACHE_KEY_ABORDAGENS_HOJE, estado.abordagensHoje);
   } catch (error) {
     console.warn("Erro ao contar abordagens de hoje:", error);
     // Não exibir zero quando a consulta falhar: o travessão sinaliza indisponibilidade.
     estado.abordagensHoje = null;
+    estado.erros.abordagensHoje = true;
   }
 }
 
@@ -728,38 +851,54 @@ function renderizarDashboard(container, appInstance) {
   const abordagens = estado.abordagensData;
   const briefings = estado.briefingsData;
   const pendentesCount = estado.pendentesRetificacoes?.length || 0;
-  const isSupervisor =
-    typeof authManager !== "undefined" && authManager.isSupervisor();
+  const role = getDashboardRole();
   const filtroAtivo = estado.filtroStatusAtual;
   const temNovidades =
     briefings?.ocorrencias?.length > 0 || briefings?.avisos?.length > 0;
   const tituloFiltro = filtroAtivo ? getStatusLabel(filtroAtivo) : "Todas";
-  const dataHoje = new Date().toLocaleDateString("pt-BR", {
+  const timeZone = globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo";
+  const dataHoje = new Intl.DateTimeFormat("pt-BR", {
+    timeZone,
     day: "2-digit",
     month: "long",
     year: "numeric",
+  }).format(new Date());
+  const formatoHora = new Intl.DateTimeFormat("pt-BR", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
   });
-  const perfilLabel = isSupervisor ? "PAINEL DA SUPERVISÃO" : "PAINEL OPERACIONAL";
-  const mensagemInicial = isSupervisor
-    ? "Acompanhe a movimentação recente e as solicitações que aguardam análise."
-    : "Acesse os registros, as novidades e os atalhos do atendimento.";
+  const updatedLabel = Object.values(estado.erros).some(Boolean)
+    ? "Dados carregados parcialmente"
+    : "Dados atualizados";
+  const updatedTime = estado.lastUpdatedAt
+    ? `${updatedLabel} às ${formatoHora.format(estado.lastUpdatedAt)}`
+    : "Atualização ainda não confirmada";
 
   container.innerHTML = `
     <div class="container dashboard-shell" id="dashboardContainer">
       <header class="dashboard-welcome" aria-labelledby="dashboardTitle">
         <div class="dashboard-welcome__copy">
-          <span class="dashboard-eyebrow">${perfilLabel}</span>
-          <h1 id="dashboardTitle">Bem-vindo, ${user?.nome_completo || "Guarda"}</h1>
-          <p>${mensagemInicial}</p>
+          <span class="dashboard-eyebrow">${role.label}</span>
+          <h1 id="dashboardTitle">Bem-vindo, ${escapeDashboardHtml(user?.nome_completo || "Guarda")}</h1>
+          <p>${role.description}</p>
+          <div class="dashboard-trust-context">
+            <span><i class="fas fa-shield-halved" aria-hidden="true"></i> Escopo: dados permitidos ao seu perfil</span>
+            <span id="dashboardUpdatedAt" aria-live="polite">${updatedTime}</span>
+          </div>
         </div>
         <div class="dashboard-date-card">
           <span>HOJE</span>
           <strong>${dataHoje}</strong>
+          <button type="button" class="dashboard-refresh-button" data-dashboard-refresh aria-label="Atualizar dados do dashboard">
+            <i class="fas fa-rotate" aria-hidden="true"></i><span>Atualizar</span>
+          </button>
         </div>
       </header>
 
-      ${renderPrioridades(stats, pendentesCount, isSupervisor)}
-      ${renderResumoHoje(stats, estado.abordagensHoje)}
+      ${renderDashboardDataState()}
+      ${renderPrioridades(stats, pendentesCount, role.podeRevisarRetificacoes)}
+      ${renderResumoHoje(stats, estado.abordagensHoje, Boolean(estado.erros.stats))}
       ${temNovidades ? renderBriefing(briefings) : ""}
 
       <section class="dashboard-section dashboard-actions-section" aria-labelledby="dashboardActionsTitle">
@@ -780,8 +919,8 @@ function renderizarDashboard(container, appInstance) {
             <p>Indicadores dos registros ativos. Toque em um cartão para filtrar.</p>
           </div>
         </div>
-        ${renderStatsCards(stats, isSupervisor)}
-        ${isSupervisor ? renderStatsAdicionais(stats) : ""}
+        ${renderStatsCards(stats, Boolean(estado.erros.stats))}
+        ${role.isSupervisor || role.isAdministrator ? renderStatsAdicionais(stats, Boolean(estado.erros.stats)) : ""}
       </section>
 
       <div class="dashboard-activity-grid">
@@ -789,14 +928,19 @@ function renderizarDashboard(container, appInstance) {
           <div class="dashboard-section-heading dashboard-section-heading--compact">
             <div>
               <span class="dashboard-eyebrow">BOLETINS</span>
-              <h2 id="dashboardOccurrencesTitle">${filtroAtivo ? `Ocorrências — ${tituloFiltro}` : "Ocorrências recentes"}</h2>
+              <h2 id="dashboardOccurrencesTitle">${filtroAtivo ? `Ocorrências — ${tituloFiltro}` : "Ocorrências recentes"} · ${estado.escopoOcorrencias === "minhas" ? "Minhas" : "Geral"}</h2>
+              <p>${estado.escopoOcorrencias === "minhas" ? "Registros criados por você." : (!navigator.onLine ? "Dados disponíveis neste dispositivo; não representam todo o acervo enquanto estiver offline." : "Registros ativos visíveis ao seu perfil.")}</p>
+            </div>
+            <div class="dashboard-scope-switch" role="group" aria-label="Escopo das ocorrências">
+              <button type="button" data-dashboard-scope="minhas" aria-pressed="${estado.escopoOcorrencias === "minhas"}">Minhas</button>
+              <button type="button" data-dashboard-scope="geral" aria-pressed="${estado.escopoOcorrencias === "geral"}">Geral</button>
             </div>
             <button onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">
               Ver todas <i class="fas fa-arrow-right" aria-hidden="true"></i>
             </button>
           </div>
           <div id="listaOcorrenciasContainer" class="dashboard-record-list">
-            ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance)}
+            ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance, Boolean(estado.erros.ocorrencias))}
           </div>
         </section>
 
@@ -811,7 +955,7 @@ function renderizarDashboard(container, appInstance) {
             </button>
           </div>
           <div id="listaAbordagensContainer" class="dashboard-record-list">
-            ${renderAbordagensLista(abordagens, appInstance)}
+            ${renderAbordagensLista(abordagens, appInstance, Boolean(estado.erros.abordagens))}
           </div>
         </section>
       </div>
@@ -831,21 +975,45 @@ function renderizarDashboard(container, appInstance) {
 // RENDERIZAÇÃO: CARDS DE ESTATÍSTICAS
 // ============================================
 
-function renderResumoHoje(stats, abordagensHoje) {
+function renderDashboardDataState() {
+  const rotulos = {
+    stats: "indicadores",
+    briefings: "novidades",
+    anexos: "miniaturas de anexos",
+    ocorrencias: "ocorrências recentes",
+    abordagens: "abordagens recentes",
+    abordagensHoje: "contagem de abordagens do dia",
+    retificacoes: "fila de retificações",
+  };
+  const indisponiveis = Object.entries(estado.erros)
+    .filter(([, falhou]) => Boolean(falhou))
+    .map(([chave]) => rotulos[chave] || chave);
+
+  if (indisponiveis.length === 0) return "";
+  return `
+    <section class="dashboard-data-warning" role="status" aria-live="polite">
+      <span class="dashboard-data-warning__icon"><i class="fas fa-triangle-exclamation" aria-hidden="true"></i></span>
+      <div><strong>Alguns dados não puderam ser confirmados.</strong><p>Indisponíveis: ${indisponiveis.map(escapeDashboardHtml).join(", ")}. Isso não significa que o total seja zero.</p></div>
+      <button type="button" data-dashboard-refresh>Atualizar</button>
+    </section>
+  `;
+}
+
+function renderResumoHoje(stats, abordagensHoje, statsIndisponiveis = false) {
   const quantidadeAbordagens =
-    abordagensHoje === null || abordagensHoje === undefined
+    estado.erros.abordagensHoje || abordagensHoje === null || abordagensHoje === undefined
       ? "—"
       : Number(abordagensHoje) || 0;
   const cards = [
     {
       key: "started",
-      value: stats?.hoje ?? 0,
+      value: statsIndisponiveis ? "—" : (stats?.hoje ?? 0),
       label: "BOs iniciados",
       icon: "fa-file-circle-plus",
     },
     {
       key: "finalized",
-      value: stats?.finalizados_hoje ?? 0,
+      value: statsIndisponiveis ? "—" : (stats?.finalizados_hoje ?? 0),
       label: "BOs finalizados",
       icon: "fa-circle-check",
     },
@@ -884,11 +1052,11 @@ function renderResumoHoje(stats, abordagensHoje) {
   `;
 }
 
-function renderStatsCards(stats, isSupervisor) {
+function renderStatsCards(stats, statsIndisponiveis = false) {
   const cards = [
     {
       key: "total",
-      value: stats?.total || 0,
+      value: statsIndisponiveis ? "—" : (stats?.total ?? 0),
       label: "Total ativo",
       icon: "fa-file-alt",
       aria: "Filtrar todas as ocorrências",
@@ -896,7 +1064,7 @@ function renderStatsCards(stats, isSupervisor) {
     },
     {
       key: "pending",
-      value: stats?.pending || 0,
+      value: statsIndisponiveis ? "—" : (stats?.pending ?? 0),
       label: "Aguardando sincronização",
       icon: "fa-cloud-arrow-up",
       aria: "Filtrar ocorrências aguardando sincronização",
@@ -904,7 +1072,7 @@ function renderStatsCards(stats, isSupervisor) {
     },
     {
       key: "synced",
-      value: stats?.synced || 0,
+      value: statsIndisponiveis ? "—" : (stats?.synced ?? 0),
       label: "Finalizadas",
       icon: "fa-check-circle",
       aria: "Filtrar ocorrências finalizadas",
@@ -912,21 +1080,19 @@ function renderStatsCards(stats, isSupervisor) {
     },
   ];
 
-  if (!isSupervisor) {
-    cards.push({
-      key: "draft",
-      value: stats?.draft || 0,
-      label: "Rascunhos",
-      icon: "fa-file-pen",
-      aria: "Filtrar rascunhos",
-      status: "'draft'",
-    });
-  }
+  cards.push({
+    key: "draft",
+    value: statsIndisponiveis ? "—" : (stats?.draft ?? 0),
+    label: "Rascunhos",
+    icon: "fa-file-pen",
+    aria: "Filtrar rascunhos",
+    status: "'draft'",
+  });
 
   cards.push(
     {
       key: "rectification",
-      value: stats?.pending_rectification || 0,
+      value: statsIndisponiveis ? "—" : (stats?.pending_rectification ?? 0),
       label: "Retificações pendentes",
       icon: "fa-rotate",
       aria: "Filtrar retificações pendentes",
@@ -934,7 +1100,7 @@ function renderStatsCards(stats, isSupervisor) {
     },
     {
       key: "cancelled",
-      value: stats?.cancelled || 0,
+      value: statsIndisponiveis ? "—" : (stats?.cancelled ?? 0),
       label: "Canceladas",
       icon: "fa-ban",
       aria: "Filtrar ocorrências canceladas",
@@ -1009,19 +1175,27 @@ function renderAcessoRapido(appInstance) {
 // RENDERIZAÇÃO: ESTATÍSTICAS ADICIONAIS
 // ============================================
 
-function renderStatsAdicionais(stats) {
-  const total = stats?.total || 1;
-  const finalizadas = stats?.synced || 0;
-  const taxa = ((finalizadas / total) * 100).toFixed(1);
+function renderStatsAdicionais(stats, indisponivel = false) {
+  const total = Number(stats?.total) || 0;
+  const finalizadas = Number(stats?.synced) || 0;
+  const taxa = !indisponivel && total > 0
+    ? `${((finalizadas / total) * 100).toFixed(1)}%`
+    : "—";
+  const nota = indisponivel
+    ? "Indicadores indisponíveis nesta atualização"
+    : total > 0
+      ? `${finalizadas} finalizadas de ${total} registros ativos`
+      : "Nenhum registro ativo encontrado";
 
   return `
     <section class="dashboard-supervisor-metrics" aria-label="Indicadores complementares">
       <div class="dashboard-supervisor-metric">
-        <span class="dashboard-supervisor-metric__value dashboard-value--green">${taxa}%</span>
-        <span class="dashboard-supervisor-metric__label">Resolutividade</span>
+        <span class="dashboard-supervisor-metric__value dashboard-value--green">${taxa}</span>
+        <span class="dashboard-supervisor-metric__label">Finalizadas / total ativo</span>
+        <small class="dashboard-supervisor-metric__note">${nota}</small>
       </div>
       <div class="dashboard-supervisor-metric">
-        <span class="dashboard-supervisor-metric__value">${stats?.draft || 0}</span>
+        <span class="dashboard-supervisor-metric__value">${indisponivel ? "—" : (stats?.draft ?? 0)}</span>
         <span class="dashboard-supervisor-metric__label">Rascunhos</span>
       </div>
     </section>
@@ -1058,10 +1232,10 @@ function renderBriefing(briefings) {
         ${ocorrencias
           .map(
             (o) => `
-          <button type="button" class="dashboard-briefing__item" onclick="window._dashboardVerDetalhes('${o.id}')">
+          <button type="button" class="dashboard-briefing__item" data-dashboard-briefing-bo="${escapeDashboardHtml(o.id)}">
             <i class="fas fa-file-alt" aria-hidden="true"></i>
-            <span><strong>${o.tipo_ocorrencia || "Ocorrência"}</strong>${o.local_ocorrencia ? ` — ${o.local_ocorrencia}` : ""}</span>
-            <time>${o.criado_em ? new Date(o.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
+            <span><strong>${escapeDashboardHtml(o.tipo_ocorrencia || "Ocorrência")}</strong>${o.local_ocorrencia ? ` — ${escapeDashboardHtml(o.local_ocorrencia)}` : ""}</span>
+            <time>${escapeDashboardHtml(o.criado_em ? new Date(o.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "")}</time>
           </button>
         `,
           )
@@ -1069,26 +1243,27 @@ function renderBriefing(briefings) {
         ${avisos
           .map(
             (a) => `
-          <button type="button" class="dashboard-briefing__item" onclick="window.app.navigateTo('mural')">
+          <button type="button" class="dashboard-briefing__item" data-dashboard-mural>
             <i class="fas fa-bullhorn" aria-hidden="true"></i>
-            <span><strong>${a.titulo}</strong></span>
-            <time>${a.criado_em ? new Date(a.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
+            <span><strong>${escapeDashboardHtml(a.titulo)}</strong></span>
+            <time>${escapeDashboardHtml(a.criado_em ? new Date(a.criado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "")}</time>
           </button>
         `,
           )
           .join("")}
       </div>
-      ${avisos.length ? '<button type="button" onclick="window.app.navigateTo(\'mural\')" class="dashboard-briefing__link">Ver comunicados <i class="fas fa-arrow-right" aria-hidden="true"></i></button>' : ""}
+      ${avisos.length ? '<button type="button" data-dashboard-mural class="dashboard-briefing__link">Ver comunicados <i class="fas fa-arrow-right" aria-hidden="true"></i></button>' : ""}
     </section>
   `;
 }
 
-function renderPrioridades(stats, pendingReviewCount, isSupervisor) {
+function renderPrioridades(stats, pendingReviewCount, podeRevisarRetificacoes) {
   const cards = [];
-  const pendingSyncCount = stats?.pending || 0;
-  const draftCount = stats?.draft || 0;
+  const statsDisponiveis = !estado.erros.stats;
+  const pendingSyncCount = statsDisponiveis ? (stats?.pending || 0) : 0;
+  const draftCount = statsDisponiveis ? (stats?.draft || 0) : 0;
 
-  if (isSupervisor && pendingReviewCount > 0) {
+  if (podeRevisarRetificacoes && !estado.erros.retificacoes && pendingReviewCount > 0) {
     cards.push(`
       <button type="button" class="dashboard-priority-item dashboard-priority-item--review" onclick="window.app.navigateTo('retificacoes')">
         <span class="dashboard-priority-item__icon"><i class="fas fa-clipboard-check" aria-hidden="true"></i></span>
@@ -1110,7 +1285,7 @@ function renderPrioridades(stats, pendingReviewCount, isSupervisor) {
     `);
   }
 
-  if (!isSupervisor && draftCount > 0) {
+  if (draftCount > 0) {
     cards.push(`
       <button type="button" class="dashboard-priority-item dashboard-priority-item--draft" onclick="window._dashboardFiltrarStatus('draft')">
         <span class="dashboard-priority-item__icon"><i class="fas fa-file-pen" aria-hidden="true"></i></span>
@@ -1158,9 +1333,11 @@ function renderRecordThumbnail(src, alt, fallbackIcon, tone, extraPhotos) {
   `;
 }
 
-function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
+function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance, indisponivel = false) {
   if (!ocorrencias || ocorrencias.length === 0) {
-    const mensagem = filtroAtivo
+    const mensagem = indisponivel
+      ? "Não foi possível confirmar a lista de ocorrências. Tente atualizar."
+      : filtroAtivo
       ? `Nenhuma ocorrência com status "${getStatusLabel(filtroAtivo)}" encontrada`
       : "Nenhuma ocorrência encontrada";
 
@@ -1169,8 +1346,8 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
         <div class="dashboard-empty-state__icon">
           <i class="fas fa-inbox"></i>
         </div>
-        <p style="font-weight:500;font-size:14px;">${mensagem}</p>
-        ${!filtroAtivo ? '<p style="font-size:12px;">Clique em "Nova Ocorrência" para criar sua primeira ocorrência</p>' : ""}
+        <p style="font-weight:500;font-size:14px;">${escapeDashboardHtml(mensagem)}</p>
+        ${!filtroAtivo && !indisponivel ? '<p style="font-size:12px;">Use "Nova ocorrência" para iniciar um registro.</p>' : ""}
         ${
           filtroAtivo
             ? `
@@ -1211,25 +1388,25 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
     const attachmentLabel = totalAnexos === 1 ? "anexo" : "anexos";
 
     html += `
-      <div class="ocorrencia-item dashboard-record-card dashboard-record-card--occurrence status-${occ.status}" onclick="window._dashboardVerBORapido('${occ.id}')">
+      <div role="button" tabindex="0" class="ocorrencia-item dashboard-record-card dashboard-record-card--occurrence status-${escapeDashboardHtml(occ.status)}" data-dashboard-bo="${escapeDashboardHtml(occ.id)}" aria-label="Abrir ocorrência ${escapeDashboardHtml(numero)}">
         ${renderRecordThumbnail(primeiroAnexo, `Foto da ocorrência ${numero}`, "fa-file-lines", "occurrence", extraPhotos)}
         <div class="dashboard-record-content">
           <div class="dashboard-record-heading">
             <div class="dashboard-record-heading__lead">
-              <span class="dashboard-record-number">#${numero}</span>
-              <span class="dashboard-record-type">${tipoLabel}</span>
+              <span class="dashboard-record-number">#${escapeDashboardHtml(numero)}</span>
+              <span class="dashboard-record-type">${escapeDashboardHtml(tipoLabel)}</span>
               ${occ.status === "rectified" && occ.numero_versao > 1 ? `<span class="dashboard-record-version">v${occ.numero_versao}</span>` : ""}
             </div>
-            <span class="badge badge-${statusClass} dashboard-record-status">${statusLabel}</span>
+            <span class="badge badge-${escapeDashboardHtml(statusClass)} dashboard-record-status">${escapeDashboardHtml(statusLabel)}</span>
           </div>
           <div class="dashboard-record-location">
             <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
-            <span>${local}</span>
+            <span>${escapeDashboardHtml(local)}</span>
           </div>
-          ${resumo ? `<div class="dashboard-record-summary">${resumo}</div>` : ""}
+          ${resumo ? `<div class="dashboard-record-summary">${escapeDashboardHtml(resumo)}</div>` : ""}
           <div class="dashboard-record-meta">
-            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${guardaNome}</span>
-            <span class="dashboard-record-meta__item"><i class="fas fa-clock" aria-hidden="true"></i>${data}</span>
+            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${escapeDashboardHtml(guardaNome)}</span>
+            <span class="dashboard-record-meta__item"><i class="fas fa-clock" aria-hidden="true"></i>${escapeDashboardHtml(data)}</span>
             ${totalAnexos > 0 ? `<span class="dashboard-record-meta__item dashboard-record-meta__attachments"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${attachmentLabel}</span>` : ""}
           </div>
         </div>
@@ -1260,14 +1437,14 @@ function renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance) {
 // RENDERIZAÇÃO: LISTA DE ABORDAGENS (COM MINIATURAS)
 // ============================================
 
-function renderAbordagensLista(abordagens, appInstance) {
+function renderAbordagensLista(abordagens, appInstance, indisponivel = false) {
   if (!abordagens || abordagens.length === 0) {
     return `
       <div class="dashboard-empty-state dashboard-empty-state--compact">
         <div class="dashboard-empty-state__icon dashboard-empty-state__icon--small">
           <i class="fas fa-search"></i>
         </div>
-        <p style="font-size:13px;">Nenhuma abordagem recente</p>
+        <p style="font-size:13px;">${indisponivel ? "Não foi possível confirmar as abordagens recentes. Tente atualizar." : "Nenhuma abordagem recente"}</p>
         <button onclick="window._dashboardNovaAbordagem()" class="btn-secondary" style="margin-top:8px;padding:4px 16px;font-size:12px;min-height:auto;width:auto;border-radius:8px;background:var(--azul-muito-claro);color:var(--azul-bandeira);">
           <i class="fas fa-plus" style="margin-right:4px;"></i> Nova Abordagem
         </button>
@@ -1312,28 +1489,28 @@ function renderAbordagensLista(abordagens, appInstance) {
     }
 
     html += `
-      <div class="abordagem-item dashboard-record-card dashboard-record-card--approach ${isVeiculo ? "dashboard-approach--vehicle" : "dashboard-approach--person"}" onclick="window._dashboardVerAbordagem('${ab.id}', '${ab.tipo_abordagem}')">
+      <div role="button" tabindex="0" class="abordagem-item dashboard-record-card dashboard-record-card--approach ${isVeiculo ? "dashboard-approach--vehicle" : "dashboard-approach--person"}" data-dashboard-approach="${escapeDashboardHtml(ab.id)}" data-dashboard-approach-type="${escapeDashboardHtml(ab.tipo_abordagem)}" aria-label="Abrir abordagem de ${isVeiculo ? "veículo" : "pessoa"} ${escapeDashboardHtml(isVeiculo ? ab.placa || "" : ab.nome || "")}">
         ${renderRecordThumbnail(primeiroAnexo, `Foto da abordagem de ${isVeiculo ? "veículo" : "pessoa"} ${identificador}`, isVeiculo ? "fa-car" : "fa-user", isVeiculo ? "vehicle" : "person", extraPhotos)}
         <div class="dashboard-record-content">
           <div class="dashboard-record-heading dashboard-record-heading--approach">
             <span class="dashboard-approach-kind ${isVeiculo ? "dashboard-approach-kind--vehicle" : "dashboard-approach-kind--person"}">
               <i class="fas ${isVeiculo ? "fa-car" : "fa-user"}" aria-hidden="true"></i>${isVeiculo ? "Veículo" : "Pessoa"}
             </span>
-            <span class="dashboard-record-date"><i class="fas fa-clock" aria-hidden="true"></i>${data}</span>
+              <span class="dashboard-record-date"><i class="fas fa-clock" aria-hidden="true"></i>${escapeDashboardHtml(data)}</span>
           </div>
           <div class="dashboard-record-approach-title">
             <div class="dashboard-record-identifier-wrap">
-              <strong class="dashboard-record-identifier ${isVeiculo ? "dashboard-record-identifier--plate" : "dashboard-record-identifier--person"}">${identificador}</strong>
-              ${detalhes ? `<span class="dashboard-record-identifier-detail">${detalhes}</span>` : ""}
+              <strong class="dashboard-record-identifier ${isVeiculo ? "dashboard-record-identifier--plate" : "dashboard-record-identifier--person"}">${escapeDashboardHtml(identificador)}</strong>
+              ${detalhes ? `<span class="dashboard-record-identifier-detail">${escapeDashboardHtml(detalhes)}</span>` : ""}
             </div>
             <span class="dashboard-record-phase ${faseClass}">${faseLabel}</span>
           </div>
           <div class="dashboard-record-summary dashboard-record-summary--reason">
             <i class="fas fa-circle-info" aria-hidden="true"></i>
-            <span>${resumoMotivo || "Motivo não informado"}</span>
+            <span>${escapeDashboardHtml(resumoMotivo || "Motivo não informado")}</span>
           </div>
           <div class="dashboard-record-meta">
-            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${guardaNome}</span>
+            <span class="dashboard-record-meta__item dashboard-record-meta__creator"><i class="fas fa-user" aria-hidden="true"></i>${escapeDashboardHtml(guardaNome)}</span>
             ${totalAnexos > 0 ? `<span class="dashboard-record-meta__item dashboard-record-meta__attachments"><i class="fas fa-paperclip" aria-hidden="true"></i>${totalAnexos} ${attachmentLabel}</span>` : ""}
           </div>
         </div>
@@ -1481,6 +1658,7 @@ export async function verAbordagemDetalhe(id, tipo, appInstance) {
       appInstance.showToast("Abordagem não encontrada", "error");
       return;
     }
+    const anexosResolvidos = await resolverAnexosDashboard(data.anexos);
 
     const isVeiculo = tipo === "veiculo";
     const guardaNome = data.usuarios?.nome_completo || "Desconhecido";
@@ -1550,7 +1728,7 @@ export async function verAbordagemDetalhe(id, tipo, appInstance) {
             </section>
           ` : ""}
 
-          ${renderDashboardDetailGallery(data.anexos)}
+          ${renderDashboardDetailGallery(anexosResolvidos)}
         </div>
         <footer class="dashboard-detail-modal__footer">
           <button type="button" class="dashboard-detail-action dashboard-detail-action--secondary" data-detail-close>Fechar</button>
@@ -1588,7 +1766,9 @@ export async function verBORapido(id, appInstance) {
       ocorrenciaManager.listarAnexos(id),
     ]);
     const envolvidos = envolvidosResult.success ? envolvidosResult.data || [] : [];
-    const anexos = anexosResult.success ? anexosResult.data || [] : [];
+    const anexos = anexosResult.success
+      ? await resolverAnexosDashboard(anexosResult.data || [])
+      : [];
 
     const numero = occ.numero_ocorrencia || occ.numero_temporario || "Rascunho";
     const statusClass = getStatusClass(occ.status);

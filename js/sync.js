@@ -395,7 +395,7 @@ class SyncManager {
 
       switch (item.tipo) {
         case "ocorrencia":
-          result = await this.sincronizarOcorrencia(dados, client);
+          result = await this.sincronizarOcorrencia(dados, client, item.id);
           break;
         case "abordagem_veiculo":
           result = await this.sincronizarAbordagemVeiculo(dados, client);
@@ -470,15 +470,74 @@ class SyncManager {
    * @param {Object} client - Cliente Supabase
    * @returns {Promise<Object>}
    */
-  async sincronizarOcorrencia(payload, client) {
+  async sincronizarOcorrencia(payload, client, queueId = null) {
     try {
       const dados = payload.ocorrencia || payload;
       const envolvidos = payload.envolvidos || [];
       const anexos = payload.anexos || [];
       const guardas = payload.guardasParticipantes || [];
       if (!dados?.id || !dados?.criado_por || dados.criado_por !== authManager.getUserId()) throw new Error("Payload sem vínculo válido com o usuário autenticado.");
-      const { data: saved, error } = await client.from("ocorrencias").upsert([dados], { onConflict: "id" }).select().single();
+      const statusSolicitado = dados.status || "synced";
+      if (!["draft", "pending_sync", "synced"].includes(statusSolicitado)) throw new Error("Status inválido para sincronização.");
+      let payloadAlterado = false;
+      for (const envolvido of envolvidos) {
+        if (envolvido && !envolvido.id) { envolvido.id = crypto.randomUUID(); payloadAlterado = true; }
+      }
+      for (const anexo of anexos) {
+        if (anexo?.arquivo && !anexo.id) { anexo.id = crypto.randomUUID(); payloadAlterado = true; }
+      }
+      if (payloadAlterado) {
+        if (!queueId || !window.offlineVault?.unlocked) throw new Error("Não foi possível persistir IDs estáveis dos filhos na fila cifrada.");
+        const persistido = await window.offlineVault.updateQueuePayload(queueId, payload);
+        if (!persistido) throw new Error("Item da fila não encontrado para persistir IDs estáveis.");
+      }
+      const { data: existente, error: existenteError } = await client.from("ocorrencias").select("*").eq("id", dados.id).maybeSingle();
+      if (existenteError) throw existenteError;
+      if (existente?.status === "synced") {
+        const pendencias = [];
+        const envolvidosIds = envolvidos.map((item) => item?.id).filter(Boolean);
+        if (envolvidosIds.length !== envolvidos.filter(Boolean).length) pendencias.push("envolvidos sem ID estável");
+        if (envolvidosIds.length) {
+          const { data: encontrados, error: consultaErro } = await client.from("envolvidos").select("id").eq("ocorrencia_id", dados.id).in("id", envolvidosIds).limit(envolvidosIds.length);
+          if (consultaErro) throw consultaErro;
+          const idsEncontrados = new Set((encontrados || []).map((item) => item.id));
+          if (envolvidosIds.some((id) => !idsEncontrados.has(id))) pendencias.push("envolvidos ausentes");
+        }
+        const anexosIds = anexos.map((item) => item?.id).filter(Boolean);
+        const anexosUrls = anexos.filter((item) => !item?.id && item?.url && !/^blob:|^data:/i.test(item.url)).map((item) => item.url);
+        if (anexos.length !== anexosIds.length + anexosUrls.length) pendencias.push("anexos sem referência estável");
+        if (anexosIds.length) {
+          const { data: encontrados, error: consultaErro } = await client.from("anexos").select("id").eq("ocorrencia_id", dados.id).in("id", anexosIds).limit(anexosIds.length);
+          if (consultaErro) throw consultaErro;
+          const idsEncontrados = new Set((encontrados || []).map((item) => item.id));
+          if (anexosIds.some((id) => !idsEncontrados.has(id))) pendencias.push("anexos ausentes");
+        }
+        if (anexosUrls.length) {
+          const { data: encontrados, error: consultaErro } = await client.from("anexos").select("url").eq("ocorrencia_id", dados.id).in("url", anexosUrls).limit(anexosUrls.length);
+          if (consultaErro) throw consultaErro;
+          const urlsEncontradas = new Set((encontrados || []).map((item) => item.url));
+          if (anexosUrls.some((url) => !urlsEncontradas.has(url))) pendencias.push("anexos ausentes");
+        }
+        const guardasChaves = guardas.map((item) => item?.guarda_id && item?.papel ? `${item.guarda_id}:${item.papel}` : null);
+        if (guardasChaves.some((chave) => !chave)) pendencias.push("equipe sem referência estável");
+        if (guardasChaves.length) {
+          const guardaIds = [...new Set(guardas.map((item) => item.guarda_id))];
+          const { data: encontrados, error: consultaErro } = await client.from("ocorrencia_guardas").select("guarda_id,papel").eq("ocorrencia_id", dados.id).eq("esta_ativo", true).in("guarda_id", guardaIds).limit(Math.max(guardas.length, 1));
+          if (consultaErro) throw consultaErro;
+          const chavesEncontradas = new Set((encontrados || []).map((item) => `${item.guarda_id}:${item.papel}`));
+          if (guardasChaves.some((chave) => chave && !chavesEncontradas.has(chave))) pendencias.push("equipe incompleta");
+        }
+        if (pendencias.length) throw new Error(`Ocorrência já finalizada com itens pendentes (${pendencias.join(", ")}); fila mantida para revisão, sem marcar sincronização como concluída.`);
+        const localType = "offline-occurrence";
+        await window.offlineVault.putRecord(localType, dados.id, { ocorrencia: existente, envolvidos, anexos, guardasParticipantes: guardas, assinaturas: payload.assinaturas || [] }, { status: "synced" });
+        return { success: true, data: existente };
+      }
+      if (existente && !["draft", "pending_sync"].includes(existente.status)) throw new Error("A ocorrência já está finalizada ou em fluxo de retificação; alterações exigem o fluxo autorizado.");
+      const statusPersistido = statusSolicitado === "draft" && existente?.status !== "pending_sync" ? "draft" : "pending_sync";
+      const dadosParaSalvar = { ...dados, status: statusPersistido };
+      const { data: savedInicial, error } = await client.from("ocorrencias").upsert([dadosParaSalvar], { onConflict: "id" }).select().single();
       if (error) throw error;
+      let saved = savedInicial;
 
       if (envolvidos.length) {
         const rows = envolvidos.map((env) => ({
@@ -502,7 +561,7 @@ class SyncManager {
           if (anexo?.url && !/^blob:|^data:/i.test(anexo.url)) continue;
           throw new Error("Há anexo local sem arquivo binário; o item permanece na fila.");
         }
-        const fileId = anexo.id || crypto.randomUUID();
+        const fileId = anexo.id;
         const ext = String(anexo.arquivo.name || "anexo").split(".").pop().replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
         const path = `${authManager.getUserId()}/${dados.id}/${fileId}.${ext}`;
         const { error: uploadError } = await client.storage.from("anexos").upload(path, anexo.arquivo, { upsert: true, contentType: anexo.arquivo.type || "application/octet-stream" });
@@ -514,7 +573,22 @@ class SyncManager {
           url: path, mime_type: anexo.arquivo.type || null,
           hash_arquivo: anexo.hash_pericial || anexo.hash || null, criado_por: authManager.getUserId(),
         }], { onConflict: "id" });
-        if (metaError) throw metaError;
+        if (metaError) {
+          if (/^[0-9A-Z]{5}$/.test(String(metaError.code || ""))) {
+            const { error: cleanupError } = await client.storage.from("anexos").remove([path]);
+            if (cleanupError) console.warn("Falha ao limpar objeto sem metadado de anexo:", cleanupError.code || "STORAGE_CLEANUP_ERROR");
+          } else {
+            console.warn("Resposta do metadado de anexo incerta; manter caminho estável para retry idempotente.");
+          }
+          throw metaError;
+        }
+      }
+      if (statusSolicitado !== "draft" && saved.status !== "synced") {
+        const { data: finalizada, error: finalizacaoError } = await client.from("ocorrencias")
+          .update({ status: "synced", atualizado_por: authManager.getUserId() })
+          .eq("id", dados.id).eq("status", "pending_sync").select().single();
+        if (finalizacaoError) throw finalizacaoError;
+        saved = finalizada;
       }
       const localType = saved.status === "draft" ? "draft" : "offline-occurrence";
       await window.offlineVault.putRecord(localType, dados.id, { ocorrencia: saved, envolvidos, anexos, guardasParticipantes: guardas, assinaturas: payload.assinaturas || [] }, { status: "synced" });

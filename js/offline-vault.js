@@ -360,6 +360,25 @@
       return true;
     }
 
+    async updateQueuePayload(id, payload) {
+      this.requireUnlocked();
+      const row = await req(this.db.transaction(STORE.queue, "readonly").objectStore(STORE.queue).get(id));
+      if (!row || row.userId !== this.userId) return false;
+      const encrypted = await this.encrypt(this.userId, "queue", id, payload);
+      let updated = false;
+      const tx = this.db.transaction([STORE.queue, STORE.queueData], "readwrite");
+      const queueStore = tx.objectStore(STORE.queue);
+      const request = queueStore.get(id);
+      request.onsuccess = () => {
+        const current = request.result;
+        if (!current || current.userId !== this.userId) return;
+        tx.objectStore(STORE.queueData).put({ key: current.dataKey, userId: this.userId, ...encrypted });
+        updated = true;
+      };
+      await txDone(tx);
+      return updated;
+    }
+
     async removeQueue(id) {
       this.requireUnlocked();
       const tx = this.db.transaction([STORE.queue, STORE.queueData], "readwrite");

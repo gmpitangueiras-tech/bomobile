@@ -489,7 +489,7 @@ class OcorrenciaManager {
       const ocorrencia = {
         ...dados,
         numero_temporario: numeroTemporario,
-        status: dados.status || "draft",
+        status: dados.status === "synced" ? "pending_sync" : (dados.status || "draft"),
         criado_por: user.id,
         criado_em: formatarTimestampLocalSemFuso(new Date(), true),
         data_hora_inicio: dataHoraInicio,
@@ -604,6 +604,7 @@ class OcorrenciaManager {
           if (row?.id) byId.set(row.id, { ...row, status: row.status === "draft" ? "draft" : "pending_sync", criador: { nome_completo: user.nome_completo, cpf: null } });
         }
         let local = [...byId.values()].filter((row) => row.esta_ativa !== false);
+        if (filtros.criado_por) local = local.filter((row) => row.criado_por === filtros.criado_por);
         if (filtros.status) local = local.filter((row) => row.status === filtros.status);
         if (filtros.tipo_ocorrencia) local = local.filter((row) => row.tipo_ocorrencia === filtros.tipo_ocorrencia);
         if (filtros.gravidade) local = local.filter((row) => row.gravidade === filtros.gravidade);
@@ -620,6 +621,10 @@ class OcorrenciaManager {
       if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
 
       let query = client.from("ocorrencias").select("*").eq("esta_ativa", true);
+
+      if (filtros.criado_por) {
+        query = query.eq("criado_por", filtros.criado_por);
+      }
 
       if (filtros.status) {
         query = query.eq("status", filtros.status);
@@ -885,6 +890,29 @@ class OcorrenciaManager {
   /**
    * 🔥 ALTERADO: Finalizar ocorrência com data_hora_finalizacao
    */
+  async finalizarPendenteSync(id) {
+    try {
+      const user = authManager.getUser();
+      if (!user) return { success: false, error: "Usuário não autenticado" };
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
+
+      const { data, error } = await client
+        .from("ocorrencias")
+        .update({ status: "synced", atualizado_por: user.id })
+        .eq("id", id)
+        .eq("status", "pending_sync")
+        .select()
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return { success: false, error: "Registro pendente não encontrado para finalização" };
+      return { success: true, data };
+    } catch (error) {
+      console.error("❌ Erro ao finalizar registro pendente de sync:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async finalizar(id) {
     try {
       const { data: ocorrencia, error: buscaError } = await this.buscar(id);
@@ -1077,7 +1105,7 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência original não encontrada" };
       }
 
-      const podeSolicitar = authManager.podeSolicitarRetificacao(original);
+      const podeSolicitar = await this.podeSolicitarRetificacao(original);
       if (!podeSolicitar) {
         return {
           success: false,
@@ -1145,35 +1173,27 @@ class OcorrenciaManager {
       dadosFiltrados.data_hora_encerramento = original.data_hora_encerramento;
       dadosFiltrados.forma_solicitacao = original.forma_solicitacao;
 
-      const isSupervisor = authManager.isSupervisor();
-      const statusFinal = isSupervisor ? "rectified" : "pending_rectification";
+      const isSupervisor = authManager.isSupervisor() || authManager.isAdministrador();
+      const statusFinal = "pending_rectification";
 
       const dadosRetificados = {
         ...original,
         ...dadosFiltrados,
         id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
         ocorrencia_original_id: id,
-        justificativa_retificacao: isSupervisor ? justificativa : null,
-        retificado_em: isSupervisor
-          ? formatarTimestampLocalSemFuso(new Date(), true)
-          : null,
-        retificado_por: isSupervisor ? user.id : null,
-        solicitacao_retificacao_justificativa: isSupervisor
-          ? null
-          : justificativa,
-        solicitada_em: isSupervisor
-          ? null
-          : formatarTimestampLocalSemFuso(new Date(), true),
-        solicitada_por: isSupervisor ? null : user.id,
-        aprovada_em: isSupervisor
-          ? formatarTimestampLocalSemFuso(new Date(), true)
-          : null,
-        aprovada_por: isSupervisor ? user.id : null,
+        justificativa_retificacao: null,
+        retificado_em: null,
+        retificado_por: null,
+        solicitacao_retificacao_justificativa: justificativa,
+        solicitada_em: formatarTimestampLocalSemFuso(new Date(), true),
+        solicitada_por: user.id,
+        aprovada_em: null,
+        aprovada_por: null,
         rejeitada_em: null,
         rejeitada_por: null,
         motivo_rejeicao: null,
         status: statusFinal,
-        esta_ativa: isSupervisor ? true : false,
+        esta_ativa: false,
         numero_versao: (original.numero_versao || 1) + 1,
         criado_em: formatarTimestampLocalSemFuso(new Date(), true),
         atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
@@ -1197,34 +1217,26 @@ class OcorrenciaManager {
 
       const dadosAnteriores = { ...original };
 
-      if (isSupervisor) {
-        const { error: updateError } = await client
-          .from("ocorrencias")
-          .update({
-            esta_ativa: false,
-            atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
-          })
-          .eq("id", id);
-
-        if (updateError) throw updateError;
-      }
-
-      const { data: novaOcorrencia, error: insertError } = await client
+      const { data: criada, error: insertError } = await client
         .from("ocorrencias")
         .insert([dadosRetificados])
         .select()
         .single();
 
       if (insertError) throw insertError;
+      let novaOcorrencia = criada;
+      let erroCopiaFilhos = null;
 
       // Copiar envolvidos
       const envolvidosResult = await this.listarEnvolvidos(id);
+      if (!envolvidosResult.success) erroCopiaFilhos = envolvidosResult.error || "falha ao ler envolvidos";
       if (envolvidosResult.success && envolvidosResult.data.length > 0) {
         const novosEnvolvidos = envolvidosResult.data.map((env) => ({
           ...env,
           id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
           ocorrencia_id: novaOcorrencia.id,
           criado_em: formatarTimestampLocalSemFuso(new Date(), true),
+          criado_por: user.id,
         }));
 
         novosEnvolvidos.forEach((env) => delete env.id);
@@ -1235,11 +1247,13 @@ class OcorrenciaManager {
 
         if (envError) {
           console.warn("Erro ao copiar envolvidos:", envError);
+          erroCopiaFilhos = "falha ao copiar envolvidos";
         }
       }
 
       // Copiar anexos (apenas anexos reais, não assinaturas)
       const anexosResult = await this.listarAnexos(id);
+      if (!anexosResult.success) erroCopiaFilhos = erroCopiaFilhos || anexosResult.error || "falha ao ler anexos";
       if (anexosResult.success && anexosResult.data.length > 0) {
         // 🔥 FILTRAR: Apenas anexos que não são assinaturas
         const anexosReais = anexosResult.data.filter(
@@ -1251,6 +1265,7 @@ class OcorrenciaManager {
             id: crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID(),
             ocorrencia_id: novaOcorrencia.id,
             criado_em: formatarTimestampLocalSemFuso(new Date(), true),
+            criado_por: user.id,
           }));
 
           novosAnexos.forEach((anexo) => delete anexo.id);
@@ -1261,6 +1276,7 @@ class OcorrenciaManager {
 
           if (anexoError) {
             console.warn("Erro ao copiar anexos:", anexoError);
+            erroCopiaFilhos = erroCopiaFilhos || "falha ao copiar anexos";
           }
         }
       }
@@ -1278,12 +1294,34 @@ class OcorrenciaManager {
         novaOcorrencia,
       );
 
+      if (erroCopiaFilhos) {
+        return {
+          success: false,
+          error: `O pedido ficou pendente (${novaOcorrencia.id}), mas ${erroCopiaFilhos}; revise antes da decisão do supervisor.`,
+          pending_id: novaOcorrencia.id,
+          status: "pending_rectification",
+        };
+      }
+
+      if (isSupervisor) {
+        const aprovacao = await this.aprovarRetificacao(novaOcorrencia.id);
+        if (!aprovacao.success) {
+          return {
+            success: false,
+            error: `O pedido ficou pendente (${novaOcorrencia.id}), mas não foi aprovado: ${aprovacao.error}`,
+            pending_id: novaOcorrencia.id,
+            status: "pending_rectification",
+          };
+        }
+        novaOcorrencia = aprovacao.data;
+      }
+
       return {
         success: true,
         data: novaOcorrencia,
         original_id: id,
-        status: statusFinal,
-        is_pending: !isSupervisor,
+        status: novaOcorrencia.status,
+        is_pending: novaOcorrencia.status === "pending_rectification",
         campos_alterados: camposAlterados,
       };
     } catch (error) {
@@ -1326,7 +1364,7 @@ class OcorrenciaManager {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      if (!authManager.isSupervisor()) {
+      if (!authManager.isSupervisor() && !authManager.isAdministrador()) {
         return {
           success: false,
           error:
@@ -1363,45 +1401,16 @@ class OcorrenciaManager {
         return { success: false, error: "Ocorrência original não encontrada" };
       }
 
-      const numeroOriginal = original.numero_ocorrencia;
-
       const dadosAnterioresOriginal = { ...original };
       const dadosAnterioresRetificacao = { ...retificacao };
 
-      const { error: updateOrigError } = await client
-        .from("ocorrencias")
-        .update({
-          esta_ativa: false,
-          status: "rectified",
-          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
-        })
-        .eq("id", original.id);
-
-      if (updateOrigError) throw updateOrigError;
-
-      // 🔥 NOVO: Adicionar data_hora_finalizacao na aprovação
-      const dataFinalizacao = globalThis.obterTimestampBrasilSemFuso();
-
-      const { data, error } = await client
-        .from("ocorrencias")
-        .update({
-          status: "rectified",
-          esta_ativa: true,
-          numero_ocorrencia: numeroOriginal,
-          justificativa_retificacao:
-            retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: formatarTimestampLocalSemFuso(new Date(), true),
-          retificado_por: user.id,
-          aprovada_em: formatarTimestampLocalSemFuso(new Date(), true),
-          aprovada_por: user.id,
-          atualizado_em: formatarTimestampLocalSemFuso(new Date(), true),
-          data_hora_finalizacao: dataFinalizacao,
-        })
-        .eq("id", retificacaoId)
-        .select()
-        .single();
-
+      const { data, error } = await client.rpc("gm_approve_occurrence_retification", {
+        p_retification_id: retificacaoId,
+      });
       if (error) throw error;
+      if (!data || data.id !== retificacaoId) {
+        throw new Error("A aprovação não retornou a versão retificada esperada.");
+      }
 
       console.log("✅ Retificação aprovada:", retificacaoId);
 
@@ -1433,7 +1442,7 @@ class OcorrenciaManager {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      if (!authManager.isSupervisor()) {
+      if (!authManager.isSupervisor() && !authManager.isAdministrador()) {
         return {
           success: false,
           error:
@@ -1509,7 +1518,7 @@ class OcorrenciaManager {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      if (!authManager.isSupervisor()) {
+      if (!authManager.isSupervisor() && !authManager.isAdministrador()) {
         return {
           success: false,
           error:
@@ -2383,6 +2392,20 @@ class OcorrenciaManager {
     }
   }
 
+  async podeSolicitarRetificacao(ocorrencia) {
+    const user = authManager.getUser();
+    if (!user || !ocorrencia || !authManager.podeSolicitarRetificacao(ocorrencia)) {
+      if (!user || !ocorrencia || ocorrencia.status !== "synced" || ocorrencia.ocorrencia_original_id) return false;
+      if (ocorrencia.criado_por !== user.id && !authManager.isSupervisor() && !authManager.isAdministrador()) {
+        const equipe = await this.listarGuardas(ocorrencia.id);
+        ocorrencia._guarda_designado = Boolean(
+          equipe.success && equipe.data.some((item) => item.guarda_id === user.id && item.esta_ativo === true),
+        );
+      }
+    }
+    return authManager.podeSolicitarRetificacao(ocorrencia);
+  }
+
   async salvarGuardas(ocorrenciaId, guardas) {
     const equipe = (guardas || []).filter((g) => g && g.guarda_id && g.papel);
     if (!ocorrenciaId || equipe.length === 0) {
@@ -2466,28 +2489,34 @@ class OcorrenciaManager {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      const dadosParaInserir = envolvidos.map((env) => ({
-        ...(preservarIds && env.id ? { id: env.id } : {}),
-        ocorrencia_id: ocorrenciaId,
-        tipo: env.tipo,
-        nome_completo: env.nome_completo,
-        data_nascimento: env.data_nascimento || null,
-        rg: env.rg || null,
-        cpf: env.cpf || null,
-        telefone: env.telefone || null,
-        nome_pai: env.nome_pai || null,
-        nome_mae: env.nome_mae || null,
-        endereco: env.endereco || null,
-        bairro: env.bairro || null,
-        cidade: env.cidade || null,
-        observacoes: env.observacoes || null,
-        criado_por: user.id,
-        criado_em: formatarTimestampLocalSemFuso(new Date(), true),
-      }));
+      const dadosParaInserir = envolvidos.map((env) => {
+        const manterId = env.id && (preservarIds || env.ocorrencia_id === ocorrenciaId);
+        const id = manterId ? env.id : (crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID());
+        env.id = id;
+        env.ocorrencia_id = ocorrenciaId;
+        return {
+          id,
+          ocorrencia_id: ocorrenciaId,
+          tipo: env.tipo,
+          nome_completo: env.nome_completo,
+          data_nascimento: env.data_nascimento || null,
+          rg: env.rg || null,
+          cpf: env.cpf || null,
+          telefone: env.telefone || null,
+          nome_pai: env.nome_pai || null,
+          nome_mae: env.nome_mae || null,
+          endereco: env.endereco || null,
+          bairro: env.bairro || null,
+          cidade: env.cidade || null,
+          observacoes: env.observacoes || null,
+          criado_por: user.id,
+          criado_em: env.criado_em || formatarTimestampLocalSemFuso(new Date(), true),
+        };
+      });
 
       const { data, error } = await client
         .from("envolvidos")
-        .insert(dadosParaInserir)
+        .upsert(dadosParaInserir, { onConflict: "id" })
         .select();
 
       if (error) throw error;
@@ -2537,12 +2566,14 @@ class OcorrenciaManager {
           // Gerar hash
           hash = await this.gerarHashAnexo(arquivo);
 
-          const fileExt = arquivo.name.split(".").pop();
-          const fileName = `${authManager.getUserId()}/${ocorrenciaId}/${Date.now()}-${arquivo.name}`;
+          const anexoId = anexo.id || (crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID());
+          anexo.id = anexoId;
+          const fileExt = String(arquivo.name || "anexo").split(".").pop().replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
+          const fileName = `${authManager.getUserId()}/${ocorrenciaId}/${anexoId}.${fileExt}`;
 
           const { error: uploadError } = await client.storage
             .from("anexos")
-            .upload(fileName, arquivo);
+            .upload(fileName, arquivo, { upsert: true, contentType: arquivo.type || "application/octet-stream" });
 
           if (uploadError) {
             console.error("Erro no upload do anexo:", uploadError);
@@ -2555,18 +2586,20 @@ class OcorrenciaManager {
           }
 
           urlFinal = fileName;
+          anexo.url = urlFinal;
         }
 
         if (urlFinal) {
           const { data, error } = await client
             .from("anexos")
-            .insert({
+            .upsert({
+              id: anexo.id || (crypto.randomUUID ? crypto.randomUUID() : this.gerarUUID()),
               ocorrencia_id: ocorrenciaId,
               nome_arquivo: anexo.nome || "anexo",
               tipo_arquivo:
                 anexo.tipo ||
                 this.determinarTipo(anexo.arquivo || { type: "" }),
-              tamanho: anexo.tamanho || 0,
+              tamanho: anexo.arquivo?.size || anexo.tamanho || 0,
               url: urlFinal,
               mime_type: anexo.arquivo?.type || null,
               hash_arquivo: hash,
@@ -2576,7 +2609,7 @@ class OcorrenciaManager {
               },
               criado_por: user.id,
               criado_em: formatarTimestampLocalSemFuso(new Date(), true),
-            })
+            }, { onConflict: "id" })
             .select()
             .single();
 
@@ -2599,10 +2632,10 @@ class OcorrenciaManager {
       if (erros.length > 0) {
         console.warn(`Anexos: ${sucessos} salvos, ${erros.length} com erro`);
         return {
-          success: true,
+          success: false,
           data: resultados,
           partial: true,
-          erros: erros.map((e) => e.error).join(" | "),
+          error: erros.map((e) => e.error).join(" | "),
         };
       }
 

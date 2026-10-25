@@ -146,6 +146,7 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     }
 
     estado.ocorrencia = result.data;
+    estado.ocorrencia._podeSolicitarRetificacao = await ocorrenciaManager.podeSolicitarRetificacao(estado.ocorrencia);
 
     // Buscar envolvidos
     const envolvidosResult = await ocorrenciaManager.listarEnvolvidos(id);
@@ -276,7 +277,7 @@ function renderizarDetalhe(container, appInstance) {
   const coords = occ.latitude !== null && occ.latitude !== undefined && occ.longitude !== null && occ.longitude !== undefined
     ? `${parseFloat(occ.latitude).toFixed(6)}, ${parseFloat(occ.longitude).toFixed(6)}`
     : "";
-  const isSupervisor = authManager.isSupervisor();
+  const isSupervisor = authManager.isSupervisor() || authManager.isAdministrador();
   const isDraft = occ.status === "draft";
   const isPending = occ.status === "pending_rectification";
   const isSynced = occ.status === "synced";
@@ -284,7 +285,9 @@ function renderizarDetalhe(container, appInstance) {
   const podeEditar = authManager.podeEditar(occ);
   const podeFinalizar = authManager.podeFinalizar(occ);
   const podeCancelar = authManager.podeCancelar(occ);
-  const podeRetificar = authManager.podeSolicitarRetificacao(occ);
+  const podeRetificar = typeof occ._podeSolicitarRetificacao === "boolean"
+    ? occ._podeSolicitarRetificacao
+    : authManager.podeSolicitarRetificacao(occ);
   const totalAnexos = estado.anexos.filter((a) => a.tipo !== "assinatura").length;
   estado.assinaturas = normalizarListaAssinaturas(estado.assinaturas);
   const totalAssinaturas = estado.assinaturas.length;

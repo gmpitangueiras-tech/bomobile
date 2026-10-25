@@ -1093,7 +1093,7 @@ export async function retificarOcorrencia(id, appInstance) {
 
     const occ = result.data;
 
-    if (!authManager.podeSolicitarRetificacao(occ)) {
+    if (!(await ocorrenciaManager.podeSolicitarRetificacao(occ))) {
       appInstance.showToast(
         "Não é possível solicitar retificação desta ocorrência",
         "warning",

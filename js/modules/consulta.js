@@ -2285,17 +2285,16 @@ export async function salvarAbordagemComAnexos(appInstance) {
   appInstance.showToast("Processando...", "info");
 
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
-    if (!client) throw new Error("Erro ao conectar ao servidor");
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const offline = !navigator.onLine;
+    if (!offline && !client) throw new Error("Erro ao conectar ao servidor");
 
-    // 🔥 ALTERADO: Removido limite de arquivos
     const files = estado.arquivosTemp || [];
+    let anexosProcessados = [];
     let anexosUrls = [];
-
     if (files.length > 0) {
-      const anexosProcessados = await processarAnexosAbordagem(files);
-      anexosUrls = await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
+      anexosProcessados = await processarAnexosAbordagem(files);
+      anexosUrls = offline ? anexosProcessados : await uploadAnexosAbordagem(anexosProcessados, isVeiculo);
     }
 
     let localizacao =
@@ -2361,8 +2360,26 @@ export async function salvarAbordagemComAnexos(appInstance) {
     }
 
     const tabela = isVeiculo ? "abordagens_veiculos" : "abordagens_pessoas";
+    if (offline) {
+      if (!window.offlineVault?.unlocked || window.offlineVault.userId !== user.id) {
+        throw new Error("Desbloqueie o cofre com a senha da conta para registrar abordagens offline.");
+      }
+      dados.id = crypto.randomUUID();
+      dados.esta_ativa = true;
+      const payload = { registro: { ...dados, anexos: [] }, anexos: anexosProcessados, tabela, tipo_abordagem: isVeiculo ? "veiculo" : "pessoa" };
+      await window.offlineVault.putRecord("approach", dados.id, payload, { status: "pending", createdAt: dados.criado_em });
+      await window.syncManager.addToQueue(payload, isVeiculo ? "abordagem_veiculo" : "abordagem_pessoa", 0, { idempotencyKey: `abordagem:${dados.id}` });
+      estado.arquivosTemp = [];
+      document.getElementById("abordagemPreviewArea")?.replaceChildren();
+      const fileInput = document.getElementById("abordagemFileInput");
+      if (fileInput) fileInput.value = "";
+      appInstance.showToast("Abordagem salva cifrada neste dispositivo; aguardando sincronização.", "success");
+      const container = document.getElementById("consultaContainer");
+      if (container) await carregarAbordagens(container, appInstance);
+      fecharFormulario(container, appInstance);
+      return;
+    }
     const { data, error } = await client.from(tabela).insert([dados]).select();
-
     if (error) throw error;
 
     estado.arquivosTemp = [];
@@ -2408,12 +2425,26 @@ export async function finalizarAbordagem(id, tipo, appInstance) {
 
     if (!confirmado) return;
 
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    const tabela = tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+    const tipoFila = tipo === "veiculo" ? "abordagem_veiculo" : "abordagem_pessoa";
+    if (!navigator.onLine) {
+      if (!window.offlineVault?.unlocked) throw new Error("Desbloqueie o cofre com sua senha para finalizar offline.");
+      const local = await window.offlineVault.getRecord("approach", id);
+      if (!local?.registro) throw new Error("Esta abordagem não está salva neste dispositivo. Consulte-a enquanto houver conexão primeiro.");
+      if (local.registro.status_abordagem === "finalizada") { appInstance.showToast("Esta abordagem já está finalizada", "warning"); return; }
+      if (local.registro.status_abordagem === "cancelada") { appInstance.showToast("Abordagem cancelada não pode ser finalizada", "warning"); return; }
+      const dataFinalizacao = globalThis.obterTimestampBrasilSemFuso();
+      const payload = { ...local, tabela, tipo_abordagem: tipo };
+      payload.registro = { ...local.registro, status_abordagem: "finalizada", data_hora_finalizacao: dataFinalizacao, atualizado_em: dataFinalizacao };
+      await window.offlineVault.putRecord("approach", id, payload, { status: "pending" });
+      await window.syncManager.addToQueue(payload, tipoFila, 0, { idempotencyKey: `abordagem:${id}:finalizada:${dataFinalizacao}` });
+      appInstance.showToast("Finalização cifrada no dispositivo; aguardando sincronização.", "success");
+      const offlineContainer = document.getElementById("consultaContainer");
+      if (offlineContainer) await carregarAbordagens(offlineContainer, appInstance);
+      return;
+    }
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) throw new Error("Erro ao conectar");
-
-    const tabela =
-      tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
 
     // Buscar a abordagem
     const { data: abordagem, error: buscaError } = await client
@@ -2457,6 +2488,7 @@ export async function finalizarAbordagem(id, tipo, appInstance) {
       .single();
 
     if (error) throw error;
+    if (window.offlineVault?.unlocked) await window.offlineVault.putRecord("approach", id, { registro: data, anexos: Array.isArray(data.anexos) ? data.anexos : [], tabela, tipo_abordagem: tipo }, { status: "synced", createdAt: data.criado_em });
 
     appInstance.showToast("Abordagem finalizada com sucesso!", "success");
 
@@ -2595,6 +2627,11 @@ export async function exportarListaPDF(appInstance) {
 
     const veiculos = veiculosResult.data || [];
     const pessoas = pessoasResult.data || [];
+    if (window.offlineVault?.unlocked) {
+      for (const [rows, tabela, tipo] of [[veiculos, "abordagens_veiculos", "veiculo"], [pessoas, "abordagens_pessoas", "pessoa"]]) {
+        for (const row of rows) await window.offlineVault.putRecord("approach", row.id, { registro: row, anexos: Array.isArray(row.anexos) ? row.anexos : [], tabela, tipo_abordagem: tipo }, { status: "synced", createdAt: row.criado_em });
+      }
+    }
 
     let todasAbordagens = [];
 
@@ -3099,9 +3136,39 @@ async function carregarAbordagens(container, appInstance) {
   if (!area) return;
 
   try {
-    const client =
-      typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+    if (!navigator.onLine && window.offlineVault?.unlocked) {
+      const saved = await window.offlineVault.listRecords("approach");
+      const localById = new Map(saved.map((record) => [record.id, {
+        ...(record.data.registro || {}), anexos: record.data.anexos || [],
+        status: record.status === "synced" ? "synced" : "pending_sync",
+        tipo_abordagem: record.data.tipo_abordagem || (record.data.tabela === "abordagens_veiculos" ? "veiculo" : "pessoa"),
+      }]));
+      const pending = await window.offlineVault.listQueue("pending");
+      for (const item of pending.filter((entry) => ["abordagem_veiculo", "abordagem_pessoa"].includes(entry.tipo))) {
+        const payload = item.dados;
+        localById.set(payload.registro?.id, { ...(payload.registro || {}), anexos: payload.anexos || [], status: "pending_sync", tipo_abordagem: payload.tipo_abordagem || (item.tipo.endsWith("veiculo") ? "veiculo" : "pessoa") });
+      }
+      let local = [...localById.values()];
+      const { busca, tipoAtendimento, dataInicio, dataFim, guarda } = estado.filtros;
+      if (estado.abaAtiva === "veiculos") local = local.filter((row) => row.tipo_abordagem === "veiculo");
+      if (estado.abaAtiva === "pessoas") local = local.filter((row) => row.tipo_abordagem === "pessoa");
+      if (tipoAtendimento) local = local.filter((row) => row.tipo_atendimento === tipoAtendimento);
+      if (guarda) local = local.filter((row) => row.criado_por === guarda);
+      if (dataInicio) local = local.filter((row) => String(row.criado_em || "").slice(0, 10) >= dataInicio);
+      if (dataFim) local = local.filter((row) => String(row.criado_em || "").slice(0, 10) <= dataFim);
+      if (busca) { const q = String(busca).toLocaleLowerCase("pt-BR"); local = local.filter((row) => JSON.stringify(row).toLocaleLowerCase("pt-BR").includes(q)); }
+      local.sort((a, b) => String(b.criado_em || "").localeCompare(String(a.criado_em || "")));
+      estado.totalRegistros = local.length;
+      if (totalSpan) totalSpan.textContent = `${local.length} neste dispositivo`;
+      area.innerHTML = `<div class="consulta-results-heading"><div><span class="consulta-eyebrow">MODO OFFLINE</span><h3>Abordagens neste dispositivo</h3><p>Dados locais cifrados · itens pendentes serão sincronizados quando autenticados</p></div></div><div id="consultaListaAbordagens">${renderAbordagensCards(local, appInstance)}</div>`;
+      return;
+    }
+    const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
     if (!client) {
+      if (!navigator.onLine && window.offlineVault?.unlocked) {
+        area.innerHTML = `<p style="text-align:center;">Modo offline. Desbloqueie o cofre e recarregue a lista.</p>`;
+        return;
+      }
       area.innerHTML = `<p style="color:var(--erro);text-align:center;">Erro ao conectar ao servidor</p>`;
       return;
     }
@@ -4116,8 +4183,9 @@ function converterEmBO(id, tipo, appInstance) {
         dados: data,
       };
 
-      sessionStorage.setItem("abordagem_para_bo", JSON.stringify(dadosBO));
-      appInstance.showToast("Dados da abordagem importados!", "success");
+      if (!window.offlineVault?.unlocked) throw new Error("Desbloqueie o cofre antes de importar os dados da abordagem.");
+      await window.offlineVault.putRecord("approach-reference", `${tipo}:${id}`, dadosBO, { status: "saved" });
+      appInstance.showToast("Dados da abordagem cifrados e importados.", "success");
     } catch (error) {
       console.error("Erro ao importar dados da abordagem:", error);
     }

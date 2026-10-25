@@ -176,7 +176,7 @@ function renderizarLogs(container, appInstance) {
 
       <div class="logs-scope-note" role="note">
         <i class="fas fa-info-circle" aria-hidden="true"></i>
-        <span>Esta tela mostra <strong>logs de acesso</strong>. A trilha detalhada de auditoria permanece separada e não é exibida nesta versão de homologação.</span>
+        <span>Esta tela mostra <strong>logs de acesso</strong>. A trilha detalhada de auditoria permanece separada e não é exibida nesta versão de teste.</span>
       </div>
 
       <section class="logs-summary-section" aria-labelledby="logs-summary-title">

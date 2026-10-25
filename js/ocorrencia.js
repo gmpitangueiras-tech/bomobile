@@ -586,10 +586,38 @@ class OcorrenciaManager {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      const client = supabaseClient.getClient();
-      if (!client) {
-        return { success: false, error: "Erro ao conectar ao servidor" };
+      if (!navigator.onLine && window.offlineVault?.unlocked && window.offlineVault.userId === user.id) {
+        const localRecords = [
+          ...(await window.offlineVault.listRecords("offline-occurrence")),
+          ...(await window.offlineVault.listRecords("downloaded-occurrence")),
+          ...(await window.offlineVault.listRecords("draft")),
+        ];
+        const byId = new Map();
+        for (const local of localRecords) {
+          const row = local.data?.ocorrencia || local.data;
+          if (!row?.id || row.criado_por !== user.id) continue;
+          byId.set(row.id, { ...row, status: local.status === "synced" ? row.status : (row.status === "draft" ? "draft" : "pending_sync"), criador: { nome_completo: user.nome_completo, cpf: null } });
+        }
+        for (const item of await window.offlineVault.listQueue("pending")) {
+          if (item.tipo !== "ocorrencia") continue;
+          const row = item.dados?.ocorrencia || item.dados;
+          if (row?.id) byId.set(row.id, { ...row, status: row.status === "draft" ? "draft" : "pending_sync", criador: { nome_completo: user.nome_completo, cpf: null } });
+        }
+        let local = [...byId.values()].filter((row) => row.esta_ativa !== false);
+        if (filtros.status) local = local.filter((row) => row.status === filtros.status);
+        if (filtros.tipo_ocorrencia) local = local.filter((row) => row.tipo_ocorrencia === filtros.tipo_ocorrencia);
+        if (filtros.gravidade) local = local.filter((row) => row.gravidade === filtros.gravidade);
+        if (filtros.data_inicio) local = local.filter((row) => String(row.criado_em || "").slice(0, 10) >= filtros.data_inicio);
+        if (filtros.data_fim) local = local.filter((row) => String(row.criado_em || "").slice(0, 10) <= filtros.data_fim);
+        if (filtros.search) { const term = String(filtros.search).toLocaleLowerCase("pt-BR"); local = local.filter((row) => `${row.numero_ocorrencia || ""} ${row.local_ocorrencia || ""}`.toLocaleLowerCase("pt-BR").includes(term)); }
+        if (filtros.modo_criacao) local = local.filter((row) => row.modo_criacao === filtros.modo_criacao);
+        local.sort((a, b) => String(b.criado_em || "").localeCompare(String(a.criado_em || "")));
+        if (filtros.limit) local = local.slice(0, filtros.limit);
+        return { success: true, data: local };
       }
+
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
 
       let query = client.from("ocorrencias").select("*").eq("esta_ativa", true);
 
@@ -627,6 +655,11 @@ class OcorrenciaManager {
       if (error) throw error;
 
       const ocorrencias = data || [];
+      if (window.offlineVault?.unlocked && window.offlineVault.userId === user.id) {
+        for (const row of ocorrencias) {
+          if (row.criado_por === user.id) await window.offlineVault.putRecord("downloaded-occurrence", row.id, { ocorrencia: row }, { status: "synced", createdAt: row.criado_em });
+        }
+      }
       if (ocorrencias.length > 0) {
         const idsCriadores = ocorrencias
           .map((o) => o.criado_por)

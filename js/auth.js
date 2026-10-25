@@ -105,46 +105,18 @@ class AuthManager {
    */
   async initEncryption() {
     if (this.initializedEncryption) return;
-
     try {
-      // Gerar ou recuperar chave do localStorage
-      let keyData = localStorage.getItem("encryption_key");
-
-      if (!keyData) {
-        // Gerar nova chave
-        const key = await crypto.subtle.generateKey(
-          {
-            name: "AES-GCM",
-            length: ENCRYPTION_KEY_LENGTH,
-          },
-          true,
-          ["encrypt", "decrypt"],
-        );
-
-        // Exportar chave para armazenamento
-        const exported = await crypto.subtle.exportKey("raw", key);
-        keyData = btoa(String.fromCharCode(...new Uint8Array(exported)));
-        localStorage.setItem("encryption_key", keyData);
-        this.encryptionKey = key;
-      } else {
-        // Importar chave existente
-        const keyBuffer = Uint8Array.from(atob(keyData), (c) =>
-          c.charCodeAt(0),
-        );
-        this.encryptionKey = await crypto.subtle.importKey(
-          "raw",
-          keyBuffer,
-          "AES-GCM",
-          true,
-          ["encrypt", "decrypt"],
-        );
-      }
-
+      localStorage.removeItem("encryption_key");
+      this.encryptionKey = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: ENCRYPTION_KEY_LENGTH },
+        false,
+        ["encrypt", "decrypt"],
+      );
       this.initializedEncryption = true;
-      console.log("🔐 Criptografia inicializada");
     } catch (error) {
-      console.error("❌ Erro ao inicializar criptografia:", error);
-      this.initializedEncryption = false;
+      console.warn("Criptografia efêmera indisponível nesta sessão.");
+      this.encryptionKey = null;
+      this.initializedEncryption = true;
     }
   }
 
@@ -302,45 +274,39 @@ class AuthManager {
   // INICIALIZAÇÃO
   // ============================================
 
+  async carregarPerfilJWT(userId) {
+    const client = supabaseClient.getClient();
+    if (!client || !userId) return null;
+    const { data, error } = await client
+      .from("usuarios")
+      .select("id,nome_completo,matricula,apelido,email,telefone,perfil,status,primeiro_acesso,foto_url")
+      .eq("auth_user_id", userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || ["inativo", "bloqueado"].includes(data.status)) return null;
+    return data;
+  }
+
   async init() {
     if (this.initialized) return this._isLoggedIn;
 
     try {
-      // Inicializar criptografia
-      await this.initEncryption();
-
-      if (!supabaseClient.isInitialized()) {
-        await supabaseClient.init();
-      }
-
+      if (!supabaseClient.isInitialized()) await supabaseClient.init();
       const client = supabaseClient.getClient();
       if (!client) throw new Error("Supabase não disponível");
 
-      const savedUser = localStorage.getItem("auth_user");
-      if (savedUser) {
-        try {
-          const userData = JSON.parse(savedUser);
-          const { data: usuario } = await client
-            .from("usuarios")
-            .select("*")
-            .eq("id", userData.id)
-            .maybeSingle();
-
-          if (
-            usuario &&
-            usuario.status !== "inativo" &&
-            usuario.status !== "bloqueado"
-          ) {
-            this.user = usuario;
-            this._isLoggedIn = true;
-            this.initialized = true;
-            console.log("✅ Sessão restaurada:", usuario.nome_completo);
-            this.notifyListeners("login", usuario);
-            return true;
-          }
-        } catch (e) {
-          localStorage.removeItem("auth_user");
-        }
+      // auth_user continha perfil/PII e era tratado como prova de autenticação.
+      // Removê-lo é seguro: a sessão válida passa a vir exclusivamente do Supabase Auth.
+      localStorage.removeItem("auth_user");
+      const { data: { session }, error } = await client.auth.getSession();
+      if (error) throw error;
+      // A sessão JWT sozinha não desbloqueia o cofre: após recarga, solicitar
+      // novamente CPF/senha no formulário para derivar a chave local.
+      if (session?.user?.id) {
+        this._isLoggedIn = false;
+        this.user = null;
+        this.initialized = true;
+        return false;
       }
 
       this._isLoggedIn = false;
@@ -350,6 +316,8 @@ class AuthManager {
       return false;
     } catch (error) {
       console.error("❌ Erro ao inicializar auth:", error);
+      this._isLoggedIn = false;
+      this.user = null;
       this.initialized = true;
       return false;
     }
@@ -648,119 +616,95 @@ class AuthManager {
 
   async login(cpf, senha) {
     try {
-      const cpfClean = cpf.replace(/[^0-9]/g, "");
-      if (cpfClean.length !== 11) {
-        return { success: false, error: "CPF inválido" };
-      }
-
-      // Verificar rate limiting
-      const attemptCheck = this.checkLoginAttempts(cpfClean);
-      if (attemptCheck.blocked) {
-        return {
-          success: false,
-          error: `Muitas tentativas falhas. Aguarde ${attemptCheck.remainingTime} minutos.`,
-          blocked: true,
-          remainingTime: attemptCheck.remainingTime,
-        };
+      const cpfClean = String(cpf || "").replace(/\D/g, "");
+      if (cpfClean.length !== 11 || typeof senha !== "string" || !senha) {
+        return { success: false, error: "CPF ou senha inválidos." };
       }
 
       const client = supabaseClient.getClient();
-      if (!client) return { success: false, error: "Erro ao conectar" };
+      if (!client) return { success: false, error: "Serviço indisponível." };
 
-      const { data: usuario } = await client
-        .from("usuarios")
-        .select("*")
-        .eq("cpf", cpfClean)
-        .maybeSingle();
-
-      if (!usuario) {
-        this.registerFailedAttempt(cpfClean);
-        return { success: false, error: "CPF não encontrado" };
+      const loginOffline = async () => {
+        const local = await window.offlineVault.tryOfflineLogin(cpfClean, senha);
+        this.user = { ...local.profile, id: local.userId };
+        this._currentCpf = cpfClean;
+        this._isLoggedIn = true;
+        this.initialized = true;
+        this.offlineOnly = true;
+        this.notifyListeners("login", this.user);
+        return { success: true, offline: true, usuario: this.user };
+      };
+      if (!navigator.onLine) {
+        try { return await loginOffline(); }
+        catch (_) { return { success: false, error: "Sem conexão. O acesso offline não foi habilitado para esta conta neste dispositivo." }; }
       }
 
-      if (usuario.status === "inativo" || usuario.status === "bloqueado") {
-        return { success: false, error: "Usuário inativo ou bloqueado" };
-      }
-
-      const { data: senhaValida } = await client.rpc("verificar_senha", {
-        p_cpf: cpfClean,
-        p_senha: senha,
-      });
-
-      if (!senhaValida) {
-        this.registerFailedAttempt(cpfClean);
-        return { success: false, error: "Senha incorreta" };
-      }
-
-      // Limpar tentativas após sucesso
-      this.clearLoginAttempts(cpfClean);
-
-      this.user = usuario;
-      this._isLoggedIn = true;
-
-      // Processar dados sensíveis para armazenamento local
-      const sensitiveData = await this.processSensitiveData(usuario, [
-        "cpf",
-        "rg",
-        "telefone",
-      ]);
-
-      localStorage.setItem(
-        "auth_user",
-        JSON.stringify({
-          id: usuario.id,
-          nome_completo: usuario.nome_completo,
-          apelido: usuario.apelido || null,
-          cpf: usuario.cpf,
-          perfil: usuario.perfil,
-          matricula: usuario.matricula,
-          // Armazenar dados criptografados
-          sensitive: {
-            cpf_encrypted: sensitiveData.cpf_encrypted,
-            cpf_hash: sensitiveData.cpf_hash,
-            rg_encrypted: sensitiveData.rg_encrypted,
-            rg_hash: sensitiveData.rg_hash,
-            telefone_encrypted: sensitiveData.telefone_encrypted,
-            telefone_hash: sensitiveData.telefone_hash,
-          },
-        }),
-      );
-
-      // ===== REGISTRAR LOG DE LOGIN =====
-      await this.logLogin(usuario.id);
-
-      // Registrar log pericial
-      if (window.app && typeof window.app.registrarLogPericial === "function") {
-        await window.app.registrarLogPericial("LOGIN", "usuarios", usuario.id);
-      }
-
-      // ===== ATUALIZAR ÚLTIMO LOGIN =====
+      // A validação de CPF/senha ocorre no servidor; não consultar CPF nem hash no client.
+      const endpoint = `${String(CONFIG.SUPABASE_URL).replace(/\/$/, "")}/functions/v1/legacy-login`;
+      let response;
       try {
-        await client
-          .from("usuarios")
-          .update({
-            ultimo_login: globalThis.obterTimestampBrasilSemFuso(),
-            ultimo_ip: await this.obterIP(),
-            ultimo_user_agent: navigator?.userAgent || null,
-          })
-          .eq("id", usuario.id);
-      } catch (updateError) {
-        console.warn("⚠️ Erro ao atualizar último login:", updateError);
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers: { apikey: CONFIG.SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ cpf: cpfClean, senha }),
+        });
+      } catch (_) {
+        try { return await loginOffline(); }
+        catch (_) { return { success: false, error: "Não foi possível autenticar. O cofre offline não está disponível para esta conta." }; }
       }
+      let result = null;
+      try { result = await response.json(); } catch { /* resposta inválida */ }
+      if (!response.ok || result?.success !== true || !result.session) {
+        return { success: false, error: result?.error || "CPF ou senha inválidos.", blocked: response.status === 429 };
+      }
+
+      const { data: sessionData, error: sessionError } = await client.auth.setSession({
+        access_token: result.session.access_token,
+        refresh_token: result.session.refresh_token,
+      });
+      // Remover referências locais aos tokens temporários do payload.
+      result.session.access_token = "";
+      result.session.refresh_token = "";
+      if (sessionError || !sessionData?.user?.id) {
+        return { success: false, error: "Não foi possível concluir a autenticação." };
+      }
+
+      const usuario = await this.carregarPerfilJWT(sessionData.user.id);
+      if (!usuario) {
+        await client.auth.signOut({ scope: "local" });
+        return { success: false, error: "Conta sem perfil ativo autorizado." };
+      }
+
+      try {
+        await window.offlineVault.unlock(usuario.id, senha, usuario, cpfClean);
+      } catch (vaultError) {
+        await client.auth.signOut({ scope: "local" });
+        window.offlineVault?.lock();
+        this.user = null; this._currentCpf = null; this._isLoggedIn = false; this.initialized = true;
+        return { success: false, error: vaultError.message || "Não foi possível abrir o cofre local." };
+      }
+      this.user = usuario;
+      this._currentCpf = cpfClean;
+      this._isLoggedIn = true;
+      this.initialized = true;
+      this.offlineOnly = false;
+
+      // Login é confirmado pelo servidor. Falha de log não deve invalidar a sessão.
+      try { await this.logLogin(usuario.id); } catch (e) { console.warn("Falha ao registrar login."); }
+      try {
+        if (window.app && typeof window.app.registrarLogPericial === "function") {
+          await window.app.registrarLogPericial("LOGIN", "usuarios", usuario.id);
+        }
+      } catch (e) { console.warn("Falha ao registrar auditoria do login."); }
 
       this.notifyListeners("login", usuario);
-
-      if (
-        usuario.status === "primeiro_acesso" ||
-        usuario.primeiro_acesso === true
-      ) {
+      if (usuario.status === "primeiro_acesso" || usuario.primeiro_acesso === true) {
         return { success: true, primeiro_acesso: true, usuario };
       }
-
       return { success: true, usuario };
     } catch (error) {
-      console.error("❌ Erro no login:", error);
-      return { success: false, error: error.message };
+      console.error("❌ Erro no login:", error?.name || "erro");
+      return { success: false, error: "Não foi possível autenticar agora. Verifique a conexão e tente novamente." };
     }
   }
 
@@ -783,10 +727,8 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      const { data: hashData } = await client.rpc("criar_hash_senha", {
-        p_senha: novaSenha,
-      });
-
+      const { data: hashData, error: hashError } = await client.rpc("criar_hash_senha", { p_senha: novaSenha });
+      if (hashError) throw hashError;
       const updates = {
         senha_hash: hashData,
         status: "ativo",
@@ -795,8 +737,15 @@ class AuthManager {
       };
       if (telefone) updates.telefone = telefone;
       if (email) updates.email = email;
-
-      await client.from("usuarios").update(updates).eq("id", this.user.id);
+      const { error: profileError } = await client.from("usuarios").update(updates).eq("id", this.user.id);
+      if (profileError) throw profileError;
+      // Primeiro atualiza o verificador legado. Se o Auth falhar, a Edge Function pode
+      // reconciliar a senha na próxima autenticação; em seguida rederivamos a chave local.
+      const { error: authPasswordError } = await client.auth.updateUser({ password: novaSenha });
+      if (authPasswordError) throw authPasswordError;
+      if (window.offlineVault?.unlocked && window.offlineVault.userId === this.user.id) {
+        await window.offlineVault.rekey(novaSenha, this._currentCpf);
+      }
 
       this.user.status = "ativo";
       this.user.primeiro_acesso = false;
@@ -829,7 +778,17 @@ class AuthManager {
 
     this._isLoggedIn = false;
     this.user = null;
+    this.offlineOnly = false;
+    this._currentCpf = null;
+    window.offlineVault?.lock();
+    window.syncManager?.lock?.();
+    window.adminApi?.clear?.();
     localStorage.removeItem("auth_user");
+    const client = supabaseClient.getClient();
+    if (client) {
+      const { error } = await client.auth.signOut({ scope: "local" });
+      if (error) console.warn("Falha ao limpar sessão local do Supabase Auth.");
+    }
     this.notifyListeners("logout", null);
     return { success: true };
   }
@@ -863,7 +822,7 @@ class AuthManager {
   }
 
   getCPF() {
-    return this.user?.cpf || null;
+    return this._currentCpf || this.user?.cpf || null;
   }
 
   isSupervisor() {
@@ -994,7 +953,7 @@ class AuthManager {
       const client = supabaseClient.getClient();
       if (!client) return { success: false, error: "Erro ao conectar" };
 
-      let query = client.from("usuarios").select("*");
+      let query = client.from("usuarios").select("id,nome_completo,matricula,apelido,email,telefone,perfil,status,primeiro_acesso,foto_url,criado_em,atualizado_em");
 
       if (filtros.perfil) {
         query = query.eq("perfil", filtros.perfil);
@@ -1003,8 +962,9 @@ class AuthManager {
         query = query.eq("status", filtros.status);
       }
       if (filtros.search) {
-        query = query.or(
-          `nome_completo.ilike.%${filtros.search}%,cpf.ilike.%${filtros.search}%,matricula.ilike.%${filtros.search}%`,
+        const termo = String(filtros.search).replace(/[\%_,()]/g, " ").trim();
+        if (termo) query = query.or(
+          `nome_completo.ilike.%${termo}%,matricula.ilike.%${termo}%`,
         );
       }
 
@@ -1199,18 +1159,7 @@ class AuthManager {
 
       if (id === this.user.id) {
         this.user = { ...this.user, ...dados };
-        localStorage.setItem(
-          "auth_user",
-          JSON.stringify({
-            id: this.user.id,
-            nome_completo: this.user.nome_completo,
-            apelido: this.user.apelido || null,
-            cpf: this.user.cpf,
-            perfil: this.user.perfil,
-            matricula: this.user.matricula,
-            foto_url: this.user.foto_url || null,
-          }),
-        );
+// O perfil vive apenas em memória; não gravar PII em localStorage.
       }
 
       console.log("✅ Usuário atualizado:", id);

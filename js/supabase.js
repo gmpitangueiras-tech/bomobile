@@ -24,9 +24,9 @@ class SupabaseClient {
         CONFIG.SUPABASE_ANON_KEY,
         {
           auth: {
-            persistSession: true,
+            persistSession: false,
             autoRefreshToken: true,
-            storage: localStorage,
+            detectSessionInUrl: false,
           },
         },
       );

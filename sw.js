@@ -12,7 +12,7 @@
  * MELHORIAS APLICADAS:
  * - Notificações push com interação
  * - Cache de imagens e assets dinâmicos
- * - Sincronização em background (Background Sync)
+ * - Shell PWA offline; dados operacionais cifrados pelo cliente
  * - Estratégias de cache otimizadas
  * - Gerenciamento de versões de cache
  * - Precache de rotas importantes
@@ -24,13 +24,13 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v72";
+const CACHE_NAME = "guarda-pitangueiras-v73";
 const BASE_PATH = "./";
-const ASSETS_CACHE = "guarda-assets-v2";
-const API_CACHE = "guarda-api-v2";
+const ASSETS_CACHE = "guarda-assets-v3";
+
 const IMAGES_CACHE = "guarda-images-v2";
-const DYNAMIC_CACHE = "guarda-dynamic-v2";
-const CACHE_VERSION = "v72";
+const DYNAMIC_CACHE = "guarda-dynamic-v3";
+const CACHE_VERSION = "v73";
 
 const STATIC_ASSETS = [
   BASE_PATH,
@@ -40,6 +40,8 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/supabase.js",
   BASE_PATH + "js/admin-api.js",
   BASE_PATH + "js/auth.js",
+  BASE_PATH + "js/offline-vault.js",
+  BASE_PATH + "js/sync.js",
   BASE_PATH + "js/ocorrencia.js",
   BASE_PATH + "js/session.js",
   BASE_PATH + "js/app.js",
@@ -73,40 +75,7 @@ const STATIC_ASSETS = [
   "https://unpkg.com/leaflet.markercluster@1.5.0/dist/leaflet.markercluster.js",
 ];
 
-// Rotas da API que devem ser cacheadas
-const API_ROUTES = [
-  "/api/ocorrencias",
-  "/api/usuarios",
-  "/api/abordagens",
-  "/rest/v1/ocorrencias",
-  "/rest/v1/usuarios",
-  "/rest/v1/envolvidos",
-  "/rest/v1/anexos",
-  "/rest/v1/abordagens_veiculos",
-  "/rest/v1/abordagens_pessoas",
-  "/rest/v1/mural_avisos",
-  "/rest/v1/mural_comentarios",
-  "/rest/v1/mural_reações",
-  "/rest/v1/retificacoes",
-];
-
-// Logs de acesso não devem persistir no cache offline do dispositivo.
-async function limparCacheLogsAcesso() {
-  try {
-    const cache = await caches.open(API_CACHE);
-    const requests = await cache.keys();
-    const logs = requests.filter((request) => {
-      try {
-        return new URL(request.url).pathname.endsWith("/rest/v1/logs_acesso");
-      } catch {
-        return false;
-      }
-    });
-    await Promise.all(logs.map((request) => cache.delete(request)));
-  } catch (error) {
-    console.warn("⚠️ Não foi possível limpar respostas antigas de logs do cache:", error);
-  }
-}
+// Respostas de API e Storage com dados pessoais nunca são cacheadas.
 
 // ============================================
 // INSTALAÇÃO
@@ -153,9 +122,8 @@ self.addEventListener("install", (event) => {
           }
         });
       }),
-      // Criar caches separados para diferentes tipos de conteúdo
+      // Caches somente para shell/assets não privados.
       caches.open(ASSETS_CACHE),
-      caches.open(API_CACHE),
       caches.open(IMAGES_CACHE),
       caches.open(DYNAMIC_CACHE),
     ]).then(() => {
@@ -183,7 +151,6 @@ self.addEventListener("activate", (event) => {
               return (
                 cacheName !== CACHE_NAME &&
                 cacheName !== ASSETS_CACHE &&
-                cacheName !== API_CACHE &&
                 cacheName !== IMAGES_CACHE &&
                 cacheName !== DYNAMIC_CACHE
               );
@@ -194,8 +161,8 @@ self.addEventListener("activate", (event) => {
             }),
         );
       }),
-      // Remover apenas respostas antigas de logs; manter os demais dados offline.
-      limparCacheLogsAcesso(),
+      // Dados de API são privados e não ficam em Cache Storage.
+      caches.keys().then((names) => Promise.all(names.filter((name) => name.startsWith("guarda-api-")).map((name) => caches.delete(name)))),
       // REIVINDICAR CONTROLE IMEDIATO - FORÇA ATUALIZAÇÃO EM TODAS AS ABAS
       self.clients.claim(),
     ]).then(() => {
@@ -302,7 +269,6 @@ self.addEventListener("message", (event) => {
               if (
                 cacheName !== CACHE_NAME &&
                 cacheName !== ASSETS_CACHE &&
-                cacheName !== API_CACHE &&
                 cacheName !== IMAGES_CACHE &&
                 cacheName !== DYNAMIC_CACHE
               ) {
@@ -414,23 +380,11 @@ async function cacheFirst(request) {
  * Estratégia: Network First (para APIs)
  */
 async function networkFirst(request) {
-  try {
-    const networkResponse = await fetch(request);
-    if (networkResponse && networkResponse.status === 200) {
-      const cache = await caches.open(API_CACHE);
-      const responseClone = networkResponse.clone();
-      await cache.put(request, responseClone);
-    }
-    return networkResponse;
-  } catch (error) {
-    const cache = await caches.open(API_CACHE);
-    const cachedResponse = await cache.match(request);
-    if (cachedResponse) {
-      return cachedResponse;
-    }
-    return new Response(JSON.stringify({ error: "Offline" }), {
-      status: 503,
-      headers: { "Content-Type": "application/json" },
+  // Respostas de API podem conter dados pessoais: nunca gravar/servir via Cache Storage.
+  try { return await fetch(request); }
+  catch (_) {
+    return new Response(JSON.stringify({ error: "Offline", data: null }), {
+      status: 503, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   }
 }
@@ -479,20 +433,9 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // Ignorar requisições do Supabase (exceto GET)
-  if (url.hostname.includes("supabase.co")) {
-    if (request.method === "GET") {
-      // Cache de requisições GET da API
-      const isApiRoute = API_ROUTES.some((route) =>
-        url.pathname.includes(route),
-      );
-      if (isApiRoute) {
-        event.respondWith(networkFirst(request));
-        return;
-      }
-    }
-    // Outros métodos (POST, PUT, DELETE) não são cacheados
-    event.respondWith(fetch(request));
+  // Supabase e endpoints de dados nunca são cacheados pelo Service Worker.
+  if (url.hostname.includes("supabase.co") || url.pathname.includes("/api/") || url.pathname.includes("/rest/v1/")) {
+    event.respondWith(networkFirst(request));
     return;
   }
 
@@ -520,12 +463,6 @@ self.addEventListener("fetch", (event) => {
   // Imagens
   if (url.pathname.match(/\.(png|jpg|jpeg|gif|svg|webp|ico)$/)) {
     event.respondWith(imagesStrategy(request));
-    return;
-  }
-
-  // API dinâmica
-  if (url.pathname.includes("/api/") || url.pathname.includes("/rest/v1/")) {
-    event.respondWith(networkFirst(request));
     return;
   }
 
@@ -653,88 +590,8 @@ self.addEventListener("notificationclick", (event) => {
 // BACKGROUND SYNC
 // ============================================
 
-self.addEventListener("sync", (event) => {
-  console.log("🔄 Background sync:", event.tag);
-
-  if (event.tag === "sync-ocorrencias") {
-    event.waitUntil(syncOcorrencias());
-  } else if (event.tag === "sync-abordagens") {
-    event.waitUntil(syncAbordagens());
-  } else if (event.tag === "sync-all") {
-    event.waitUntil(syncAll());
-  }
-});
-
-// Função para sincronizar ocorrências pendentes
-async function syncOcorrencias() {
-  console.log("🔄 Sincronizando ocorrências pendentes...");
-  try {
-    const cache = await caches.open(API_CACHE);
-    const requests = await cache.keys();
-
-    for (const request of requests) {
-      if (request.url.includes("/ocorrencias") && request.method === "POST") {
-        try {
-          const response = await fetch(request);
-          if (response && response.ok) {
-            await cache.delete(request);
-            console.log("✅ Ocorrência sincronizada:", request.url);
-          }
-        } catch (error) {
-          console.warn("⚠️ Erro ao sincronizar ocorrência:", error);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("❌ Erro na sincronização de ocorrências:", error);
-  }
-}
-
-// Função para sincronizar abordagens pendentes
-async function syncAbordagens() {
-  console.log("🔄 Sincronizando abordagens pendentes...");
-  try {
-    const cache = await caches.open(API_CACHE);
-    const requests = await cache.keys();
-
-    for (const request of requests) {
-      if (request.url.includes("/abordagens") && request.method === "POST") {
-        try {
-          const response = await fetch(request);
-          if (response && response.ok) {
-            await cache.delete(request);
-            console.log("✅ Abordagem sincronizada:", request.url);
-          }
-        } catch (error) {
-          console.warn("⚠️ Erro ao sincronizar abordagem:", error);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("❌ Erro na sincronização de abordagens:", error);
-  }
-}
-
-// Sincronizar tudo
-async function syncAll() {
-  await syncOcorrencias();
-  await syncAbordagens();
-  console.log("✅ Sincronização completa finalizada");
-}
-
-// ============================================
-// PERIODIC BACKGROUND SYNC (se suportado)
-// ============================================
-
-// Registrar sync periódico para manter dados atualizados
-if (self.registration && self.registration.periodicSync) {
-  self.addEventListener("periodicsync", (event) => {
-    if (event.tag === "periodic-sync") {
-      console.log("🔄 Sync periódico iniciado");
-      event.waitUntil(syncAll());
-    }
-  });
-}
+// A sincronização de dados cifrados roda apenas na página autenticada com o cofre desbloqueado.
+// O Service Worker não recebe nem persiste a chave derivada da senha.
 
 // ============================================
 // GERENCIAMENTO DE VERSÃO
@@ -778,7 +635,7 @@ self.addEventListener("unhandledrejection", (event) => {
 console.log(`📦 Service Worker ${CACHE_VERSION} carregado`);
 console.log(`📂 Cache principal: ${CACHE_NAME}`);
 console.log(`📂 Cache de assets: ${ASSETS_CACHE}`);
-console.log(`📂 Cache de API: ${API_CACHE}`);
+console.log("📂 Respostas de API: não são armazenadas em cache");
 console.log(`📂 Cache de imagens: ${IMAGES_CACHE}`);
 console.log(`📂 Cache dinâmico: ${DYNAMIC_CACHE}`);
 console.log(`🔄 Atualização forçada ativada (skipWaiting + clients.claim())`);

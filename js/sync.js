@@ -9,20 +9,20 @@
  * - Retry com backoff exponencial
  * - Resolução de conflitos
  * - Monitoramento de status
- * - Sincronização periódica em background
+ * - Sincronização periódica enquanto o app está aberto e autenticado
  *
  * MELHORIAS APLICADAS:
- * - Sincronização bidirecional (upload e download)
+ * - Fila IndexedDB cifrada e sincronização foreground com JWT validado
  * - Resolução de conflitos (timestamp-based)
  * - Retry com backoff exponencial (1s, 2s, 4s, 8s, 16s, 32s, 60s)
  * - Fila de prioridade (urgente > normal > baixa)
  * - Monitoramento de status (progresso, itens pendentes)
- * - Sync em background (Background Sync API)
+ * - Service Worker não acessa nem decripta a fila
  * - Cache de resultados de sincronização
  * - Eventos de progresso
  * - Web Workers para processamento em background
  *
- * Depende de: dbManager (global), supabaseClient (global),
+ * Depende de: offlineVault (global), supabaseClient (global),
  *             authManager (global), utils
  */
 
@@ -68,6 +68,7 @@ class SyncManager {
     };
     this.listeners = [];
     this.retryTimeouts = [];
+    this.networkListenersInstalled = false;
     this.lastSync = null;
     this.syncTimer = null;
     this.offlineQueue = [];
@@ -83,13 +84,8 @@ class SyncManager {
   async init() {
     if (this.initialized) return;
 
-    // Inicializar dbManager se disponível
-    if (dbManager && !dbManager.isInitialized) {
-      await dbManager.init();
-    }
-
-    // Carregar fila de sincronização
-    await this.carregarFila();
+    // A fila é lida exclusivamente do cofre cifrado; não iniciar o antigo DB plaintext.
+    if (window.offlineVault?.unlocked) await this.carregarFila();
 
     // Configurar listeners de rede
     this.setupNetworkListeners();
@@ -120,24 +116,12 @@ class SyncManager {
 
   async carregarFila() {
     try {
-      if (dbManager) {
-        const itens = await dbManager.getSyncQueue("pending");
-        this.syncQueue = itens || [];
-
-        // Remover itens antigos (mais de 30 dias)
-        const limite = new Date();
-        limite.setDate(limite.getDate() - 30);
-        const antigos = this.syncQueue.filter(
-          (item) => new Date(item.created_at) < limite,
-        );
-        for (const item of antigos) {
-          await dbManager.updateSyncStatus(item.id, "error", "Item expirado");
-          const index = this.syncQueue.indexOf(item);
-          if (index > -1) this.syncQueue.splice(index, 1);
-        }
-
-        console.log(`📋 ${this.syncQueue.length} itens pendentes na fila`);
-      }
+      if (!window.offlineVault?.unlocked) { this.syncQueue = []; return; }
+      const pendentes = await window.offlineVault.listQueue("pending");
+      const interrompidos = await window.offlineVault.listQueue("syncing");
+      for (const item of interrompidos) await window.offlineVault.updateQueue(item.id, "pending", null, item.attempts);
+      this.syncQueue = [...pendentes, ...interrompidos];
+      console.log(`📋 ${this.syncQueue.length} itens cifrados pendentes na fila`);
     } catch (error) {
       console.warn("⚠️ Erro ao carregar fila de sincronização:", error);
       this.syncQueue = [];
@@ -149,6 +133,8 @@ class SyncManager {
   // ============================================
 
   setupNetworkListeners() {
+    if (this.networkListenersInstalled) return;
+    this.networkListenersInstalled = true;
     window.addEventListener("online", () => {
       console.log("🌐 Conexão restaurada");
       this.isOffline = false;
@@ -162,19 +148,30 @@ class SyncManager {
       this.notifyListeners("offline", {});
     });
 
-    // Listeners para Background Sync
-    if ("sync" in navigator.serviceWorker) {
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.sync.register("sync-all").catch((err) => {
-          console.warn("⚠️ Erro ao registrar Background Sync:", err);
-        });
-      });
-    }
+    // O Service Worker não recebe a chave derivada da senha. A fila cifrada
+    // sincroniza apenas enquanto a página autenticada e o cofre estão desbloqueados.
   }
 
   // ============================================
   // ADICIONAR À FILA
   // ============================================
+
+  async saveOccurrenceOffline(bundle, options = {}) {
+    const user = authManager.getUser();
+    if (!user || !window.offlineVault?.unlocked || window.offlineVault.userId !== user.id) throw new Error("Desbloqueie o cofre para salvar a ocorrência offline.");
+    const occurrence = { ...(bundle.ocorrencia || {}), id: (bundle.ocorrencia || {}).id || crypto.randomUUID(), criado_por: user.id };
+    const now = globalThis.obterTimestampBrasilSemFuso ? globalThis.obterTimestampBrasilSemFuso() : new Date().toISOString();
+    occurrence.criado_em = occurrence.criado_em || now;
+    occurrence.atualizado_em = now;
+    occurrence.status = options.draft ? "draft" : (occurrence.status || "synced");
+    const envolvidos = (bundle.envolvidos || []).map((item) => ({ ...item, id: item.id || crypto.randomUUID() }));
+    const anexos = (bundle.anexos || []).map((item) => ({ ...item, id: item.id || crypto.randomUUID() }));
+    const payload = { ocorrencia: occurrence, envolvidos, anexos, guardasParticipantes: bundle.guardasParticipantes || [], assinaturas: bundle.assinaturas || [] };
+    const localType = options.draft ? "draft" : "offline-occurrence";
+    await window.offlineVault.putRecord(localType, occurrence.id, payload, { status: "pending", createdAt: occurrence.criado_em });
+    await this.addToQueue(payload, "ocorrencia", SYNC_PRIORITY.URGENTE, { idempotencyKey: `ocorrencia:${occurrence.id}:${occurrence.atualizado_em}` });
+    return { id: occurrence.id, payload };
+  }
 
   /**
    * Adiciona item à fila de sincronização
@@ -187,6 +184,7 @@ class SyncManager {
     data,
     tipo = "ocorrencia",
     prioridade = SYNC_PRIORITY.NORMAL,
+    options = {},
   ) {
     try {
       const item = {
@@ -199,12 +197,13 @@ class SyncManager {
         tentativas: 0,
       };
 
-      // Salvar no banco local
-      if (dbManager) {
-        const saved = await dbManager.addToSyncQueue(item);
-        item.id = saved.id;
-      }
-
+      if (!window.offlineVault?.unlocked) throw new Error("Desbloqueie o cofre local antes de enfileirar dados.");
+      const saved = await window.offlineVault.enqueue(tipo, data, {
+        priority: prioridade,
+        idempotencyKey: options.idempotencyKey || `${tipo}:${data?.id || crypto.randomUUID()}`,
+      });
+      Object.assign(item, saved);
+      this.syncQueue = this.syncQueue.filter((queued) => queued.id !== item.id);
       this.syncQueue.push(item);
       this.notifyListeners("queue_added", { item });
 
@@ -240,11 +239,17 @@ class SyncManager {
       return { success: false, message: "Offline" };
     }
 
-    // Verificar autenticação
-    if (typeof authManager === "undefined" || !authManager.isLoggedIn()) {
-      console.log("👤 Usuário não autenticado");
-      return { success: false, message: "Não autenticado" };
+    // A chave jamais é entregue ao Service Worker. Além do cofre, exigir JWT
+    // validado pelo Supabase para sincronizar; login offline não envia dados.
+    if (typeof authManager === "undefined" || !authManager.isLoggedIn() || !window.offlineVault?.unlocked || window.offlineVault.userId !== authManager.getUserId()) {
+      return { success: false, message: "Cofre bloqueado; a fila cifrada foi mantida." };
     }
+    const authClient = supabaseClient.getClient();
+    const { data: authResult, error: authError } = await authClient.auth.getUser();
+    if (authError || !authResult?.user?.id || authResult.user.id !== authManager.getUserId()) {
+      return { success: false, message: "Reautentique online; a fila cifrada foi mantida." };
+    }
+    authManager.offlineOnly = false;
 
     this.isSyncing = true;
     this.progress = {
@@ -283,7 +288,7 @@ class SyncManager {
 
       // Atualizar fila
       this.syncQueue = this.syncQueue.filter(
-        (item) => item.status === SYNC_STATUS.PENDING,
+        (item) => item.status === SYNC_STATUS.PENDING || item.status === SYNC_STATUS.CONFLICT,
       );
 
       this.lastSync = new Date().toISOString();
@@ -420,7 +425,7 @@ class SyncManager {
         // Incrementar tentativas
         item.attempts = (item.attempts || 0) + 1;
         item.tentativas = (item.tentativas || 0) + 1;
-        item.ultimo_erro = result.error;
+        item.ultimo_erro = "SYNC_ERROR";
 
         const status =
           item.attempts >= MAX_RETRIES
@@ -440,7 +445,7 @@ class SyncManager {
       console.error(`❌ Erro ao sincronizar item ${item.id}:`, error);
       item.attempts = (item.attempts || 0) + 1;
       item.tentativas = (item.tentativas || 0) + 1;
-      item.ultimo_erro = error.message;
+      item.ultimo_erro = "SYNC_ERROR";
 
       const status =
         item.attempts >= MAX_RETRIES ? SYNC_STATUS.ERROR : SYNC_STATUS.PENDING;
@@ -465,71 +470,58 @@ class SyncManager {
    * @param {Object} client - Cliente Supabase
    * @returns {Promise<Object>}
    */
-  async sincronizarOcorrencia(dados, client) {
+  async sincronizarOcorrencia(payload, client) {
     try {
-      // Verificar se já existe no servidor
-      const { data: existing, error: searchError } = await client
-        .from("ocorrencias")
-        .select("id, numero_ocorrencia, updated_at")
-        .eq("id", dados.id)
-        .maybeSingle();
+      const dados = payload.ocorrencia || payload;
+      const envolvidos = payload.envolvidos || [];
+      const anexos = payload.anexos || [];
+      const guardas = payload.guardasParticipantes || [];
+      if (!dados?.id || !dados?.criado_por || dados.criado_por !== authManager.getUserId()) throw new Error("Payload sem vínculo válido com o usuário autenticado.");
+      const { data: saved, error } = await client.from("ocorrencias").upsert([dados], { onConflict: "id" }).select().single();
+      if (error) throw error;
 
-      if (searchError) throw searchError;
-
-      let result;
-      if (existing) {
-        // Verificar conflito (timestamp)
-        if (existing.updated_at && dados.updated_at) {
-          const serverTime = new Date(existing.updated_at);
-          const localTime = new Date(dados.updated_at);
-
-          if (serverTime > localTime) {
-            // Conflito: servidor tem dados mais recentes
-            await this.atualizarStatus(
-              dados.id,
-              SYNC_STATUS.CONFLICT,
-              "Conflito de dados",
-            );
-            return {
-              success: false,
-              error: "Conflito de dados - servidor tem versão mais recente",
-              conflict: true,
-              serverData: existing,
-            };
-          }
+      if (envolvidos.length) {
+        const rows = envolvidos.map((env) => ({
+          id: env.id || crypto.randomUUID(), ocorrencia_id: dados.id, tipo: env.tipo,
+          nome_completo: env.nome_completo, data_nascimento: env.data_nascimento || null,
+          rg: env.rg || null, cpf: env.cpf || null, telefone: env.telefone || null,
+          nome_pai: env.nome_pai || null, nome_mae: env.nome_mae || null,
+          endereco: env.endereco || null, bairro: env.bairro || null,
+          cidade: env.cidade || null, observacoes: env.observacoes || null,
+          criado_por: authManager.getUserId(), criado_em: env.criado_em || new Date().toISOString(),
+        }));
+        const { error: e } = await client.from("envolvidos").upsert(rows, { onConflict: "id" });
+        if (e) throw e;
+      }
+      if (guardas.length) {
+        const result = await ocorrenciaManager.salvarGuardas(dados.id, guardas);
+        if (!result.success) throw new Error(result.error || "Falha ao sincronizar equipe.");
+      }
+      for (const anexo of anexos) {
+        if (!anexo?.arquivo) {
+          if (anexo?.url && !/^blob:|^data:/i.test(anexo.url)) continue;
+          throw new Error("Há anexo local sem arquivo binário; o item permanece na fila.");
         }
-
-        // Atualizar
-        const { data, error } = await client
-          .from("ocorrencias")
-          .update(dados)
-          .eq("id", dados.id)
-          .select()
-          .single();
-
-        if (error) throw error;
-        result = data;
-      } else {
-        // Inserir
-        const { data, error } = await client
-          .from("ocorrencias")
-          .insert([dados])
-          .select()
-          .single();
-
-        if (error) throw error;
-        result = data;
+        const fileId = anexo.id || crypto.randomUUID();
+        const ext = String(anexo.arquivo.name || "anexo").split(".").pop().replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
+        const path = `${authManager.getUserId()}/${dados.id}/${fileId}.${ext}`;
+        const { error: uploadError } = await client.storage.from("anexos").upload(path, anexo.arquivo, { upsert: true, contentType: anexo.arquivo.type || "application/octet-stream" });
+        if (uploadError) throw uploadError;
+        const { data: urlData } = client.storage.from("anexos").getPublicUrl(path);
+        const { error: metaError } = await client.from("anexos").upsert([{
+          id: fileId, ocorrencia_id: dados.id, nome_arquivo: anexo.nome || anexo.arquivo.name || "anexo",
+          tipo_arquivo: anexo.tipo || "anexo", tamanho: anexo.arquivo.size || anexo.tamanho || 0,
+          url: urlData.publicUrl, mime_type: anexo.arquivo.type || null,
+          hash_arquivo: anexo.hash_pericial || anexo.hash || null, criado_por: authManager.getUserId(),
+        }], { onConflict: "id" });
+        if (metaError) throw metaError;
       }
-
-      // Salvar localmente com dados atualizados
-      if (dbManager) {
-        await dbManager.saveOcorrencia(result);
-      }
-
-      return { success: true, data: result };
+      const localType = saved.status === "draft" ? "draft" : "offline-occurrence";
+      await window.offlineVault.putRecord(localType, dados.id, { ocorrencia: saved, envolvidos, anexos, guardasParticipantes: guardas, assinaturas: payload.assinaturas || [] }, { status: "synced" });
+      return { success: true, data: saved };
     } catch (error) {
-      console.error("Erro ao sincronizar ocorrência:", error);
-      return { success: false, error: error.message };
+      console.error("Erro ao sincronizar ocorrência offline:", error?.code || "SYNC_ERROR");
+      return { success: false, error: error?.code || "SYNC_ERROR" };
     }
   }
 
@@ -539,19 +531,38 @@ class SyncManager {
    * @param {Object} client - Cliente Supabase
    * @returns {Promise<Object>}
    */
-  async sincronizarAbordagemVeiculo(dados, client) {
-    try {
-      const { data, error } = await client
-        .from("abordagens_veiculos")
-        .upsert([dados], { onConflict: "id" })
-        .select()
-        .single();
+  async sincronizarAbordagemVeiculo(payload, client) {
+    return this.sincronizarAbordagem(payload, client, "abordagens_veiculos");
+  }
 
+  async sincronizarAbordagem(payload, client, tabela) {
+    try {
+      const registro = { ...(payload.registro || payload) };
+      const anexos = payload.anexos || [];
+      const anexosRemotos = [];
+      delete registro.status;
+      delete registro.tipo_abordagem;
+      for (const anexo of anexos) {
+        if (!anexo?.arquivo) {
+          if (anexo?.url && !/^blob:|^data:/i.test(anexo.url)) { anexosRemotos.push(anexo); continue; }
+          throw new Error("Anexo offline sem arquivo; item preservado na fila cifrada.");
+        }
+        const fileId = anexo.id || crypto.randomUUID();
+        const ext = String(anexo.arquivo.name || anexo.nome || "foto.jpg").split(".").pop().replace(/[^a-z0-9]/gi, "").slice(0, 8) || "jpg";
+        const storagePath = `${authManager.getUserId()}/${tabela}/${registro.id}/${fileId}.${ext}`;
+        const { error: uploadError } = await client.storage.from("anexos").upload(storagePath, anexo.arquivo, { upsert: true, contentType: anexo.arquivo.type || "image/jpeg" });
+        if (uploadError) throw uploadError;
+        const { data: urlData } = client.storage.from("anexos").getPublicUrl(storagePath);
+        anexosRemotos.push({ url: urlData.publicUrl, nome: anexo.nome || "Foto", tipo: anexo.tipo || "image", tamanho: anexo.arquivo.size || anexo.tamanho || 0, hash: anexo.hash || null });
+      }
+      registro.anexos = anexosRemotos;
+      const { data, error } = await client.from(tabela).upsert([registro], { onConflict: "id" }).select().single();
       if (error) throw error;
+      await window.offlineVault.putRecord("approach", registro.id, { registro: data, anexos }, { status: "synced", createdAt: registro.criado_em });
       return { success: true, data };
     } catch (error) {
-      console.error("Erro ao sincronizar abordagem veículo:", error);
-      return { success: false, error: error.message };
+      console.error("Erro ao sincronizar abordagem:", error?.code || "SYNC_ERROR");
+      return { success: false, error: error?.code || "SYNC_ERROR" };
     }
   }
 
@@ -561,20 +572,8 @@ class SyncManager {
    * @param {Object} client - Cliente Supabase
    * @returns {Promise<Object>}
    */
-  async sincronizarAbordagemPessoa(dados, client) {
-    try {
-      const { data, error } = await client
-        .from("abordagens_pessoas")
-        .upsert([dados], { onConflict: "id" })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return { success: true, data };
-    } catch (error) {
-      console.error("Erro ao sincronizar abordagem pessoa:", error);
-      return { success: false, error: error.message };
-    }
+  async sincronizarAbordagemPessoa(payload, client) {
+    return this.sincronizarAbordagem(payload, client, "abordagens_pessoas");
   }
 
   /**
@@ -668,16 +667,17 @@ class SyncManager {
    */
   async atualizarStatus(id, status, error = null, data = null) {
     try {
-      // Atualizar no banco
-      if (dbManager) {
-        await dbManager.updateSyncStatus(id, status, error);
+      // Persistir apenas metadados de estado; payload permanece cifrado.
+      if (window.offlineVault?.unlocked) {
+        const current = this.syncQueue.find((item) => item.id === id);
+        await window.offlineVault.updateQueue(id, status, error ? "SYNC_ERROR" : null, current?.attempts ?? null);
       }
 
       // Atualizar na fila em memória
       const item = this.syncQueue.find((i) => i.id === id);
       if (item) {
         item.status = status;
-        if (error) item.ultimo_erro = error;
+        if (error) item.ultimo_erro = "SYNC_ERROR";
         if (data) item.resultado = data;
       }
 
@@ -735,9 +735,7 @@ class SyncManager {
         results.ocorrencias = ocorrencias;
         // Salvar localmente
         for (const occ of ocorrencias) {
-          if (dbManager) {
-            await dbManager.saveOcorrencia(occ);
-          }
+          if (window.offlineVault?.unlocked) await window.offlineVault.putRecord("downloaded-occurrence", occ.id, occ, { status: "saved" });
         }
       }
 
@@ -753,9 +751,7 @@ class SyncManager {
       if (!veicError && veiculos) {
         results.abordagens.veiculos = veiculos;
         for (const v of veiculos) {
-          if (dbManager) {
-            await dbManager.save("abordagens_veiculos", v);
-          }
+          if (window.offlineVault?.unlocked) await window.offlineVault.putRecord("downloaded-vehicle-approach", v.id, v, { status: "saved" });
         }
       }
 
@@ -771,9 +767,7 @@ class SyncManager {
       if (!pesError && pessoas) {
         results.abordagens.pessoas = pessoas;
         for (const p of pessoas) {
-          if (dbManager) {
-            await dbManager.save("abordagens_pessoas", p);
-          }
+          if (window.offlineVault?.unlocked) await window.offlineVault.putRecord("downloaded-person-approach", p.id, p, { status: "saved" });
         }
       }
 
@@ -926,9 +920,7 @@ class SyncManager {
       const index = this.syncQueue.indexOf(item);
       if (index > -1) {
         this.syncQueue.splice(index, 1);
-        if (dbManager) {
-          await dbManager.delete("syncQueue", item.id);
-        }
+        if (window.offlineVault?.unlocked) await window.offlineVault.removeQueue(item.id);
         removidos++;
       }
     }
@@ -1043,6 +1035,18 @@ class SyncManager {
    * @param {string} tipo - Tipo de processamento
    * @returns {any}
    */
+  lock() {
+    this.syncQueue = [];
+    this.offlineQueue = [];
+    this.pendingItems.clear();
+    this.isSyncing = false;
+    this.initialized = false;
+    if (this.syncTimer) clearInterval(this.syncTimer);
+    this.syncTimer = null;
+    this.retryTimeouts.forEach(clearTimeout);
+    this.retryTimeouts = [];
+  }
+
   processarDados(dados, tipo) {
     switch (tipo) {
       case "compress":

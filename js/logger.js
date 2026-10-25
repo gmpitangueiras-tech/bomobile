@@ -6,19 +6,19 @@
  * - Logs de acesso e ações do sistema
  * - Logs periciais para integridade
  * - Níveis de log (debug, info, warn, error)
- * - Persistência local de logs
+ * - Buffer em memória e envio remoto quando autenticado
  * - Exportação de logs
  * - Rotação de logs
  *
  * MELHORIAS APLICADAS:
  * - Logs periciais com hash de integridade
  * - Níveis de log configuráveis (debug, info, warn, error)
- * - Persistência local (IndexedDB / localStorage)
+ * - Sem persistência local em claro
  * - Exportação de logs (CSV, JSON)
  * - Rotação de logs (limite de tamanho)
  * - Filtros por nível, data, usuário, ação
  * - Buffer de logs para reduzir chamadas ao banco
- * - Fallback para localStorage quando offline
+ * - Fallback em memória quando offline
  * - Integração com logs_periciais do banco
  *
  * Depende de: authManager (global), supabaseClient (global)
@@ -141,18 +141,8 @@ class Logger {
    */
   async carregarLogsLocais() {
     try {
-      const stored = localStorage.getItem(this.storageKey);
-      if (stored) {
-        this.localLogs = JSON.parse(stored);
-        // Verificar tamanho
-        if (this.localLogs.length > this.maxLocalLogs) {
-          this.localLogs = this.localLogs.slice(-this.maxLocalLogs);
-          this.salvarLogsLocais();
-        }
-        console.log(`📂 ${this.localLogs.length} logs locais carregados`);
-      } else {
-        this.localLogs = [];
-      }
+      localStorage.removeItem(this.storageKey);
+      this.localLogs = [];
     } catch (error) {
       console.warn("⚠️ Erro ao carregar logs locais:", error);
       this.localLogs = [];
@@ -164,21 +154,9 @@ class Logger {
    * @returns {void}
    */
   salvarLogsLocais() {
-    try {
-      // Verificar tamanho
-      const json = JSON.stringify(this.localLogs);
-      if (json.length > MAX_LOCAL_STORAGE_SIZE) {
-        // Remover logs antigos
-        this.localLogs = this.localLogs.slice(
-          -Math.floor(this.maxLocalLogs / 2),
-        );
-        this.salvarLogsLocais();
-        return;
-      }
-      localStorage.setItem(this.storageKey, json);
-    } catch (error) {
-      console.warn("⚠️ Erro ao salvar logs locais:", error);
-    }
+    // Logs com identidade, IP e metadados operacionais nunca são persistidos em claro.
+    // A fila remota é usada quando existe JWT válido; sem rede ficam apenas em memória.
+    try { localStorage.removeItem(this.storageKey); } catch (_) {}
   }
 
   // ============================================

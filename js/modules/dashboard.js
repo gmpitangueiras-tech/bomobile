@@ -703,36 +703,17 @@ async function carregarAbordagensHoje() {
 // CACHE DE DADOS
 // ============================================
 
+const dashboardMemoryCache = new Map();
 function setCachedData(key, data) {
-  try {
-    const cacheData = {
-      data: data,
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(key, JSON.stringify(cacheData));
-  } catch (error) {
-    console.warn("Erro ao salvar cache:", error);
-  }
+  dashboardMemoryCache.set(key, { data, timestamp: Date.now() });
 }
-
 function getCachedData(key) {
-  try {
-    const cached = localStorage.getItem(key);
-    if (!cached) return null;
-
-    const cacheData = JSON.parse(cached);
-    const now = Date.now();
-
-    if (now - cacheData.timestamp > CACHE_EXPIRY) {
-      localStorage.removeItem(key);
-      return null;
-    }
-
-    return cacheData.data;
-  } catch (error) {
-    console.warn("Erro ao recuperar cache:", error);
+  const cached = dashboardMemoryCache.get(key);
+  if (!cached || Date.now() - cached.timestamp > CACHE_EXPIRY) {
+    dashboardMemoryCache.delete(key);
     return null;
   }
+  return cached.data;
 }
 
 // ============================================

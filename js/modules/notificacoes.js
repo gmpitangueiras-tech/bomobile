@@ -214,13 +214,7 @@ class Notificacoes {
 
       // Salvar no localStorage
       try {
-        localStorage.setItem(
-          NOTIFICACOES_CACHE_KEY,
-          JSON.stringify({
-            count: this.notificacoesNaoLidas,
-            timestamp: agora,
-          }),
-        );
+        // Contagem mantida apenas em memória; não persistir atividade do usuário.
       } catch (e) {}
 
       this.atualizarBadge();
@@ -229,14 +223,7 @@ class Notificacoes {
 
       // Tentar recuperar do localStorage
       try {
-        const cached = localStorage.getItem(NOTIFICACOES_CACHE_KEY);
-        if (cached) {
-          const data = JSON.parse(cached);
-          if (Date.now() - data.timestamp < NOTIFICACOES_CACHE_EXPIRY) {
-            this.notificacoesNaoLidas = data.count;
-            this.atualizarBadge();
-          }
-        }
+        localStorage.removeItem(NOTIFICACOES_CACHE_KEY);
       } catch (e) {}
     }
   }
@@ -272,13 +259,7 @@ class Notificacoes {
 
         // Atualizar localStorage
         try {
-          localStorage.setItem(
-            NOTIFICACOES_CACHE_KEY,
-            JSON.stringify({
-              count: this.notificacoesNaoLidas,
-              timestamp: Date.now(),
-            }),
-          );
+          localStorage.removeItem(NOTIFICACOES_CACHE_KEY);
         } catch (e) {}
 
         this.atualizarBadge();
@@ -720,13 +701,7 @@ class Notificacoes {
 
       // Atualizar localStorage
       try {
-        localStorage.setItem(
-          NOTIFICACOES_CACHE_KEY,
-          JSON.stringify({
-            count: this.notificacoesNaoLidas,
-            timestamp: Date.now(),
-          }),
-        );
+        localStorage.removeItem(NOTIFICACOES_CACHE_KEY);
       } catch (e) {}
 
       this.atualizarBadge();
@@ -770,16 +745,7 @@ class Notificacoes {
       this.cache.naoLidas = 0;
       this.cache.ultimaAtualizacao = Date.now();
 
-      // Atualizar localStorage
-      try {
-        localStorage.setItem(
-          NOTIFICACOES_CACHE_KEY,
-          JSON.stringify({
-            count: 0,
-            timestamp: Date.now(),
-          }),
-        );
-      } catch (e) {}
+      // Contagem de notificações permanece somente em memória.
 
       this.atualizarBadge();
 

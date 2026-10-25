@@ -17,7 +17,8 @@ const CACHE_DURATION_MS = 60000; // 1 minuto de cache para o horário
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 const CACHE_PREFIX = "guarda_cache_";
-const CACHE_EXPIRY_MS = 3600000; // 1 hora para cache de dados estáticos
+const CACHE_EXPIRY_MS = 3600000; // 1 hora para cache somente em memória
+const utilsMemoryCache = new Map();
 const MAX_IMAGE_SIZE = 1024 * 1024; // 1MB
 const MAX_IMAGE_WIDTH = 800;
 const IMAGE_QUALITY = 0.7;
@@ -645,54 +646,26 @@ export async function gerarHashArquivo(file) {
 }
 
 // ============================================
-// CACHE DE DADOS ESTÁTICOS (localStorage)
+// CACHE EFÊMERO DE DADOS (memória da aba)
 // ============================================
 
 /**
- * Salva dados em cache no localStorage
+ * Salva dados em cache somente na memória da aba
  * @param {string} key - Chave do cache
  * @param {any} data - Dados a serem armazenados
  * @param {number} expiryMs - Tempo de expiração em ms (padrão: 1 hora)
  */
 export function setCachedData(key, data, expiryMs = CACHE_EXPIRY_MS) {
-  try {
-    const cacheKey = CACHE_PREFIX + key;
-    const cacheData = {
-      data: data,
-      timestamp: Date.now(),
-      expiry: expiryMs,
-    };
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-  } catch (error) {
-    console.warn("Erro ao salvar cache:", error);
-  }
+  utilsMemoryCache.set(CACHE_PREFIX + key, { data, timestamp: Date.now(), expiry: expiryMs });
 }
 
-/**
- * Recupera dados do cache
- * @param {string} key - Chave do cache
- * @param {any} defaultValue - Valor padrão se não encontrar
- * @returns {any} Dados do cache ou valor padrão
- */
 export function getCachedData(key, defaultValue = null) {
-  try {
-    const cacheKey = CACHE_PREFIX + key;
-    const cached = localStorage.getItem(cacheKey);
-    if (!cached) return defaultValue;
-
-    const cacheData = JSON.parse(cached);
-    const now = Date.now();
-
-    if (now - cacheData.timestamp > cacheData.expiry) {
-      localStorage.removeItem(cacheKey);
-      return defaultValue;
-    }
-
-    return cacheData.data;
-  } catch (error) {
-    console.warn("Erro ao recuperar cache:", error);
+  const cacheData = utilsMemoryCache.get(CACHE_PREFIX + key);
+  if (!cacheData || Date.now() - cacheData.timestamp > cacheData.expiry) {
+    utilsMemoryCache.delete(CACHE_PREFIX + key);
     return defaultValue;
   }
+  return cacheData.data;
 }
 
 /**
@@ -703,6 +676,7 @@ export function clearCachedData(key) {
   try {
     const cacheKey = CACHE_PREFIX + key;
     localStorage.removeItem(cacheKey);
+    utilsMemoryCache.delete(cacheKey);
   } catch (error) {
     console.warn("Erro ao limpar cache:", error);
   }
@@ -713,6 +687,7 @@ export function clearCachedData(key) {
  */
 export function clearAllCache() {
   try {
+    utilsMemoryCache.clear();
     const keys = Object.keys(localStorage);
     keys.forEach((key) => {
       if (key.startsWith(CACHE_PREFIX)) {

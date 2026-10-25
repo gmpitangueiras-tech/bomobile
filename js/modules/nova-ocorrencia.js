@@ -879,6 +879,27 @@ async function finalizarRapido(container, appInstance) {
   // 🔥 CORRIGIDO: Remover campos que não devem ir para o banco
   delete dados.assinaturas_objeto;
 
+  if (!navigator.onLine) {
+    try {
+      const user = authManager.getUser();
+      const id = crypto.randomUUID();
+      const occurrence = { ...dados, id, criado_por: user.id, status: "synced", esta_ativa: true };
+      delete occurrence.guardasParticipantes;
+      const attachments = anexos.map((item) => ({ ...item, id: item.id || crypto.randomUUID() }));
+      await window.syncManager.saveOccurrenceOffline({
+        ocorrencia: occurrence, envolvidos: [], anexos: attachments,
+        guardasParticipantes: estado.dados.guardasParticipantes || [], assinaturas: [],
+      }, { draft: false });
+      appInstance.showToast("BO Rápido cifrado no dispositivo; será sincronizado quando houver conexão autenticada.", "success");
+      resetarEstado();
+      setTimeout(() => appInstance.navigateTo("ocorrencias"), 1000);
+      return;
+    } catch (offlineError) {
+      appInstance.showToast(offlineError.message || "Não foi possível salvar o BO Rápido offline; mantenha a tela aberta.", "error");
+      return;
+    }
+  }
+
   const result = await ocorrenciaManager.criar(dados);
 
   if (!result.success) {
@@ -964,7 +985,7 @@ function textoStatusRascunho(status) {
     salvando: "Salvando rascunho…",
     salvo: "Rascunho salvo no sistema",
     falha: "Rascunho não salvo. Tente novamente.",
-    offline: "Sem conexão: o rascunho não foi salvo; tente novamente online.",
+    offline: "Sem conexão: o rascunho permanece protegido neste dispositivo até sincronizar.",
   };
   return textos[status] || textos.nao_salvo;
 }

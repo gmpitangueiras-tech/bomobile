@@ -1,7 +1,9 @@
-// Cliente do painel administrativo v50. O token fica apenas em sessionStorage e expira em 30 minutos.
+// Cliente do painel administrativo. Credencial privilegiada existe somente em memória e expira no servidor.
 (function () {
   const TOKEN_KEY = "admin_governance_token_v50";
   const URL_KEY = "admin_governance_url_v50";
+  let adminToken = "";
+  try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(URL_KEY); } catch (_) {}
 
   function endpoint() {
     const base = String(window.CONFIG?.SUPABASE_URL || "").replace(/\/$/, "");
@@ -9,12 +11,12 @@
   }
 
   function getToken() {
-    return sessionStorage.getItem(TOKEN_KEY) || "";
+    return adminToken;
   }
 
   function clear() {
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(URL_KEY);
+    adminToken = "";
+    try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(URL_KEY); } catch (_) {}
   }
 
   async function call(action, payload = {}, options = {}) {
@@ -34,9 +36,8 @@
     if (!user || user.perfil !== "administrador") throw new Error("Acesso restrito ao administrador do sistema.");
     const senha = window.prompt("Confirme sua senha para abrir o painel administrativo.\nA senha não será armazenada.");
     if (!senha) throw new Error("É necessário confirmar a senha para abrir o painel.");
-    const data = await call("issue_session", { cpf: user.cpf, senha });
-    sessionStorage.setItem(TOKEN_KEY, data.token);
-    sessionStorage.setItem(URL_KEY, endpoint());
+    const data = await call("issue_session", { cpf: window.authManager?.getCPF?.() || user.cpf, senha });
+    adminToken = String(data.token || "");
     return true;
   }
 

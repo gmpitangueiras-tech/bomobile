@@ -624,10 +624,32 @@ class App {
   // RASCUNHO DE OCORRÊNCIA
   // ============================================
 
+  async carregarRascunhoLocal() {
+    const user = authManager.getUser();
+    if (!user || !window.offlineVault?.unlocked || window.offlineVault.userId !== user.id) return false;
+    const rows = await window.offlineVault.listRecords("draft");
+    const latest = rows.sort((a, b) => String(b.data?.ocorrencia?.atualizado_em || "").localeCompare(String(a.data?.ocorrencia?.atualizado_em || "")))[0];
+    if (!latest?.data?.ocorrencia) return false;
+    const bundle = latest.data;
+    this.rascunhoId = bundle.ocorrencia.id;
+    this.dadosRascunho = {
+      ...bundle.ocorrencia,
+      envolvidos: bundle.envolvidos || [],
+      envolvidosMap: (bundle.envolvidos || []).reduce((map, env) => { map[env.id] = env; return map; }, {}),
+      guardasParticipantes: bundle.guardasParticipantes || [],
+      assinaturas: bundle.assinaturas || [],
+      anexos: bundle.anexos || [],
+    };
+    this.alteracoesNaoSalvas = true;
+    return true;
+  }
+
   async carregarRascunho() {
     try {
       const user = authManager.getUser();
       if (!user) return;
+      if (window.offlineVault?.unlocked && await this.carregarRascunhoLocal()) return;
+      if (!navigator.onLine) return;
 
       const client = supabaseClient.getClient();
       if (!client) return;
@@ -706,8 +728,42 @@ class App {
         this.alteracoesNaoSalvas = true;
       }
     } catch (error) {
-      console.error("❌ Erro ao carregar rascunho:", error);
+      console.warn("Falha ao carregar rascunho remoto; tentando a cópia local cifrada.");
+      try { await this.carregarRascunhoLocal(); } catch (_) { /* mantém o erro remoto fora da UI */ }
     }
+  }
+
+  async salvarRascunhoOffline(dados, user) {
+    if (!window.offlineVault?.unlocked || window.offlineVault.userId !== user?.id) {
+      throw new Error("Entre com sua senha para desbloquear o cofre local antes de salvar offline.");
+    }
+    const id = this.rascunhoId || dados.id || crypto.randomUUID();
+    const agora = globalThis.obterTimestampBrasilSemFuso();
+    const ocorrencia = { ...dados, id, status: "draft", criado_por: user.id, criado_em: dados.criado_em || agora, atualizado_em: agora, esta_ativa: true };
+    const envolvidos = (Array.isArray(dados.envolvidos) ? dados.envolvidos : []).map((env) => ({ ...env, id: env.id || crypto.randomUUID() }));
+    const anexos = (Array.isArray(dados.anexos) ? dados.anexos : []).map((anexo) => {
+      const copy = { ...anexo, id: anexo.id || crypto.randomUUID() };
+      delete copy.url_thumb;
+      if (typeof copy.url === "string" && /^(blob:|data:)/i.test(copy.url)) delete copy.url;
+      return copy;
+    });
+    const bundle = {
+      ocorrencia,
+      envolvidos,
+      anexos,
+      guardasParticipantes: Array.isArray(dados.guardasParticipantes) ? dados.guardasParticipantes : [],
+      assinaturas: Array.isArray(dados.assinaturas) ? dados.assinaturas : [],
+    };
+    delete bundle.ocorrencia.envolvidos; delete bundle.ocorrencia.anexos;
+    delete bundle.ocorrencia.envolvidosMap; delete bundle.ocorrencia.guardasParticipantes;
+    delete bundle.ocorrencia.assinaturas; delete bundle.ocorrencia.assinaturas_objeto;
+    await window.offlineVault.putRecord("draft", id, bundle, { status: "pending", createdAt: ocorrencia.criado_em });
+    await window.syncManager.addToQueue(bundle, "ocorrencia", 0, { idempotencyKey: `ocorrencia:${id}:${ocorrencia.atualizado_em}` });
+    this.rascunhoId = id;
+    this.dadosRascunho = { ...ocorrencia, envolvidos, envolvidosMap: Object.fromEntries(envolvidos.map((env) => [env.id, env])), anexos, guardasParticipantes: bundle.guardasParticipantes, assinaturas: bundle.assinaturas };
+    this.alteracoesNaoSalvas = false;
+    this.showToast("Rascunho cifrado salvo neste dispositivo; aguardando conexão para sincronizar.", "success");
+    return true;
   }
 
   /**
@@ -742,11 +798,9 @@ class App {
         this.showToast("Usuário não autenticado", "error");
         return false;
       }
+      if (!navigator.onLine) return await this.salvarRascunhoOffline(dados, user);
       const client = supabaseClient.getClient();
-      if (!client) {
-        this.showToast("Erro ao conectar ao servidor", "error");
-        return false;
-      }
+      if (!client) return await this.salvarRascunhoOffline(dados, user);
 
       const dadosParaSalvar = { ...dados };
       delete dadosParaSalvar.envolvidos;
@@ -789,8 +843,15 @@ class App {
         ocorrencia.criado_em = agora;
         ocorrencia.numero_versao = 1;
       }
+      const novoRascunho = !this.rascunhoId;
+      ocorrencia.id = this.rascunhoId || crypto.randomUUID();
+      this.rascunhoId = ocorrencia.id;
+      const backupCifrado = { ocorrencia, envolvidos, anexos, guardasParticipantes: equipe, assinaturas };
+      if (window.offlineVault?.unlocked && window.offlineVault.userId === user.id) {
+        await window.offlineVault.putRecord("draft", ocorrencia.id, backupCifrado, { status: "saved", createdAt: ocorrencia.criado_em });
+      }
 
-      if (this.rascunhoId) {
+      if (!novoRascunho) {
         const { error } = await client.from("ocorrencias").update(ocorrencia).eq("id", this.rascunhoId).select().single();
         if (error) throw error;
       } else {
@@ -818,13 +879,22 @@ class App {
         if (!resultadoAnexos.success) throw new Error(resultadoAnexos.error || "Falha ao salvar anexos");
       }
 
+      if (window.offlineVault?.unlocked && window.offlineVault.userId === user.id) {
+        await window.offlineVault.putRecord("draft", this.rascunhoId, backupCifrado, { status: "synced", createdAt: ocorrencia.criado_em });
+        const oldQueue = await window.offlineVault.listQueue("pending");
+        for (const queued of oldQueue) if (queued.tipo === "ocorrencia" && queued.dados?.ocorrencia?.id === this.rascunhoId) await window.offlineVault.removeQueue(queued.id);
+      }
       this.alteracoesNaoSalvas = false;
-      this.showToast("Rascunho salvo com sucesso!", "success");
+      this.showToast("Rascunho salvo com segurança neste dispositivo e no sistema.", "success");
       console.log("✅ Rascunho salvo:", this.rascunhoId);
       return true;
     } catch (error) {
-      console.error("❌ Erro ao salvar rascunho:", error);
-      this.showToast("Erro ao salvar rascunho: " + error.message, "error");
+      if (!navigator.onLine && window.offlineVault?.unlocked) {
+        try { return await this.salvarRascunhoOffline(this.novaOcorrencia?.dados || {}, authManager.getUser()); }
+        catch (vaultError) { this.showToast(vaultError.message, "error"); return false; }
+      }
+      console.error("❌ Erro ao salvar rascunho:", error?.code || "SYNC_ERROR");
+      this.showToast("Não foi possível salvar o rascunho no servidor. Os dados não foram descartados.", "error");
       return false;
     }
   }
@@ -995,6 +1065,7 @@ class App {
       }
 
       this.atualizarHeader();
+      await window.syncManager?.init?.();
       await this.carregarRascunho();
       sessionManager.resetSession();
 
@@ -1011,11 +1082,13 @@ class App {
         return;
       }
 
-      this.showToast("Login realizado com sucesso!", "success");
+      this.showToast(result.offline ? "Acesso offline liberado; sincronização aguarda conexão e JWT válido." : "Login realizado com sucesso!", result.offline ? "info" : "success");
       this.navigateTo("dashboard");
     } catch (error) {
       this.showToast("Erro ao realizar login", "error");
     } finally {
+      const passwordInput = document.getElementById("loginSenha");
+      if (passwordInput) passwordInput.value = "";
       btn.disabled = false;
       btn.classList.remove("loading");
     }
@@ -1186,6 +1259,10 @@ class App {
     }
 
     await authManager.logout();
+    this.novaOcorrencia = null;
+    this.dadosRascunho = null;
+    this.rascunhoId = null;
+    this.alteracoesNaoSalvas = false;
     this.route();
     this.showToast("Logout realizado com sucesso!", "info");
   }

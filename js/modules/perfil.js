@@ -740,13 +740,6 @@ function abrirModalConfirmacaoFoto(avatarBlob, user, appInstance) {
 
       const updatedUser = typeof authManager !== "undefined" ? authManager.getUser() : null;
       if (updatedUser && updatedUser.id === user.id) updatedUser.foto_url = data.avatar_url;
-      try {
-        const stored = JSON.parse(localStorage.getItem("auth_user") || "null");
-        if (stored && stored.id === user.id) {
-          stored.foto_url = data.avatar_url;
-          localStorage.setItem("auth_user", JSON.stringify(stored));
-        }
-      } catch { /* A sessão será recarregada do perfil no próximo acesso. */ }
 
       const avatar = document.querySelector("#perfilAvatar");
       if (avatar) {

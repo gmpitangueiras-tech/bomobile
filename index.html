@@ -302,7 +302,7 @@
               <footer class="login-footer">
                 <span class="version">
                   <i class="fas fa-code" aria-hidden="true"></i>
-                  v1.0.0
+                  <span id="appVersionText">v1.0.0</span>
                 </span>
                 <span class="separator" aria-hidden="true">•</span>
                 <span>Guarda Municipal de Pitangueiras</span>
@@ -470,6 +470,14 @@
 
     <!-- Configurações e dependências -->
     <script src="js/config.js"></script>
+    <script>
+      (() => {
+        const versionLabel = document.getElementById("appVersionText");
+        const version = window.CONFIG?.VERSAO || "";
+        const release = version.match(/v\d+$/i)?.[0] || version;
+        if (versionLabel && release) versionLabel.textContent = release;
+      })();
+    </script>
     <script src="js/supabase.js"></script>
     <script src="js/admin-api.js"></script>
     <script src="js/offline-vault.js"></script>

@@ -920,85 +920,32 @@ export async function aprovarRetificacao(id, tipo, container, appInstance) {
         await emitirNotificacaoRetificacao("occurrence_retification_decided", ret.id, null);
       }
     } else if (tipo === "veiculo" || tipo === "pessoa") {
-      // 🔥 NOVO: Aprovar retificação de abordagem
       const client =
         typeof supabaseClient !== "undefined"
           ? supabaseClient.getClient()
           : null;
       if (!client) throw new Error("Erro ao conectar");
 
-      const tabela =
-        tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
-
-      // Buscar a retificação
-      const { data: retificacao, error: buscaError } = await client
-        .from(tabela)
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (buscaError) throw buscaError;
-      if (!retificacao) throw new Error("Retificação não encontrada");
-
-      nome = tipo === "veiculo" ? retificacao.placa : retificacao.nome;
-
-      // Verificar se está pendente
-      if (retificacao.status_retificacao !== "pending_rectification") {
-        throw new Error("Esta retificação não está pendente");
+      // A troca de versão acontece dentro de uma única transação no banco.
+      const { data, error } = await client.rpc(
+        "gm_approve_approach_retification",
+        { p_retification_id: id, p_tipo: tipo },
+      );
+      if (error) throw error;
+      if (!data || data.id !== id) {
+        throw new Error("A aprovação não retornou a versão retificada esperada.");
       }
 
-      // Buscar a abordagem original
-      const { data: original, error: origError } = await client
-        .from(tabela)
-        .select("*")
-        .eq("id", retificacao.abordagem_original_id)
-        .single();
-
-      if (origError) throw origError;
-
-      // Desativar a versão original
-      const { error: updateOrigError } = await client
-        .from(tabela)
-        .update({
-          esta_ativa: false,
-          status_retificacao: "rectified",
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", original.id);
-
-      if (updateOrigError) throw updateOrigError;
-
-      // Ativar a retificação
-      const { data, error } = await client
-        .from(tabela)
-        .update({
-          status_retificacao: "rectified",
-          esta_ativa: true,
-          justificativa_retificacao:
-            retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: globalThis.obterTimestampBrasilSemFuso(),
-          retificado_por: authManager.getUserId(),
-          aprovada_em: globalThis.obterTimestampBrasilSemFuso(),
-          aprovada_por: authManager.getUserId(),
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
+      nome = tipo === "veiculo" ? data.placa : data.nome;
       result = { success: true, data };
 
-      // 🔥 NOVO: Registrar log pericial
       await registrarLogPericialRetificacao(
         "APROVAR_RETIFICACAO_ABORDAGEM",
-        tabela,
+        tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas",
         id,
-        retificacao,
+        null,
         data,
       );
-
       await emitirNotificacaoRetificacao(
         "approach_retification_decided", data.id, tipo,
       );

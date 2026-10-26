@@ -244,6 +244,10 @@ export async function renderDetalheOcorrencia(container, appInstance) {
     // 🔥 NOVO: Função para ver assinatura ampliada
     window._detalheVerAssinatura = (index) =>
       verAssinaturaAmpliada(index, appInstance);
+    if (appInstance.currentParams?.action === "retificar") {
+      appInstance.currentParams.action = null;
+      queueMicrotask(() => solicitarRetificacao(appInstance));
+    }
   } catch (error) {
     console.error("❌ Erro ao carregar detalhe:", error);
     estado.carregando = false;
@@ -1316,11 +1320,88 @@ export async function cancelarOcorrencia(appInstance) {
 }
 
 export async function solicitarRetificacao(appInstance) {
-  const id = estado.ocorrencia?.id;
-  if (!id) return;
+  const ocorrencia = estado.ocorrencia;
+  if (!ocorrencia?.id) return;
+  if (!(await ocorrenciaManager.podeSolicitarRetificacao(ocorrencia))) {
+    appInstance.showToast("Você não tem permissão para solicitar retificação deste BO.", "error");
+    return;
+  }
 
-  // Navegar para o formulário de retificação
-  appInstance.navigateTo("detalhe-ocorrencia", { id, action: "retificar" });
+  const campos = ocorrenciaManager.CAMPOS_RETIFICAVEIS;
+  const descricao = {
+    nome_solicitante: "Nome do solicitante", cpf_solicitante: "CPF do solicitante",
+    rg_solicitante: "RG do solicitante", telefone_solicitante: "Telefone do solicitante",
+    endereco_solicitante: "Endereço do solicitante", bairro_solicitante: "Bairro do solicitante",
+    complemento: "Complemento", identificacao_adicional: "Identificação adicional",
+    codigo_municipal: "Código municipal", local_ocorrencia: "Local da ocorrência",
+    rodovia: "Rodovia", bairro_ocorrencia: "Bairro da ocorrência", referencia: "Referência",
+    observacoes: "Observações", codigo_operacional: "Código operacional",
+    tipo_ocorrencia: "Tipo da ocorrência", sub_tipo_ocorrencia: "Subtipo da ocorrência",
+    gravidade: "Gravidade", numero_bo: "Número do BO", orgao_bo: "Órgão registrador",
+    data_bo: "Data do BO",
+  };
+  const textareas = new Set(["observacoes", "identificacao_adicional"]);
+  const options = {
+    tipo_ocorrencia: TIPOS_OCORRENCIA.map((item) => item.value),
+    gravidade: ["baixa", "media", "alta", "critica"],
+  };
+  const fieldsHTML = campos.map((campo) => {
+    const label = escapeDetalheHTML(descricao[campo] || ocorrenciaManager.getCampoLabel(campo));
+    const value = escapeDetalheHTML(ocorrencia[campo] ?? "");
+    if (options[campo]) {
+      const choices = options[campo].map((option) =>
+        `<option value="${escapeDetalheHTML(option)}" ${String(ocorrencia[campo] || "") === option ? "selected" : ""}>${escapeDetalheHTML(option)}</option>`,
+      ).join("");
+      return `<label class="form-group" style="display:block;margin:10px 0;"><span>${label}</span><select data-retificacao-campo="${campo}" style="width:100%;padding:10px;">${choices}</select></label>`;
+    }
+    const input = textareas.has(campo)
+      ? `<textarea data-retificacao-campo="${campo}" rows="3" style="width:100%;padding:10px;">${value}</textarea>`
+      : `<input data-retificacao-campo="${campo}" value="${value}" style="width:100%;padding:10px;">`;
+    return `<label class="form-group" style="display:block;margin:10px 0;"><span>${label}</span>${input}</label>`;
+  }).join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:12px;";
+  overlay.innerHTML = `<section role="dialog" aria-modal="true" aria-labelledby="boRetificacaoTitulo" style="background:var(--branco);color:var(--cinza-escuro);border-radius:16px;width:min(680px,100%);max-height:92vh;overflow:auto;padding:20px;">
+    <h2 id="boRetificacaoTitulo">Solicitar retificação do BO</h2>
+    <p>Altere somente os campos que precisam de correção. Data e hora do fato, número da ocorrência e assinaturas não podem ser alterados. Campos limpos serão retificados para vazio.</p>
+    <form id="formSolicitarRetificacaoBO">${fieldsHTML}<label class="form-group" style="display:block;margin:10px 0;"><span>Justificativa (mínimo 10 caracteres)</span><textarea name="justificativa" rows="3" required minlength="10" style="width:100%;padding:10px;"></textarea></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;"><button type="button" class="btn-secondary" data-action="cancelar">Cancelar</button><button type="submit" class="btn-primary">Enviar solicitação</button></div></form></section>`;
+  document.body.appendChild(overlay);
+  const form = overlay.querySelector("#formSolicitarRetificacaoBO");
+  overlay.querySelector('[data-action="cancelar"]').addEventListener("click", () => overlay.remove());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(form);
+    const dados = {};
+    for (const campo of campos) {
+      const element = form.querySelector(`[data-retificacao-campo="${campo}"]`);
+      if (element) dados[campo] = element.value.trim();
+    }
+    const justificativa = String(formData.get("justificativa") || "").trim();
+    if (justificativa.length < 10) {
+      appInstance.showToast("A justificativa deve ter pelo menos 10 caracteres.", "warning");
+      return;
+    }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const result = await ocorrenciaManager.solicitarRetificacao(ocorrencia.id, dados, justificativa);
+      if (!result.success) {
+        appInstance.showToast(result.error || "Não foi possível solicitar a retificação.", "error");
+        submit.disabled = false;
+        return;
+      }
+      overlay.remove();
+      appInstance.showToast(result.is_pending ? "Solicitação de retificação enviada para análise." : "Retificação aprovada e aplicada.", "success");
+      const container = document.getElementById("detalheOcorrenciaContent");
+      if (container) await renderDetalheOcorrencia(container, appInstance);
+    } catch (error) {
+      submit.disabled = false;
+      appInstance.showToast(`Erro ao solicitar retificação: ${error.message}`, "error");
+    }
+  });
 }
 
 export async function aprovarRetificacao(appInstance) {

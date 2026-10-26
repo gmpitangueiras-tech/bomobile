@@ -266,11 +266,15 @@ class RetificacaoAbordagens {
         return { success: false, error: "Usuário não autenticado" };
       }
 
-      if (!authManager.isSupervisor()) {
+      if (!authManager.isSupervisor() && !authManager.isAdministrador()) {
         return {
           success: false,
-          error: "Apenas supervisores podem aprovar retificações",
+          error: "Apenas supervisores ou administradores podem aprovar retificações",
         };
+      }
+
+      if (!["veiculo", "pessoa"].includes(tipo)) {
+        return { success: false, error: "Tipo de abordagem inválido" };
       }
 
       const client = supabaseClient.getClient();
@@ -278,66 +282,15 @@ class RetificacaoAbordagens {
         return { success: false, error: "Erro ao conectar ao servidor" };
       }
 
-      const tabela =
-        tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
-
-      // Buscar a retificação
-      const { data: retificacao, error: buscaError } = await client
-        .from(tabela)
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (buscaError || !retificacao) {
-        return { success: false, error: "Retificação não encontrada" };
-      }
-
-      if (retificacao.status_retificacao !== "pending_rectification") {
-        return { success: false, error: "Esta retificação não está pendente" };
-      }
-
-      // Buscar a abordagem original
-      const { data: original, error: origError } = await client
-        .from(tabela)
-        .select("*")
-        .eq("id", retificacao.abordagem_original_id)
-        .single();
-
-      if (origError || !original) {
-        return { success: false, error: "Abordagem original não encontrada" };
-      }
-
-      // Desativar a versão original
-      const { error: updateOrigError } = await client
-        .from(tabela)
-        .update({
-          esta_ativa: false,
-          status_retificacao: "rectified",
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", original.id);
-
-      if (updateOrigError) throw updateOrigError;
-
-      // Ativar a retificação
-      const { data, error } = await client
-        .from(tabela)
-        .update({
-          status_retificacao: "rectified",
-          esta_ativa: true,
-          justificativa_retificacao:
-            retificacao.solicitacao_retificacao_justificativa,
-          retificado_em: globalThis.obterTimestampBrasilSemFuso(),
-          retificado_por: user.id,
-          aprovada_em: globalThis.obterTimestampBrasilSemFuso(),
-          aprovada_por: user.id,
-          atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-        })
-        .eq("id", retificacao.id)
-        .select()
-        .single();
-
+      const tabela = tipo === "veiculo" ? "abordagens_veiculos" : "abordagens_pessoas";
+      const { data, error } = await client.rpc(
+        "gm_approve_approach_retification",
+        { p_retification_id: id, p_tipo: tipo },
+      );
       if (error) throw error;
+      if (!data || data.id !== id || data.status_retificacao !== "rectified" || data.esta_ativa !== true) {
+        throw new Error("A aprovação não retornou a versão retificada esperada.");
+      }
 
       console.log(`✅ Retificação de ${tipo} aprovada:`, id);
 
@@ -345,7 +298,7 @@ class RetificacaoAbordagens {
         "APROVAR_RETIFICACAO_ABORDAGEM",
         tabela,
         id,
-        retificacao,
+        null,
         data,
       );
 

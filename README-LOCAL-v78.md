@@ -34,6 +34,12 @@ RLS continua habilitada nas tabelas protegidas; o acesso de leitura operacional 
 
 O projeto Supabase “homologacao” e o servidor oficial da Guarda não foram alterados nesta correção. Não houve limpeza de dados locais. A atualização do Service Worker remove caches antigos de assets, mas preserva IndexedDB, `localStorage` e rascunhos.
 
+## Teste sintético da fila offline (26/10/2026)
+
+Foi executado um harness Node sobre a classe `SyncManager` do código do app, usando cofre local e cliente Supabase simulados; nenhum endpoint foi chamado e nenhum BO foi gravado no banco. Resultado: com BO/equipe em fila cifrada e JWT online válido, o evento `online` iniciou o envio, marcou BO e equipe como sincronizados e retirou o item da fila. Sem JWT válido no retorno da rede, não houve escrita remota e a fila permaneceu pendente; após autenticação online, a tentativa periódica do sincronizador (intervalo de 5 minutos) enviou o item e concluiu a fila. Isso confirma o fluxo em testes simulados, não substitui teste funcional real.
+
+O fluxo exige que o app esteja aberto, o cofre local desbloqueado e uma sessão Supabase válida. O Service Worker não lê nem descriptografa a fila; não há envio com o app fechado. Se o GM usou login offline e a sessão JWT não estiver válida, deve entrar online no app; a fila é preservada e será tentada pelo sincronizador, imediatamente em nova inicialização online ou no próximo ciclo periódico.
+
 ## Homologação funcional
 
 A correção de roteamento/cache foi validada por inspeção do código publicado e sintaxe local. A validação final de login com credencial real depende de teste do responsável na instalação afetada após o Service Worker v78 assumir o controle. Não considerar o build aprovado funcionalmente antes desse teste.

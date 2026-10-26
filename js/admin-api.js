@@ -4,6 +4,7 @@
   const URL_KEY = "admin_governance_url_v50";
   let adminToken = "";
   let pendingPasswordPrompt = null;
+  let sessionPromise = null;
   try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(URL_KEY); } catch (_) {}
 
   function endpoint() {
@@ -125,16 +126,24 @@
 
   async function ensureSession() {
     if (getToken()) return true;
-    const user = window.authManager?.getUser?.();
-    if (!user || user.perfil !== "administrador") throw new Error("Acesso restrito ao administrador do sistema.");
-    let senha = await solicitarSenhaAdmin();
-    if (!senha) throw new Error("É necessário confirmar a senha para continuar.");
+    if (sessionPromise) return sessionPromise;
+    sessionPromise = (async () => {
+      const user = window.authManager?.getUser?.();
+      if (!user || user.perfil !== "administrador") throw new Error("Acesso restrito ao administrador do sistema.");
+      let senha = await solicitarSenhaAdmin();
+      if (!senha) throw new Error("É necessário confirmar a senha para continuar.");
+      try {
+        const data = await call("issue_session", { cpf: window.authManager?.getCPF?.() || user.cpf, senha });
+        adminToken = String(data.token || "");
+        return true;
+      } finally {
+        senha = "";
+      }
+    })();
     try {
-      const data = await call("issue_session", { cpf: window.authManager?.getCPF?.() || user.cpf, senha });
-      adminToken = String(data.token || "");
-      return true;
+      return await sessionPromise;
     } finally {
-      senha = "";
+      sessionPromise = null;
     }
   }
 

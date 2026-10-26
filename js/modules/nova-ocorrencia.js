@@ -346,6 +346,14 @@ function escaparHtmlEquipe(valor) {
     .replace(/'/g, "&#039;");
 }
 
+function avatarEquipeMarkup(user, extraClass = "") {
+  const nome = user?.nome_completo || user?.nome_snapshot || "GM";
+  let foto = "";
+  try { const cadastro = (estado.guardasDisponiveis || []).find((item) => item.id === user?.guarda_id); const parsed = new URL(String(user?.foto_url || user?.foto_url_snapshot || cadastro?.foto_url || "")); if (["http:", "https:"].includes(parsed.protocol)) foto = parsed.href; } catch { /* fallback */ }
+  const inicial = escaparHtmlEquipe(nome.trim().charAt(0).toUpperCase() || "G");
+  return `<span class="bo-team-avatar ${extraClass}">${foto ? `<img class="bo-team-avatar-image" src="${escaparHtmlEquipe(foto)}" alt="Foto de ${escaparHtmlEquipe(nome)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="bo-team-avatar-fallback" hidden>${inicial}</span>` : `<span class="bo-team-avatar-fallback">${inicial}</span>`}</span>`;
+}
+
 async function carregarGuardasDisponiveis(appInstance) {
   try {
     const result = await ocorrenciaManager.listarGuardasDisponiveis();
@@ -374,6 +382,7 @@ function garantirResponsavelEquipe(dados) {
       perfil_snapshot: user.perfil || "guarda",
       esta_ativo: true,
       selecionado_por: user.id,
+      foto_url_snapshot: user.foto_url || "",
     });
     dados.guardasParticipantes = equipe;
   } else {
@@ -412,7 +421,7 @@ function renderEquipeGuardas(dados, modo = "completo") {
     ? `<div class="bo-team-members" aria-label="GMs selecionados">${integrantes.map((g) => {
         const nome = g.nome_snapshot || g.nome_completo || "GM cadastrado";
         const papelControle = modo === "completo" ? `<label class="bo-team-role-control"><span>Função</span><select aria-label="Papel operacional de ${escaparHtmlEquipe(nome)}" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" onchange="window._novaOcorrenciaAlterarPapelGuarda(this.dataset.guardaId,this.value)"><option value="acompanhante" ${g.papel === "acompanhante" ? "selected" : ""}>GM de apoio</option><option value="apoio" ${g.papel === "apoio" ? "selected" : ""}>Apoio</option></select></label>` : "";
-        return `<div class="bo-team-member"><span class="bo-team-avatar" aria-hidden="true"><i class="fas fa-user-shield"></i></span><span class="bo-team-member-copy"><strong>${escaparHtmlEquipe(nome)}</strong><small>${rotuloPapelEquipe(g.papel)}${g.matricula_snapshot || g.matricula ? ` · Mat. ${escaparHtmlEquipe(g.matricula_snapshot || g.matricula)}` : ""}</small></span>${papelControle}<button type="button" class="bo-team-remove" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" aria-label="Remover ${escaparHtmlEquipe(nome)} da equipe" onclick="window._novaOcorrenciaRemoverGuarda(this.dataset.guardaId)"><i class="fas fa-times"></i></button></div>`;
+        return `<div class="bo-team-member">${avatarEquipeMarkup(g)}<span class="bo-team-member-copy"><strong>${escaparHtmlEquipe(nome)}</strong><small>${rotuloPapelEquipe(g.papel)}${g.matricula_snapshot || g.matricula ? ` · Mat. ${escaparHtmlEquipe(g.matricula_snapshot || g.matricula)}` : ""}</small></span>${papelControle}<button type="button" class="bo-team-remove" data-guarda-id="${escaparHtmlEquipe(g.guarda_id)}" aria-label="Remover ${escaparHtmlEquipe(nome)} da equipe" onclick="window._novaOcorrenciaRemoverGuarda(this.dataset.guardaId)"><i class="fas fa-times"></i></button></div>`;
       }).join("")}</div>`
     : `<div class="bo-team-empty">Ainda falta selecionar o GM de apoio da ocorrência.</div>`;
 
@@ -423,7 +432,7 @@ function renderEquipeGuardas(dados, modo = "completo") {
         <div><span class="bo-section-kicker">EQUIPE OPERACIONAL</span><h3>GMs que atuaram no atendimento</h3><p>Equipe registrada separadamente das pessoas civis envolvidas.</p></div>
       </div>
       <div class="bo-team-lead">
-        <span class="bo-team-avatar bo-team-avatar-lead"><i class="fas fa-clipboard-check" aria-hidden="true"></i></span>
+        ${avatarEquipeMarkup(responsavel, "bo-team-avatar-lead")}
         <span class="bo-team-member-copy"><small>GM que registra o BO</small><strong>${escaparHtmlEquipe(responsavel?.nome_snapshot || "Guarda logado")}${responsavel?.matricula_snapshot ? ` · Mat. ${escaparHtmlEquipe(responsavel.matricula_snapshot)}` : ""}</strong></span>
         <span class="bo-team-lock" aria-label="Responsável definido pelo usuário conectado"><i class="fas fa-lock" aria-hidden="true"></i></span>
       </div>
@@ -461,7 +470,7 @@ function buscarGuardasEquipe(termo) {
     return normalizarBuscaGuarda(`${g.nome_completo || ""} ${g.matricula || ""}`).includes(query);
   }).slice(0, 8);
   target.innerHTML = matches.length
-    ? matches.map((g) => `<button type="button" class="bo-team-suggestion" role="option" data-guarda-id="${escaparHtmlEquipe(g.id)}" onclick="window._novaOcorrenciaAdicionarGuarda(this.dataset.guardaId)"><span class="bo-team-avatar"><i class="fas fa-user-shield" aria-hidden="true"></i></span><span><strong>${escaparHtmlEquipe(g.nome_completo)}</strong><small>${g.matricula ? `Matrícula ${escaparHtmlEquipe(g.matricula)}` : (g.perfil === "supervisor" ? "Supervisor cadastrado" : "Guarda cadastrado")}</small></span><i class="fas fa-plus-circle" aria-hidden="true"></i></button>`).join("")
+    ? matches.map((g) => `<button type="button" class="bo-team-suggestion" role="option" data-guarda-id="${escaparHtmlEquipe(g.id)}" onclick="window._novaOcorrenciaAdicionarGuarda(this.dataset.guardaId)">${avatarEquipeMarkup(g)}<span><strong>${escaparHtmlEquipe(g.nome_completo)}</strong><small>${g.matricula ? `Matrícula ${escaparHtmlEquipe(g.matricula)}` : (g.perfil === "supervisor" ? "Supervisor cadastrado" : "Guarda cadastrado")}</small></span><i class="fas fa-plus-circle" aria-hidden="true"></i></button>`).join("")
     : `<span class="bo-team-no-results">Nenhum GM ativo encontrado com esse nome ou matrícula.</span>`;
 }
 
@@ -483,6 +492,7 @@ function selecionarGuardaEquipe(guardaId, container, appInstance) {
     perfil_snapshot: guarda.perfil || "guarda",
     esta_ativo: true,
     selecionado_por: authManager.getUserId?.(),
+    foto_url_snapshot: guarda.foto_url || "",
   });
   if (estado.modo === MODE_COMPLETO && !estado.isCompletando) marcarRascunhoPendente(appInstance);
   else appInstance.alteracoesNaoSalvas = true;

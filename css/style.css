@@ -196,6 +196,13 @@ body {
   flex-shrink: 0;
 }
 
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 /* ============================================
    BOTTOM NAVIGATION - TOQUE AMPLIADO
    ============================================ */
@@ -8242,6 +8249,8 @@ body {
   background: var(--azul-muito-claro);
   color: var(--azul-bandeira);
 }
+.bo-team-avatar-image { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.bo-team-avatar-fallback { display: inline-flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-weight: 800; }
 .bo-team-avatar-lead { background: var(--verde-muito-claro); color: var(--verde-escuro); }
 .bo-team-member-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .bo-team-member-copy strong { overflow: hidden; color: var(--cinza-escuro); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
@@ -9262,7 +9271,12 @@ body.dark-mode .logs-error-card { border-color: #734242; background: #352627; co
 .mural-notice-content { color:#3d5063; font-size:14px; line-height:1.62; overflow-wrap:anywhere; }
 .mural-read-more,.mural-comments-more { padding:3px 0; border:0; background:transparent; color:#075d9d; font-size:12px; font-weight:750; cursor:pointer; }
 .mural-notice-author { display:flex; align-items:center; gap:9px; margin-top:14px; padding-top:12px; border-top:1px solid #edf0f3; color:#334b62; font-size:12px; }
-.mural-author-avatar { width:31px; height:31px; display:grid; place-items:center; flex:none; border-radius:50%; background:#e8f1f8; color:#07528a; font-size:12px; font-weight:800; }
+.mural-author-avatar { width:31px; height:31px; display:grid; place-items:center; overflow:hidden; flex:none; border-radius:50%; background:#e8f1f8; color:#07528a; font-size:12px; font-weight:800; }
+.mural-author-avatar-image { width:100%; height:100%; object-fit:cover; }
+.mural-author-avatar-fallback { display:grid; width:100%; height:100%; place-items:center; }
+.mural-comment-avatar { width:26px; height:26px; font-size:10px; }
+.mural-comment-preview-item { display:flex; align-items:flex-start; gap:7px; }
+.mural-comment-preview-item > span:last-child { min-width:0; flex:1; }
 .mural-author-role { display:inline-flex; margin-left:7px; padding:3px 7px; border-radius:20px; background:#e8f3ec; color:#17633e; font-size:9px; font-weight:750; }
 .mural-author-spacer { flex:1; }
 .mural-attachment-count { color:#64788c; font-size:10px; white-space:nowrap; }

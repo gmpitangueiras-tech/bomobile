@@ -1051,7 +1051,23 @@ class App {
       initialsEl.style.fontWeight = "700";
       initialsEl.style.fontSize = "16px";
       initialsEl.textContent = inicial;
-      userAvatarEl.replaceChildren(initialsEl);
+      const fotoUrl = String(user.foto_url || "").trim();
+      let imageEl = null;
+      try {
+        const parsed = new URL(fotoUrl);
+        if (["http:", "https:"].includes(parsed.protocol)) {
+          imageEl = document.createElement("img");
+          imageEl.src = parsed.href;
+          imageEl.alt = `Foto de ${user.nome_completo || "usuário"}`;
+          imageEl.referrerPolicy = "no-referrer";
+          imageEl.addEventListener("error", () => {
+            imageEl.hidden = true;
+            initialsEl.hidden = false;
+          }, { once: true });
+        }
+      } catch { /* fallback para a inicial */ }
+      userAvatarEl.replaceChildren(...(imageEl ? [imageEl, initialsEl] : [initialsEl]));
+      initialsEl.hidden = Boolean(imageEl);
     }
   }
 

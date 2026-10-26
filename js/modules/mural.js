@@ -118,6 +118,13 @@ function escapeMuralHtml(value) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[char]);
 }
+
+function muralAvatarMarkup(user, extraClass = "") {
+  const name = user?.nome_completo || "Usuário";
+  const photo = muralSafeUrl(user?.foto_url);
+  const initial = escapeMuralHtml(name.trim().charAt(0).toUpperCase() || "U");
+  return `<span class="mural-author-avatar ${extraClass}">${photo ? `<img class="mural-author-avatar-image" src="${photo}" alt="Foto de ${escapeMuralHtml(name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="mural-author-avatar-fallback" hidden>${initial}</span>` : `<span class="mural-author-avatar-fallback">${initial}</span>`}</span>`;
+}
 function muralJsArg(value) {
   return escapeMuralHtml(JSON.stringify(String(value ?? "")));
 }
@@ -248,7 +255,7 @@ export async function carregarAvisosMural(pagina = 1) {
           // Buscar comentários
           const { data: comentarios } = await client
             .from("mural_comentarios")
-            .select("*, usuarios(nome_completo, perfil)")
+            .select("*, usuarios(nome_completo, perfil, foto_url)")
             .eq("aviso_id", aviso.id)
             .order("criado_em", { ascending: true })
             .limit(3);
@@ -321,7 +328,7 @@ async function buscarDadosUsuariosEmLote(ids) {
 
     const { data, error } = await client
       .from("usuarios")
-      .select("id, nome_completo, perfil")
+      .select("id, nome_completo, perfil, foto_url")
       .in("id", ids);
 
     if (error) throw error;
@@ -430,8 +437,7 @@ function renderAvisoCard(aviso, isSupervisor, appInstance) {
   const comentarios = Array.isArray(aviso.comentarios) ? aviso.comentarios : [];
   const reacoes = Array.isArray(aviso.reacoes) ? aviso.reacoes : [];
   const contagens = Object.fromEntries(Object.keys(REACOES_EMOJIS).map((key) => [key, reacoes.filter((item) => item.tipo === key).length]));
-  const autorInicial = escapeMuralHtml(autorNomeOriginal.trim().charAt(0).toUpperCase() || "U");
-  const resumoComentarios = comentarios.slice(-2);
+    const resumoComentarios = comentarios.slice(-2);
   const resumoInteracoes = `${reacoes.length} ${reacoes.length === 1 ? "reação" : "reações"} · ${comentarios.length} ${comentarios.length === 1 ? "comentário" : "comentários"}`;
   return `
     <article class="mural-notice-card ${prioridade ? "has-priority" : ""}" id="aviso-card-${idAttr}">
@@ -440,9 +446,9 @@ function renderAvisoCard(aviso, isSupervisor, appInstance) {
         <div class="mural-notice-meta"><span class="mural-type-badge ${escapeMuralHtml(tipoInfo.badge || "badge-noticia")}">${escapeMuralHtml(tipoInfo.label)}</span>${prioridade ? `<span class="mural-priority-label"><i class="fas fa-exclamation-circle" aria-hidden="true"></i> Prioridade registrada</span>` : ""}</div>
         <h3 class="mural-notice-title">${titulo}</h3>
         <div class="mural-notice-content"><span id="conteudo-${idAttr}" class="mural-notice-excerpt ${conteudoLongo ? "is-collapsed" : ""}" data-expanded="false">${escapeMuralHtml(preview)}</span>${conteudoLongo ? `<button type="button" class="mural-read-more" onclick="window._muralVerMais(${id})"><span id="verMaisBtn-${idAttr}">Ler aviso completo</span></button>` : ""}</div>
-        <div class="mural-notice-byline"><span class="mural-author-avatar" aria-hidden="true">${autorInicial}</span><span class="mural-byline-name"><strong>${autor}</strong>${supervisorAutor ? `<span class="mural-author-role">Supervisão</span>` : ""}</span><span class="mural-byline-separator" aria-hidden="true">·</span><time datetime="${escapeMuralHtml(aviso.criado_em || "")}">${data}</time><span class="mural-byline-spacer"></span>${anexos.length ? `<span class="mural-attachment-count"><i class="fas fa-paperclip" aria-hidden="true"></i> ${anexos.length} anexo(s)</span>` : ""}</div>
+        <div class="mural-notice-byline">${muralAvatarMarkup(aviso.criador)}<span class="mural-byline-name"><strong>${autor}</strong>${supervisorAutor ? `<span class="mural-author-role">Supervisão</span>` : ""}</span><span class="mural-byline-separator" aria-hidden="true">·</span><time datetime="${escapeMuralHtml(aviso.criado_em || "")}">${data}</time><span class="mural-byline-spacer"></span>${anexos.length ? `<span class="mural-attachment-count"><i class="fas fa-paperclip" aria-hidden="true"></i> ${anexos.length} anexo(s)</span>` : ""}</div>
         <div class="mural-notice-actions"><button type="button" class="mural-open-button" onclick="window._muralVerDetalhes(${id})"><i class="far fa-file-alt" aria-hidden="true"></i> Ver detalhes</button><div class="mural-management-actions">${isSupervisor ? `<button type="button" class="mural-small-action" onclick="window._muralEditar(${id})" aria-label="Editar aviso" title="Editar"><i class="fas fa-pen" aria-hidden="true"></i></button><button type="button" class="mural-small-action is-danger" onclick="window._muralDeletar(${id})" aria-label="Excluir aviso" title="Excluir"><i class="fas fa-trash" aria-hidden="true"></i></button>` : `<button type="button" class="mural-small-action" onclick="window._muralCompartilhar(${id})" aria-label="Compartilhar aviso" title="Compartilhar"><i class="fas fa-share-alt" aria-hidden="true"></i></button>`}</div></div>
-        <details class="mural-engagement"><summary><span><i class="far fa-comments" aria-hidden="true"></i> Interações</span><span class="mural-engagement-count">${resumoInteracoes}</span></summary><div class="mural-engagement-content"><div class="mural-reaction-list" aria-label="Reações">${Object.entries(REACOES_EMOJIS).map(([key, emoji]) => { const active = aviso.reacao_usuario?.tipo === key; return `<button type="button" class="mural-reaction ${active ? "is-active" : ""}" onclick="window._muralReagir(${id}, '${key}')" aria-label="${escapeMuralHtml(REACOES_LABELS[key])}: ${contagens[key]}" aria-pressed="${active}"><span aria-hidden="true">${emoji}</span><span>${contagens[key]}</span></button>`; }).join("")}</div><div class="mural-comment-preview">${resumoComentarios.map((item) => `<p><strong>${escapeMuralHtml(item.usuarios?.nome_completo || "Usuário")}:</strong> ${escapeMuralHtml(item.comentario || "")}</p>`).join("")}${comentarios.length > 2 ? `<button type="button" class="mural-comments-more" onclick="window._muralVerComentarios(${id})">Ver todos os ${comentarios.length} comentários</button>` : ""}</div><form class="mural-comment-form" onsubmit="event.preventDefault(); window._muralComentar(${id})"><label class="sr-only" for="comentarioInput-${idAttr}">Escreva um comentário</label><input type="text" id="comentarioInput-${idAttr}" placeholder="Escreva um comentário" maxlength="1000"><button type="submit" aria-label="Enviar comentário"><i class="fas fa-paper-plane" aria-hidden="true"></i></button></form></div></details>
+        <details class="mural-engagement"><summary><span><i class="far fa-comments" aria-hidden="true"></i> Interações</span><span class="mural-engagement-count">${resumoInteracoes}</span></summary><div class="mural-engagement-content"><div class="mural-reaction-list" aria-label="Reações">${Object.entries(REACOES_EMOJIS).map(([key, emoji]) => { const active = aviso.reacao_usuario?.tipo === key; return `<button type="button" class="mural-reaction ${active ? "is-active" : ""}" onclick="window._muralReagir(${id}, '${key}')" aria-label="${escapeMuralHtml(REACOES_LABELS[key])}: ${contagens[key]}" aria-pressed="${active}"><span aria-hidden="true">${emoji}</span><span>${contagens[key]}</span></button>`; }).join("")}</div><div class="mural-comment-preview">${resumoComentarios.map((item) => `<p class="mural-comment-preview-item">${muralAvatarMarkup(item.usuarios, "mural-comment-avatar")}<span><strong>${escapeMuralHtml(item.usuarios?.nome_completo || "Usuário")}:</strong> ${escapeMuralHtml(item.comentario || "")}</span></p>`).join("")}${comentarios.length > 2 ? `<button type="button" class="mural-comments-more" onclick="window._muralVerComentarios(${id})">Ver todos os ${comentarios.length} comentários</button>` : ""}</div><form class="mural-comment-form" onsubmit="event.preventDefault(); window._muralComentar(${id})"><label class="sr-only" for="comentarioInput-${idAttr}">Escreva um comentário</label><input type="text" id="comentarioInput-${idAttr}" placeholder="Escreva um comentário" maxlength="1000"><button type="submit" aria-label="Enviar comentário"><i class="fas fa-paper-plane" aria-hidden="true"></i></button></form></div></details>
       </div>
     </article>`;
 }
@@ -823,7 +829,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
 
     const { data: comentarios, error } = await client
       .from("mural_comentarios")
-      .select("*, usuarios(nome_completo, perfil)")
+      .select("*, usuarios(nome_completo, perfil, foto_url)")
       .eq("aviso_id", avisoId)
       .order("criado_em", { ascending: true });
 
@@ -866,9 +872,7 @@ export async function verTodosComentarios(avisoId, appInstance) {
               .map(
                 (c) => `
             <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--cinza-claro);">
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--gradiente-principal);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;">
-                ${c.usuarios?.nome_completo?.charAt(0)?.toUpperCase() || "U"}
-              </div>
+              ${muralAvatarMarkup(c.usuarios, "mural-comment-avatar")}
               <div style="flex:1;min-width:0;">
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px;">
                   <span style="font-weight:600;font-size:12px;color:var(--azul-bandeira);">

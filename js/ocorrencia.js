@@ -2361,7 +2361,7 @@ class OcorrenciaManager {
       if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
       const { data, error } = await client
         .from("usuarios")
-        .select("id, nome_completo, matricula, perfil, status")
+        .select("id, nome_completo, matricula, perfil, status, foto_url")
         .eq("status", "ativo")
         .in("perfil", ["guarda", "supervisor"])
         .is("deleted_at", null)

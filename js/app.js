@@ -55,6 +55,24 @@ const CACHE_KEYS = {
 
 const CACHE_EXPIRY = 3600000; // 1 hora
 
+function sincronizarTemaSistema() {
+  const media = typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-color-scheme: dark)")
+    : null;
+  if (!media || !document.body) return;
+
+  const aplicarTema = (evento) => {
+    document.body.classList.toggle("dark-mode", Boolean(evento.matches));
+  };
+  aplicarTema(media);
+
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", aplicarTema);
+  } else if (typeof media.addListener === "function") {
+    media.addListener(aplicarTema);
+  }
+}
+
 // ============================================
 // CLASSE APP
 // ============================================
@@ -68,6 +86,8 @@ class App {
     this.paramsDestino = null;
     this.gpsWatchId = null;
     this.ultimaLocalizacao = null;
+
+    sincronizarTemaSistema();
 
     // Estado para nova ocorrência
     this.novaOcorrencia = null;
@@ -1097,79 +1117,76 @@ class App {
   showPrimeiroAcesso() {
     const container = document.getElementById("page-login");
     container.innerHTML = `
-      <div class="login-screen">
-        <div class="login-card" style="max-width:400px;">
-          <div class="logo-container">
-            <div class="logo-wrapper">
-              <div style="width:80px;height:80px;border-radius:50%;background:var(--gradiente-principal);display:flex;align-items:center;justify-content:center;margin:0 auto;">
-                <i class="fas fa-shield-alt" style="font-size:40px;color:var(--branco);"></i>
-              </div>
-              <div class="logo-ring"></div>
+      <section class="login-screen" aria-labelledby="firstAccessTitle">
+        <div class="login-card login-card--first-access">
+          <div class="login-brand">
+            <div class="login-crest">
+              <img
+                src="assets/images/logo-guarda.png"
+                alt="Brasão da Guarda Municipal de Pitangueiras"
+                width="68"
+                height="68"
+              />
             </div>
-            <h1 style="color:var(--azul-bandeira);">Primeiro Acesso</h1>
-            <p style="color:var(--cinza-medio);margin-top:4px;">
-              Olá, <strong>${authManager.getNome()}</strong>!
-            </p>
-            <p style="color:var(--cinza-medio);font-size:14px;">
-              Defina sua nova senha para continuar
-            </p>
+            <div class="login-brand-copy">
+              <span class="login-eyebrow">GUARDA MUNICIPAL · PARANÁ</span>
+              <h1>Guarda Municipal</h1>
+              <p>Pitangueiras · PR</p>
+            </div>
           </div>
-          <form id="formPrimeiroAcesso">
-            <div class="form-group">
-              <label for="novaSenha">
-                <i class="fas fa-lock" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                Nova Senha <span class="required">*</span>
-              </label>
-              <div class="input-wrapper">
-                <i class="fas fa-key input-icon-left"></i>
+
+          <div class="login-intro login-intro--first-access">
+            <span class="login-intro-label">
+              <i class="fas fa-lock" aria-hidden="true"></i>
+              Primeiro acesso obrigatório
+            </span>
+            <h2 id="firstAccessTitle">Defina sua nova senha</h2>
+            <p>Olá, <strong>${authManager.getNome()}</strong>. Crie uma senha segura para continuar.</p>
+          </div>
+
+          <form id="formPrimeiroAcesso" class="first-access-form">
+            <div class="form-group login-form-group">
+              <label for="novaSenha">Nova senha <span class="required">*</span></label>
+              <div class="input-wrapper login-input-wrapper">
+                <i class="fas fa-key input-icon-left" aria-hidden="true"></i>
                 <input type="password" id="novaSenha" placeholder="Digite sua nova senha" required minlength="6" autocomplete="new-password">
-                <button type="button" class="toggle-password" onclick="app.toggleSenha('novaSenha')">
-                  <i class="fas fa-eye"></i>
+                <button type="button" class="toggle-password" onclick="app.toggleSenha('novaSenha')" aria-label="Mostrar nova senha" aria-controls="novaSenha">
+                  <i class="fas fa-eye" aria-hidden="true"></i>
                 </button>
               </div>
-              <div class="input-hint">
-                <i class="fas fa-info-circle" style="font-size:12px;color:var(--cinza-medio);"></i>
-                Mínimo 6 caracteres
+              <div class="input-hint first-access-hint">
+                <i class="fas fa-info-circle" aria-hidden="true"></i>
+                Mínimo de 6 caracteres
               </div>
             </div>
-            <div class="form-group">
-              <label for="confirmarSenha">
-                <i class="fas fa-check-circle" style="margin-right:6px;color:var(--azul-bandeira);"></i>
-                Confirmar Senha <span class="required">*</span>
-              </label>
-              <div class="input-wrapper">
-                <i class="fas fa-check input-icon-left"></i>
+            <div class="form-group login-form-group">
+              <label for="confirmarSenha">Confirmar senha <span class="required">*</span></label>
+              <div class="input-wrapper login-input-wrapper">
+                <i class="fas fa-check input-icon-left" aria-hidden="true"></i>
                 <input type="password" id="confirmarSenha" placeholder="Digite a senha novamente" required minlength="6" autocomplete="new-password">
-                <button type="button" class="toggle-password" onclick="app.toggleSenha('confirmarSenha')">
-                  <i class="fas fa-eye"></i>
+                <button type="button" class="toggle-password" onclick="app.toggleSenha('confirmarSenha')" aria-label="Mostrar confirmação de senha" aria-controls="confirmarSenha">
+                  <i class="fas fa-eye" aria-hidden="true"></i>
                 </button>
               </div>
             </div>
-            <div style="margin-top:24px;">
-              <button type="submit" class="btn-primary" id="btnPrimeiroAcesso">
-                <i class="fas fa-check-circle" style="margin-right:8px;"></i>
-                <span class="btn-text">Definir Nova Senha</span>
-                <span class="spinner-small"></span>
-              </button>
-            </div>
-            <div style="margin-top:16px;text-align:center;font-size:13px;color:var(--cinza-medio);">
-              <i class="fas fa-shield-alt" style="margin-right:4px;color:var(--verde-bandeira);"></i>
+            <button type="submit" class="btn-primary login-submit" id="btnPrimeiroAcesso">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+              <span class="btn-text">Definir nova senha</span>
+              <span class="spinner-small"></span>
+            </button>
+            <p class="login-security-note first-access-security-note">
+              <i class="fas fa-shield-alt" aria-hidden="true"></i>
               Senha segura e criptografada
-            </div>
+            </p>
           </form>
+
           <div class="login-footer">
-            <span class="version">
-              <i class="fas fa-code" style="margin-right:4px;font-size:11px;"></i>
-              v${CONFIG.VERSAO}
-            </span>
-            <span class="separator">•</span>
-            <span>
-              <i class="fas fa-building" style="margin-right:4px;font-size:11px;"></i>
-              Guarda Municipal de Pitangueiras
-            </span>
+            <span class="version"><i class="fas fa-code" aria-hidden="true"></i>v${CONFIG.VERSAO}</span>
+            <span class="separator" aria-hidden="true">•</span>
+            <span><i class="fas fa-building" aria-hidden="true"></i>Guarda Municipal de Pitangueiras</span>
           </div>
         </div>
-      </div>
+      </section>
     `;
 
     document

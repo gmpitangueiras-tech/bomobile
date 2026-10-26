@@ -462,14 +462,14 @@ function renderPaginacao(atual, total) {
 
   html += `
     <button onclick="window._muralPagina(1)" ${atual <= 1 ? "disabled" : ""}
-      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
       <i class="fas fa-angle-double-left"></i>
     </button>
   `;
 
   html += `
     <button onclick="window._muralPagina(${atual - 1})" ${atual <= 1 ? "disabled" : ""}
-      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;${atual <= 1 ? "opacity:0.3;pointer-events:none;" : ""}">
       <i class="fas fa-angle-left"></i>
     </button>
   `;
@@ -483,7 +483,7 @@ function renderPaginacao(atual, total) {
   }
 
   if (inicio > 1) {
-    html += `<button onclick="window._muralPagina(1)" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;">1</button>`;
+    html += `<button onclick="window._muralPagina(1)" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;">1</button>`;
     if (inicio > 2) {
       html += `<span style="padding:0 2px;color:var(--cinza-medio);font-size:12px;">…</span>`;
     }
@@ -492,7 +492,7 @@ function renderPaginacao(atual, total) {
   for (let i = inicio; i <= fim; i++) {
     html += `
       <button onclick="window._muralPagina(${i})"
-        style="padding:4px 8px;border:1px solid ${i === atual ? "var(--azul-bandeira)" : "var(--cinza-claro)"};border-radius:6px;background:${i === atual ? "var(--azul-bandeira)" : "var(--branco)"};color:${i === atual ? "var(--branco)" : "var(--cinza-escuro)"};font-size:12px;cursor:pointer;min-height:30px;min-width:30px;font-weight:${i === atual ? "700" : "400"};">
+        style="padding:4px 8px;border:1px solid ${i === atual ? "var(--azul-bandeira)" : "var(--cinza-claro)"};border-radius:6px;background:${i === atual ? "var(--azul-bandeira)" : "var(--branco)"};color:${i === atual ? "var(--branco)" : "var(--cinza-escuro)"};font-size:12px;cursor:pointer;font-weight:${i === atual ? "700" : "400"};">
         ${i}
       </button>
     `;
@@ -502,19 +502,19 @@ function renderPaginacao(atual, total) {
     if (fim < total - 1) {
       html += `<span style="padding:0 2px;color:var(--cinza-medio);font-size:12px;">…</span>`;
     }
-    html += `<button onclick="window._muralPagina(${total})" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;">${total}</button>`;
+    html += `<button onclick="window._muralPagina(${total})" style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;">${total}</button>`;
   }
 
   html += `
     <button onclick="window._muralPagina(${atual + 1})" ${atual >= total ? "disabled" : ""}
-      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
       <i class="fas fa-angle-right"></i>
     </button>
   `;
 
   html += `
     <button onclick="window._muralPagina(${total})" ${atual >= total ? "disabled" : ""}
-      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;min-height:30px;min-width:30px;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
+      style="padding:4px 8px;border:1px solid var(--cinza-claro);border-radius:6px;background:var(--branco);color:var(--cinza-escuro);font-size:12px;cursor:pointer;${atual >= total ? "opacity:0.3;pointer-events:none;" : ""}">
       <i class="fas fa-angle-double-right"></i>
     </button>
   `;

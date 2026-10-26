@@ -10623,3 +10623,308 @@ body.dark-mode .report-map-error strong { color: #fecaca; }
   .report-table-footnote { font-size: 10px; }
   .report-map-error { min-height: 150px; padding: 18px 14px; }
 }
+
+
+/* ========================================================================
+   GM VISUAL FIXES — DARK MODE, TOUCH TARGETS E PRIMEIRO ACESSO
+   ======================================================================== */
+body.dark-mode {
+  color-scheme: dark;
+  --branco: #1e293b;
+  --branco-fumaca: #0f172a;
+  --cinza-claro: #334155;
+  --cinza-medio: #94a3b8;
+  --cinza-escuro: #e2e8f0;
+  --verde-muito-claro: #064e3b;
+  --azul-muito-claro: #0c4a6e;
+  --erro-claro: #450a0a;
+  --sombra-suave: 0 2px 8px rgba(0, 0, 0, .3);
+  --sombra-media: 0 4px 20px rgba(0, 0, 0, .4);
+  --sombra-forte: 0 8px 40px rgba(0, 0, 0, .5);
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+/* Cabeçalho institucional acompanha o tema das páginas. */
+body.dark-mode #app-header {
+  border-color: #344655 !important;
+  background: #182532 !important;
+  color: #e6edf3 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .28) !important;
+}
+body.dark-mode #app-header .gm-brand-mark,
+body.dark-mode #app-header .avatar {
+  border-color: #435667;
+  background: #22313e;
+  color: #bfdbfe;
+}
+body.dark-mode #app-header .logo-text .title,
+body.dark-mode #app-header .user-details .name { color: #e6edf3 !important; }
+body.dark-mode #app-header .logo-text .subtitle,
+body.dark-mode #app-header .user-details .matricula { color: #aebdcc !important; }
+
+/* Login: first access now reuses the same brand, spacing and form controls. */
+#page-login .login-card--first-access { max-width: 480px; }
+#page-login .login-intro--first-access { margin-top: 4px; }
+#page-login .first-access-form { margin-top: 18px; }
+#page-login .first-access-hint { display: flex; align-items: center; gap: 6px; }
+#page-login .first-access-hint i { color: var(--cinza-medio); font-size: 12px; }
+#page-login .first-access-form .login-submit { margin-top: 8px; }
+#page-login .first-access-security-note { margin-top: 12px; }
+@media (max-width: 480px) {
+  #page-login .login-card--first-access { max-width: 100%; }
+  #page-login .login-intro--first-access h2 { font-size: 19px; }
+  #page-login .first-access-form { margin-top: 15px; }
+}
+
+/* Dashboard: preserve semantic accent colors while making all content surfaces dark. */
+body.dark-mode #page-dashboard {
+  color-scheme: dark;
+  color: #e2e8f0 !important;
+  background: #0f172a !important;
+}
+body.dark-mode #page-dashboard .dashboard-shell { color: #e2e8f0 !important; }
+body.dark-mode #page-dashboard .dashboard-welcome,
+body.dark-mode #page-dashboard .dashboard-date-card,
+body.dark-mode #page-dashboard .dashboard-metric,
+body.dark-mode #page-dashboard .dashboard-action,
+body.dark-mode #page-dashboard .dashboard-supervisor-metric,
+body.dark-mode #page-dashboard .dashboard-briefing,
+body.dark-mode #page-dashboard .dashboard-briefing__item,
+body.dark-mode #page-dashboard .dashboard-pending-review,
+body.dark-mode #page-dashboard .dashboard-activity-section,
+body.dark-mode #page-dashboard .dashboard-record-card,
+body.dark-mode #page-dashboard .dashboard-consultations,
+body.dark-mode #page-dashboard .dashboard-consultation-button,
+body.dark-mode #page-dashboard .dashboard-priority-item,
+body.dark-mode #page-dashboard .dashboard-empty-state {
+  border-color: #334155 !important;
+  background: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+body.dark-mode #page-dashboard .dashboard-welcome {
+  background: linear-gradient(112deg, #1d3347 0%, #1e293b 100%) !important;
+}
+body.dark-mode #page-dashboard .dashboard-welcome h1,
+body.dark-mode #page-dashboard .dashboard-section-heading h2,
+body.dark-mode #page-dashboard .dashboard-priorities__heading h2,
+body.dark-mode #page-dashboard .dashboard-date-card strong,
+body.dark-mode #page-dashboard .dashboard-metric__value,
+body.dark-mode #page-dashboard .dashboard-action__title,
+body.dark-mode #page-dashboard .dashboard-supervisor-metric__value,
+body.dark-mode #page-dashboard .dashboard-briefing__heading h2,
+body.dark-mode #page-dashboard .dashboard-pending-review__copy strong,
+body.dark-mode #page-dashboard .dashboard-record-number,
+body.dark-mode #page-dashboard .dashboard-record-location,
+body.dark-mode #page-dashboard .dashboard-consultations__heading h3,
+body.dark-mode #page-dashboard .dashboard-consultation-button strong,
+body.dark-mode #page-dashboard .dashboard-priority-item__copy strong,
+body.dark-mode #page-dashboard .dashboard-empty-state p:first-of-type {
+  color: #e6edf3 !important;
+}
+body.dark-mode #page-dashboard .dashboard-welcome p,
+body.dark-mode #page-dashboard .dashboard-eyebrow,
+body.dark-mode #page-dashboard .dashboard-date-card span,
+body.dark-mode #page-dashboard .dashboard-section-heading p,
+body.dark-mode #page-dashboard .dashboard-metric__label,
+body.dark-mode #page-dashboard .dashboard-action__description,
+body.dark-mode #page-dashboard .dashboard-action__link,
+body.dark-mode #page-dashboard .dashboard-supervisor-metric__label,
+body.dark-mode #page-dashboard .dashboard-briefing__description,
+body.dark-mode #page-dashboard .dashboard-briefing__item time,
+body.dark-mode #page-dashboard .dashboard-pending-review__copy small,
+body.dark-mode #page-dashboard .dashboard-record-date,
+body.dark-mode #page-dashboard .dashboard-record-meta,
+body.dark-mode #page-dashboard .dashboard-record-summary,
+body.dark-mode #page-dashboard .dashboard-record-attachments,
+body.dark-mode #page-dashboard .dashboard-consultation-button small,
+body.dark-mode #page-dashboard .dashboard-priority-item__copy small,
+body.dark-mode #page-dashboard .dashboard-empty-state p {
+  color: #aebdcc !important;
+}
+body.dark-mode #page-dashboard .dashboard-metric__icon,
+body.dark-mode #page-dashboard .dashboard-action__icon,
+body.dark-mode #page-dashboard .dashboard-briefing__icon,
+body.dark-mode #page-dashboard .dashboard-consultation-button__icon,
+body.dark-mode #page-dashboard .dashboard-record-thumb,
+body.dark-mode #page-dashboard .dashboard-record-thumb > div {
+  border-color: #3b5267 !important;
+  background: #263b4e !important;
+  color: #bfdbfe !important;
+}
+body.dark-mode #page-dashboard .dashboard-metric--pending .dashboard-metric__icon,
+body.dark-mode #page-dashboard .dashboard-metric--rectification .dashboard-metric__icon,
+body.dark-mode #page-dashboard .dashboard-pending-review__icon,
+body.dark-mode #page-dashboard .dashboard-priority-item__icon {
+  background: #49381e !important;
+  color: #f4cf83 !important;
+}
+body.dark-mode #page-dashboard .dashboard-metric--synced .dashboard-metric__icon {
+  background: #1d4031 !important;
+  color: #9de0b8 !important;
+}
+body.dark-mode #page-dashboard .dashboard-metric--cancelled .dashboard-metric__icon {
+  background: #482b2d !important;
+  color: #ffb4ad !important;
+}
+body.dark-mode #page-dashboard .dashboard-metric--draft .dashboard-metric__icon,
+body.dark-mode #page-dashboard .dashboard-priority-item--draft .dashboard-priority-item__icon {
+  background: #352b4b !important;
+  color: #d6c2ff !important;
+}
+body.dark-mode #page-dashboard .dashboard-priority-item__count { background: #49381e; color: #f4cf83; }
+body.dark-mode #page-dashboard .dashboard-priority-item--draft .dashboard-priority-item__count { background: #352b4b; color: #d6c2ff; }
+body.dark-mode #page-dashboard .dashboard-supervisor-metric__value.dashboard-value--green { color: #86d5a4 !important; }
+body.dark-mode #page-dashboard .dashboard-record-summary,
+body.dark-mode #page-dashboard .dashboard-record-attachments { border-color: #334155 !important; }
+body.dark-mode #page-dashboard .dashboard-text-action,
+body.dark-mode #page-dashboard .dashboard-list-more { color: #93c5fd; }
+body.dark-mode #page-dashboard .dashboard-list-more { border-color: #334155; background: #182532; }
+
+/* Notificações: lista, filtros, menus e diálogo compartilham a paleta escura. */
+body.dark-mode .notif-page { color: #dbe5ee; }
+body.dark-mode .notif-page-header h1,
+body.dark-mode .notif-results-heading h2,
+body.dark-mode .notif-state-card h2,
+body.dark-mode .notif-state-card h3,
+body.dark-mode .notif-card-heading h3 { color: #e6edf3; }
+body.dark-mode .notif-page-header p,
+body.dark-mode .notif-eyebrow,
+body.dark-mode .notif-results-heading p,
+body.dark-mode .notif-card-message,
+body.dark-mode .notif-card-heading time,
+body.dark-mode .notif-state-card p,
+body.dark-mode .notif-pagination-label { color: #aebdcc; }
+body.dark-mode .notif-overview,
+body.dark-mode .notif-search,
+body.dark-mode .notif-filters,
+body.dark-mode .notif-card,
+body.dark-mode .notif-state-card,
+body.dark-mode .notif-skeleton-card,
+body.dark-mode .notif-menu-items,
+body.dark-mode .notif-dialog {
+  border-color: #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+body.dark-mode .notif-card.is-unread { background: #1b2b3b; }
+body.dark-mode .notif-search input,
+body.dark-mode .notif-filter-field input,
+body.dark-mode .notif-filter-field select { border-color: #475569; background: #0f172a; color: #e2e8f0; }
+body.dark-mode .notif-search input::placeholder { color: #94a3b8; }
+body.dark-mode .notif-filter-field,
+body.dark-mode .notif-unread-summary { color: #cbd5e1; }
+body.dark-mode .notif-unread-summary small,
+body.dark-mode .notif-filter-chevron,
+body.dark-mode .notif-category-caption { color: #aebdcc; }
+body.dark-mode .notif-icon-button,
+body.dark-mode .notif-filter-toggle,
+body.dark-mode .notif-clear-filters,
+body.dark-mode .notif-secondary-button,
+body.dark-mode .notif-more-menu > summary,
+body.dark-mode .notif-page-number,
+body.dark-mode .notif-page-arrow,
+body.dark-mode .notif-category-button {
+  border-color: #475569;
+  background: #22313e;
+  color: #dbeafe;
+}
+body.dark-mode .notif-status-button { color: #c0cfdb; }
+body.dark-mode .notif-status-button.active,
+body.dark-mode .notif-category-button.active { border-color: #315d7e; background: #203b52; color: #bfdbfe; }
+body.dark-mode .notif-page-number.active { border-color: #07549a; background: #07549a; color: #fff; }
+body.dark-mode .notif-status-button span,
+body.dark-mode .notif-type-pill { border-color: #3b5267; background: #263b4e; color: #cbddeb; }
+body.dark-mode .notif-unread-pill { border-color: #315d7e; background: #203b52; color: #bfdbfe; }
+body.dark-mode .notif-advanced-filters,
+body.dark-mode .notif-category-row { border-color: #334155; }
+body.dark-mode .notif-day-heading { color: #aebdcc; }
+body.dark-mode .notif-day-heading::after { background: #334155; }
+body.dark-mode .notif-menu-items button { color: #dbe5ee; }
+body.dark-mode .notif-menu-items button:hover,
+body.dark-mode .notif-icon-button:hover,
+body.dark-mode .notif-filter-toggle:hover,
+body.dark-mode .notif-secondary-button:hover,
+body.dark-mode .notif-category-button:hover { background: #2b3d4d; }
+body.dark-mode .notif-skeleton-icon,
+body.dark-mode .notif-skeleton-lines i { background: #334155; }
+body.dark-mode .notif-dialog-backdrop { background: rgba(3, 8, 14, .72); }
+
+/* BO e Consulta: painéis, campos, tabelas e resumos deixam de ficar brancos. */
+body.dark-mode .bo-form-panel,
+body.dark-mode .bo-detail-summary,
+body.dark-mode .bo-detail-section,
+body.dark-mode .bo-detail-card,
+body.dark-mode .bo-form-card,
+body.dark-mode .minhas-ocorrencias-filter-panel,
+body.dark-mode .minhas-ocorrencias-card,
+body.dark-mode .minhas-ocorrencias-card__menu,
+body.dark-mode .minhas-ocorrencias-search,
+body.dark-mode .consulta-search-panel,
+body.dark-mode .consulta-filter-panel,
+body.dark-mode .consulta-results-panel,
+body.dark-mode .consulta-repeat-summary,
+body.dark-mode .consulta-advanced-body,
+body.dark-mode .consulta-filter-field,
+body.dark-mode .consulta-search-field {
+  border-color: #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+body.dark-mode .bo-form-panel :is(h1,h2,h3,h4,p,label,small),
+body.dark-mode .bo-detail-summary :is(h1,h2,h3,h4,p,strong),
+body.dark-mode .bo-detail-section :is(h1,h2,h3,h4,p,strong),
+body.dark-mode .minhas-ocorrencias-head h2,
+body.dark-mode .minhas-ocorrencias-card__location,
+body.dark-mode .minhas-ocorrencias-card__summary,
+body.dark-mode .consulta-search-panel :is(h1,h2,h3,h4,label,p),
+body.dark-mode .consulta-filter-panel :is(h1,h2,h3,h4,label,p),
+body.dark-mode .consulta-results-panel :is(h1,h2,h3,h4,label,p),
+body.dark-mode .consulta-repeat-summary :is(h1,h2,h3,h4,p,strong) { color: #dbe5ee; }
+body.dark-mode .minhas-ocorrencias-card__quick { border-color: #73561f; background: #49381e; color: #f4cf83; }
+body.dark-mode .minhas-ocorrencias-card__action--secondary,
+body.dark-mode .minhas-ocorrencias-card__more summary,
+body.dark-mode .minhas-ocorrencias-card__menu button { border-color: #475569; background: #22313e; color: #bfdbfe; }
+body.dark-mode .minhas-ocorrencias-selection { border-color: #315d7e; background: #203b52; color: #bfdbfe; }
+body.dark-mode .consulta-search-panel input,
+body.dark-mode .consulta-search-panel select,
+body.dark-mode .consulta-search-panel textarea,
+body.dark-mode .consulta-filter-panel input,
+body.dark-mode .consulta-filter-panel select,
+body.dark-mode .consulta-filter-panel textarea,
+body.dark-mode .consulta-results-panel input,
+body.dark-mode .consulta-results-panel select,
+body.dark-mode .consulta-results-panel textarea {
+  border-color: #475569;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+body.dark-mode .consulta-repeat-summary#rankingContainer {
+  border-color: #334155 !important;
+  background: #1e293b !important;
+  color: #dbe5ee !important;
+}
+body.dark-mode .consulta-advanced-body { border-color: #334155; }
+
+/* Modais administrativos e formulários gerados dinamicamente. */
+body.dark-mode .modal-overlay .modal {
+  border-color: #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+body.dark-mode .modal-overlay .modal-header,
+body.dark-mode .modal-overlay .modal-footer { border-color: #334155; background: #1e293b !important; color: #e2e8f0; }
+body.dark-mode .modal-overlay .modal :is(h1,h2,h3,h4,p,label,small,.modal-body) { color: #dbe5ee; }
+body.dark-mode .modal-overlay .modal input:not([type="checkbox"]):not([type="radio"]),
+body.dark-mode .modal-overlay .modal select,
+body.dark-mode .modal-overlay .modal textarea { border-color: #475569 !important; background: #0f172a !important; color: #e2e8f0 !important; }
+body.dark-mode .modal-overlay .modal input:disabled,
+body.dark-mode .modal-overlay .modal select:disabled,
+body.dark-mode .modal-overlay .modal textarea:disabled { background: #263443 !important; color: #9fb0bf !important; }
+
+/* Alvos de toque: manter 44px mesmo nas regras responsivas compactas. */
+.mural-pagination button { min-width: var(--touch-min-size, 44px) !important; min-height: var(--touch-min-size, 44px) !important; }
+.report-detail-actions .report-back-button { min-height: 44px; }
+@media (max-width: 640px) {
+  .report-detail-actions .report-back-button { min-height: 44px; padding-right: 10px; padding-left: 10px; }
+}

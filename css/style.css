@@ -10470,3 +10470,86 @@ body.dark-mode .admin-users-table td,body.dark-mode .admin-errors-table td { bor
   #page-dashboard .dashboard-section-heading--compact { flex-wrap: wrap; }
   #page-dashboard .dashboard-scope-switch { order: 3; }
 }
+
+/* Relatórios: componentes de detalhe sem apresentação própria */
+.report-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 14px;
+}
+.report-type-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #cfe0f1;
+  border-radius: 999px;
+  background: #eff6fc;
+  color: #244d70;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.report-type-chip-muted {
+  border-color: #d9e0e7;
+  background: #f3f5f7;
+  color: #5e6b76;
+}
+.report-table-footnote {
+  margin: 8px 2px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #6b91b5;
+  border-radius: 0 7px 7px 0;
+  background: #f4f7fa;
+  color: #566b7d;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.report-map-error {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid #f0c7c7;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #7f3030;
+  text-align: center;
+  line-height: 1.5;
+}
+.report-map-error strong { color: #8f2828; font-size: 14px; }
+.report-map-error span { max-width: 520px; font-size: 12px; }
+body.dark-mode .report-type-chip {
+  border-color: #36516b;
+  background: #1d344a;
+  color: #d5e8fa;
+}
+body.dark-mode .report-type-chip-muted {
+  border-color: #475569;
+  background: #293548;
+  color: #cbd5e1;
+}
+body.dark-mode .report-table-footnote {
+  border-left-color: #5d8db8;
+  background: #1b2b3b;
+  color: #c2d1df;
+}
+body.dark-mode .report-map-error {
+  border-color: #704444;
+  background: #321f24;
+  color: #f0caca;
+}
+body.dark-mode .report-map-error strong { color: #fecaca; }
+@media (max-width: 480px) {
+  .report-type-chips { gap: 6px; }
+  .report-type-chip { padding: 6px 9px; font-size: 10px; }
+  .report-table-footnote { font-size: 10px; }
+  .report-map-error { min-height: 150px; padding: 18px 14px; }
+}

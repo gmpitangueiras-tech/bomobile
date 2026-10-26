@@ -2,7 +2,7 @@
 
 **Versão:** `1.0.0-v78`
 **BUILD:** `v78-login-project-main-cache-recovery`
-**Service Worker:** `v78`
+**Service Worker:** `v79` (atualização de cache para os estilos de Relatórios)
 **Supabase do app:** projeto principal `wswezvcxfljzcttpqkch`
 **Publicação:** GitHub Pages `main`, `https://gmpitangueiras-tech.github.io/bomobile/`
 
@@ -17,7 +17,7 @@ No v78, o Service Worker recebe novos nomes de cache (`guarda-pitangueiras-v78` 
 1. Baixe ou extraia a cópia do projeto mantendo a estrutura de pastas.
 2. Abra um terminal na raiz do projeto e execute `python3 -m http.server 8080`.
 3. Acesse `http://localhost:8080/`. Não abra o `index.html` com `file://`: módulos ES, Service Worker e recursos do PWA exigem HTTP.
-4. Aguarde o Service Worker v78 assumir o controle e recarregue o app quando solicitado.
+4. Aguarde o Service Worker v79 assumir o controle e recarregue o app quando solicitado.
 5. Para instalações que já estavam abertas, conecte-se à internet, feche e reabra o app e aguarde a atualização do Service Worker. Não limpe `localStorage`, IndexedDB, rascunhos ou dados do usuário.
 
 ## Verificações da versão

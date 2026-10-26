@@ -46,8 +46,8 @@ const CONFIG = {
   MUNICIPIO: "Pitangueiras",
   ESTADO: "Paraná",
   GUARDA_NOME: "Guarda Municipal de Pitangueiras",
-  VERSAO: "1.0.0-v87",
-  BUILD: "v87-governanca-lgpd-fase4",
+  VERSAO: "1.0.0-v88",
+  BUILD: "v88-governanca-visual-avatars",
 
   // ============================================
   // SINCERONIZAÇÃO (SYNC)

@@ -24,13 +24,14 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v77";
+const CACHE_NAME = "guarda-pitangueiras-v78";
 const BASE_PATH = "./";
-const ASSETS_CACHE = "guarda-assets-v3";
+const ASSETS_CACHE = "guarda-assets-v4";
+const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v77";
+const CACHE_VERSION = "v78";
 
 const STATIC_ASSETS = [
   BASE_PATH,
@@ -456,6 +457,42 @@ self.addEventListener("fetch", (event) => {
           return (await caches.match(shellUrl)) || new Response("Offline", { status: 503 });
         }),
     );
+    return;
+  }
+
+  // O endpoint de autenticação sempre deve usar o projeto principal.
+  // Rede primeiro evita manter config.js antigo de outro projeto no cache.
+  if (url.pathname.endsWith("/js/config.js")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(ASSETS_CACHE);
+      const cached = await cache.match(request);
+      const isMainProjectConfig = async (response) => {
+        if (!response) return false;
+        const body = await response.clone().text();
+        return body.includes(`https://${SUPABASE_PROJECT_REF}.supabase.co`);
+      };
+      try {
+        const response = await fetch(request, { cache: "no-store" });
+        if (!response.ok) return response;
+        if (!(await isMainProjectConfig(response))) {
+          return new Response("Configuração Supabase inválida para o projeto principal.", {
+            status: 502,
+            headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+          });
+        }
+        await cache.put(request, response.clone());
+        return response;
+      } catch (_) {
+        if (await isMainProjectConfig(cached)) return cached;
+        const releaseCache = await caches.open(CACHE_NAME);
+        const bundled = await releaseCache.match(request);
+        if (await isMainProjectConfig(bundled)) return bundled;
+        return new Response("Configuração Supabase indisponível. Conecte-se à internet e recarregue o app.", {
+          status: 503,
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+        });
+      }
+    })());
     return;
   }
 

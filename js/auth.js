@@ -638,8 +638,15 @@ class AuthManager {
         catch (_) { return { success: false, error: "Sem conexão. O acesso offline não foi habilitado para esta conta neste dispositivo." }; }
       }
 
+      // Login e sessão devem pertencer sempre ao Supabase principal.
+      // Falhar fechado se uma configuração antiga/outro ambiente for carregada.
+      const supabasePrincipal = "https://wswezvcxfljzcttpqkch.supabase.co";
+      if (String(CONFIG.SUPABASE_URL).replace(/\/$/, "") !== supabasePrincipal) {
+        console.error("Configuração Supabase incompatível com o projeto principal.");
+        return { success: false, error: "Configuração do serviço inválida. Atualize o aplicativo e tente novamente." };
+      }
       // A validação de CPF/senha ocorre no servidor; não consultar CPF nem hash no client.
-      const endpoint = `${String(CONFIG.SUPABASE_URL).replace(/\/$/, "")}/functions/v1/legacy-login`;
+      const endpoint = `${supabasePrincipal}/functions/v1/legacy-login`;
       let response;
       try {
         response = await fetch(endpoint, {

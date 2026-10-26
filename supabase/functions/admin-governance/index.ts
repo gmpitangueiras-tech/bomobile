@@ -20,6 +20,7 @@ const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 type AdminUser = { id: string; perfil: string; status: string; nome_completo?: string; matricula?: string };
+type UserRecord = Record<string, unknown>;
 
 function response(req: Request, data: unknown, status = 200) {
   const headers = new Headers({ ...CORS_BASE, "Content-Type": "application/json; charset=utf-8" });
@@ -71,8 +72,9 @@ async function verifyToken(token: string | null): Promise<AdminUser | null> {
     if (payload.scope !== "admin-governance" || !payload.sub || Number(payload.exp) < Date.now()) return null;
     const { data, error } = await adminClient
       .from("usuarios")
-      .select("id,perfil,status,nome_completo,matricula")
+      .select("id,perfil,status,nome_completo,matricula,deleted_at")
       .eq("id", payload.sub)
+      .is("deleted_at", null)
       .maybeSingle();
     if (error || data?.perfil !== "administrador" || data.status !== "ativo") return null;
     return data as AdminUser;
@@ -83,6 +85,60 @@ async function verifyToken(token: string | null): Promise<AdminUser | null> {
 
 function cleanText(value: unknown, max = 500) {
   return String(value ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim().slice(0, max);
+}
+
+function maskCpf(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length === 11 ? `***.***.***-${digits.slice(-2)}` : (digits ? `***${digits.slice(-2)}` : null);
+}
+
+function maskPhone(value: unknown) {
+  const text = cleanText(value, 40);
+  const digits = text.replace(/\D/g, "");
+  return digits.length >= 4 ? `***${digits.slice(-4)}` : (text ? "***" : null);
+}
+
+function maskEmail(value: unknown) {
+  const text = cleanText(value, 160);
+  const at = text.indexOf("@");
+  if (at <= 0) return text ? "***" : null;
+  return `${text[0]}***${text.slice(at)}`;
+}
+
+function isMaskedValue(value: unknown) {
+  const text = String(value ?? "");
+  return text.includes("***");
+}
+
+function publicUser(user: UserRecord | null | undefined) {
+  if (!user) return user;
+  return { ...user, cpf: maskCpf(user.cpf), telefone: maskPhone(user.telefone), email: maskEmail(user.email) };
+}
+
+function auditSafe(value: unknown) {
+  if (!value || typeof value !== "object") return value ?? null;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (["senha", "senha_hash", "password", "password_hash", "cpf", "cpf_completo"].includes(key)) continue;
+    result[key] = item;
+  }
+  return result;
+}
+
+async function writeAudit(admin: AdminUser, action: string, entity: string, entityId: string | null, before: unknown, after: unknown, justification?: unknown) {
+  const safeAfter = auditSafe(after) as Record<string, unknown> | null;
+  const dadosNovos = { ...(safeAfter ?? {}), ...(justification ? { justificativa: cleanText(justification, 500) } : {}) };
+  const { error } = await adminClient.from("logs_auditoria").insert([{
+    usuario_id: admin.id, usuario_matricula: admin.matricula ?? null, usuario_nome: admin.nome_completo ?? null,
+    acao: action, entidade: entity, entidade_id: entityId, dados_anteriores: auditSafe(before), dados_novos: dadosNovos,
+  }]);
+  if (error) console.error("audit log write failed", error.message);
+}
+
+function pageParams(body: Record<string, unknown>) {
+  const limit = Math.max(1, Math.min(Number(body.limit) || 50, 200));
+  const offset = Math.max(0, Math.min(Number(body.offset) || 0, 100_000));
+  return { limit, offset };
 }
 
 function safeSearch(value: unknown) {
@@ -159,6 +215,7 @@ Deno.serve(async (req: Request) => {
         .from("usuarios")
         .select("id,nome_completo,matricula,perfil,status")
         .eq("cpf", cpf)
+        .is("deleted_at", null)
         .maybeSingle();
       if (profileError) return response(req, { success: false, error: "Não foi possível autenticar agora" }, 503);
       if (!user || user.perfil !== "administrador" || user.status !== "ativo") {
@@ -177,22 +234,36 @@ Deno.serve(async (req: Request) => {
     if (!admin) return response(req, { success: false, error: "Sessão administrativa inválida ou expirada" }, 401);
 
     if (action === "summary") {
-      const [users, logs, errors, lastLogin] = await Promise.all([
-        adminClient.from("usuarios").select("id", { count: "exact", head: true }),
+      const profileNames = ["guarda", "supervisor", "administrador"] as const;
+      const [users, activeUsers, inactiveUsers, ...profileResults] = await Promise.all([
+        adminClient.from("usuarios").select("id", { count: "exact", head: true }).is("deleted_at", null),
+        adminClient.from("usuarios").select("id", { count: "exact", head: true }).is("deleted_at", null).eq("status", "ativo"),
+        adminClient.from("usuarios").select("id", { count: "exact", head: true }).is("deleted_at", null).neq("status", "ativo"),
+        ...profileNames.map((perfil) => adminClient.from("usuarios").select("id", { count: "exact", head: true }).is("deleted_at", null).eq("perfil", perfil)),
         adminClient.from("logs_acesso").select("id", { count: "exact", head: true }),
         adminClient.from("sistema_erros").select("id", { count: "exact", head: true }).eq("resolvido", false),
         adminClient.from("logs_acesso").select("data_hora,usuario_id,acao").eq("acao", "login")
           .order("data_hora", { ascending: false }).limit(1),
       ]);
-      if (users.error || logs.error || errors.error || lastLogin.error) throw new Error("summary_query_failed");
+      const logs = profileResults[3];
+      const errors = profileResults[4];
+      const lastLogin = profileResults[5];
+      if (users.error || activeUsers.error || inactiveUsers.error || profileResults.some((result: { error?: unknown }) => result.error) || logs.error || errors.error || lastLogin.error) throw new Error("summary_query_failed");
+      const perfis: Record<string, number> = {};
+      profileNames.forEach((perfil, index) => perfis[perfil] = profileResults[index].count ?? 0);
       return response(req, {
         success: true,
         data: {
-          usuarios: users.count ?? 0,
+          usuarios: {
+            total: users.count ?? 0,
+            ativos: activeUsers.count ?? 0,
+            inativos: inactiveUsers.count ?? 0,
+            perfis,
+          },
           logs: logs.count ?? 0,
           erros_abertos: errors.count ?? 0,
           ultimo_login: lastLogin.data?.[0] ?? null,
-          versao: "v74",
+          versao: "v85",
           fuso_operacional: "America/Sao_Paulo",
         },
       });
@@ -200,13 +271,14 @@ Deno.serve(async (req: Request) => {
 
     if (action === "users") {
       const search = safeSearch(body?.search);
+      const { limit, offset } = pageParams(body);
       let query = adminClient.from("usuarios")
-        .select("id,nome_completo,cpf,matricula,email,telefone,perfil,status,primeiro_acesso,ultimo_login,criado_em,atualizado_em")
-        .order("nome_completo").limit(200);
+        .select("id,nome_completo,cpf,matricula,email,telefone,perfil,status,primeiro_acesso,ultimo_login,criado_em,atualizado_em", { count: "exact" })
+        .is("deleted_at", null).order("nome_completo").range(offset, offset + limit - 1);
       if (search) query = query.or(`nome_completo.ilike.%${search}%,cpf.ilike.%${search}%,matricula.ilike.%${search}%`);
-      const { data, error } = await query;
+      const { data, error, count } = await query;
       if (error) throw new Error("users_query_failed");
-      return response(req, { success: true, data: data ?? [] });
+      return response(req, { success: true, data: (data ?? []).map((user: UserRecord) => publicUser(user)), count: count ?? 0, limit, offset });
     }
 
     if (action === "logs") {
@@ -220,11 +292,29 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "errors") {
-      const { data, error } = await adminClient.from("sistema_erros")
-        .select("id,criado_em,nivel,origem,mensagem,rota,versao,dispositivo,resolvido")
-        .order("criado_em", { ascending: false }).limit(100);
+      const { limit, offset } = pageParams(body);
+      const { data, error, count } = await adminClient.from("sistema_erros")
+        .select("id,criado_em,nivel,origem,mensagem,rota,versao,dispositivo,resolvido", { count: "exact" })
+        .order("criado_em", { ascending: false }).range(offset, offset + limit - 1);
       if (error) throw new Error("errors_query_failed");
-      return response(req, { success: true, data: data ?? [] });
+      return response(req, { success: true, data: data ?? [], count: count ?? 0, limit, offset });
+    }
+
+    if (action === "audit_logs") {
+      const { limit, offset } = pageParams(body);
+      let query = adminClient.from("logs_auditoria").select(
+        "id,criado_em,usuario_id,usuario_matricula,usuario_nome,acao,entidade,entidade_id,dados_anteriores,dados_novos",
+        { count: "exact" },
+      ).order("criado_em", { ascending: false }).range(offset, offset + limit - 1);
+      const acao = safeSearch(body?.acao);
+      const entidade = safeSearch(body?.entidade);
+      const usuarioId = cleanText(body?.usuario_id, 80);
+      if (acao) query = query.eq("acao", acao);
+      if (entidade) query = query.eq("entidade", entidade);
+      if (usuarioId) query = query.eq("usuario_id", usuarioId);
+      const { data, error, count } = await query;
+      if (error) throw new Error("audit_logs_query_failed");
+      return response(req, { success: true, data: data ?? [], count: count ?? 0, limit, offset });
     }
 
     if (action === "create_user") {
@@ -238,8 +328,9 @@ Deno.serve(async (req: Request) => {
       if (password.length > 128) return response(req, { success: false, error: "Senha inválida" }, 400);
       const { data: hash, error: hashError } = await adminClient.rpc("criar_hash_senha", { p_senha: password });
       if (hashError) throw new Error("password_hash_failed");
+      const newId = crypto.randomUUID();
       const { data, error } = await adminClient.from("usuarios").insert([{
-        id: crypto.randomUUID(),
+        id: newId,
         nome_completo: nome,
         cpf,
         matricula: cleanText(body?.matricula, 40) || null,
@@ -253,25 +344,41 @@ Deno.serve(async (req: Request) => {
         atualizado_por: admin.id,
       }]).select("id,nome_completo,cpf,matricula,email,telefone,perfil,status,primeiro_acesso").single();
       if (error) throw new Error("user_create_failed");
-      return response(req, { success: true, data, senha_temporaria: password });
+      await writeAudit(admin, "create_user", "usuarios", newId, null, { nome_completo: nome, perfil, status: "primeiro_acesso", matricula: cleanText(body?.matricula, 40) || null }, body?.justificativa);
+      return response(req, { success: true, data: publicUser(data as UserRecord), senha_temporaria: password });
     }
 
     if (action === "update_user") {
       const id = cleanText(body?.id, 80);
       if (!id) return response(req, { success: false, error: "Usuário inválido" }, 400);
+      const { data: before, error: beforeError } = await adminClient.from("usuarios")
+        .select("id,nome_completo,cpf,matricula,email,telefone,perfil,status,primeiro_acesso").eq("id", id).is("deleted_at", null).maybeSingle();
+      if (beforeError) throw new Error("user_lookup_failed");
+      if (!before) return response(req, { success: false, error: "Usuário não encontrado" }, 404);
       const patch: Record<string, unknown> = { atualizado_por: admin.id, atualizado_em: new Date().toISOString() };
       for (const key of ["nome_completo", "email", "telefone", "matricula"] as const) {
-        if (body?.[key] !== undefined) patch[key] = cleanText(body[key], 160) || null;
+        if (body?.[key] !== undefined && (!(["email", "telefone"].includes(key)) || !isMaskedValue(body[key]))) {
+          patch[key] = cleanText(body[key], 160) || null;
+        }
       }
       if (body?.perfil !== undefined && ["guarda", "supervisor", "administrador"].includes(body.perfil)) patch.perfil = body.perfil;
       if (body?.status !== undefined && ["ativo", "inativo", "bloqueado", "primeiro_acesso"].includes(body.status)) patch.status = body.status;
       if (id === admin.id && (patch.status && patch.status !== "ativo" || patch.perfil && patch.perfil !== "administrador")) {
         return response(req, { success: false, error: "Não é permitido desativar ou rebaixar a própria conta" }, 400);
       }
-      const { data, error } = await adminClient.from("usuarios").update(patch).eq("id", id)
+      const resultingStatus = String(patch.status ?? before.status);
+      const resultingPerfil = String(patch.perfil ?? before.perfil);
+      if (before.perfil === "administrador" && before.status === "ativo" && (resultingStatus !== "ativo" || resultingPerfil !== "administrador")) {
+        const { count, error: countError } = await adminClient.from("usuarios").select("id", { count: "exact", head: true })
+          .eq("perfil", "administrador").eq("status", "ativo").is("deleted_at", null);
+        if (countError) throw new Error("admin_count_failed");
+        if ((count ?? 0) <= 1) return response(req, { success: false, error: "Não é permitido desativar ou rebaixar o último administrador ativo" }, 409);
+      }
+      const { data, error } = await adminClient.from("usuarios").update(patch).eq("id", id).is("deleted_at", null)
         .select("id,nome_completo,cpf,matricula,email,telefone,perfil,status,primeiro_acesso").single();
       if (error) throw new Error("user_update_failed");
-      return response(req, { success: true, data });
+      await writeAudit(admin, "update_user", "usuarios", id, before, data, body?.justificativa);
+      return response(req, { success: true, data: publicUser(data as UserRecord) });
     }
 
     if (action === "reset_password") {
@@ -280,6 +387,10 @@ Deno.serve(async (req: Request) => {
       const password = temporaryPassword();
       const { data: hash, error: hashError } = await adminClient.rpc("criar_hash_senha", { p_senha: password });
       if (hashError) throw new Error("password_hash_failed");
+      const { data: target, error: targetError } = await adminClient.from("usuarios").select("id,nome_completo,perfil,status")
+        .eq("id", id).is("deleted_at", null).maybeSingle();
+      if (targetError) throw new Error("user_lookup_failed");
+      if (!target) return response(req, { success: false, error: "Usuário não encontrado" }, 404);
       const { error } = await adminClient.from("usuarios").update({
         senha_hash: hash,
         status: "primeiro_acesso",
@@ -294,6 +405,7 @@ Deno.serve(async (req: Request) => {
         entidade: "usuario",
         detalhes: JSON.stringify({ usuario_id: id, senha_exibida_uma_vez: true }),
       }]);
+      await writeAudit(admin, "reset_password", "usuarios", id, target, { status: "primeiro_acesso", primeiro_acesso: true });
       return response(req, { success: true, senha_temporaria: password });
     }
 

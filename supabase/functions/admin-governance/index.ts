@@ -141,6 +141,98 @@ function pageParams(body: Record<string, unknown>) {
   return { limit, offset };
 }
 
+const GOVERNANCE_TYPES = ["ocorrencia", "pessoa", "veiculo"] as const;
+type GovernanceType = typeof GOVERNANCE_TYPES[number];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SENSITIVE_GOVERNANCE_KEYS = new Set([
+  "cpf", "cpf_completo", "senha", "senha_hash", "password", "password_hash", "anexos",
+  "narrativa", "observacoes", "descricao", "latitude", "longitude", "coordenadas", "geometria",
+]);
+
+function governanceType(value: unknown): GovernanceType | null {
+  const type = cleanText(value, 20).toLowerCase() as GovernanceType;
+  return GOVERNANCE_TYPES.includes(type) ? type : null;
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+
+function safeChangedFields(value: unknown) {
+  if (Array.isArray(value)) {
+    const result: Record<string, unknown> = {};
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as Record<string, unknown>;
+      const key = cleanText(entry.campo ?? entry.field ?? entry.nome, 80);
+      if (!key || SENSITIVE_GOVERNANCE_KEYS.has(key.toLowerCase())) continue;
+      result[key] = entry.depois ?? entry.after ?? entry.valor ?? null;
+    }
+    return result;
+  }
+  const source = parseJsonObject(value);
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(source)) {
+    if (SENSITIVE_GOVERNANCE_KEYS.has(key.toLowerCase())) continue;
+    result[cleanText(key, 80)] = typeof item === "string" ? cleanText(item, 500) : item;
+  }
+  return result;
+}
+
+function governanceSummary(value: unknown) {
+  const text = cleanText(value, 240);
+  return text ? text : null;
+}
+
+function governanceRequesterId(row: UserRecord) {
+  return String(row.solicitada_por ?? "");
+}
+
+function governanceAgeHours(value: unknown) {
+  const timestamp = Date.parse(String(value ?? ""));
+  return Number.isFinite(timestamp) ? Math.max(0, Math.floor((Date.now() - timestamp) / 3_600_000)) : null;
+}
+
+function governanceItem(row: UserRecord, type: GovernanceType, requester?: UserRecord | null) {
+  const requestedAt = row.solicitada_em ?? row.criado_em ?? null;
+  const status = type === "ocorrencia" ? row.status : row.status_retificacao;
+  const changed = safeChangedFields(row.campos_alterados);
+  return {
+    id: row.id,
+    tipo: type,
+    entidade_id: row.ocorrencia_original_id ?? row.abordagem_original_id ?? row.id,
+    status,
+    solicitada_em: requestedAt,
+    solicitante: requester ? { nome: requester.nome_completo ?? null, matricula: requester.matricula ?? null } : null,
+    idade_horas: governanceAgeHours(requestedAt),
+    campos_alterados_count: Object.keys(changed).length,
+    justificativa: governanceSummary(row.solicitacao_retificacao_justificativa ?? row.justificativa_retificacao),
+    atualizado_em: row.atualizado_em ?? null,
+  };
+}
+
+function governanceDetail(row: UserRecord, type: GovernanceType, requester?: UserRecord | null) {
+  const changed = safeChangedFields(row.campos_alterados);
+  const original = parseJsonObject(row.versao_original);
+  const antes: Record<string, unknown> = {};
+  const depois: Record<string, unknown> = {};
+  for (const key of Object.keys(changed)) {
+    if (Object.prototype.hasOwnProperty.call(original, key) && !SENSITIVE_GOVERNANCE_KEYS.has(key.toLowerCase())) antes[key] = original[key];
+    depois[key] = changed[key];
+  }
+  return {
+    ...governanceItem(row, type, requester),
+    antes,
+    depois,
+    solicitacao: governanceSummary(row.solicitacao_retificacao_justificativa ?? row.justificativa_retificacao),
+  };
+}
+
 function safeSearch(value: unknown) {
   return cleanText(value, 80).normalize("NFC").replace(/[^\p{L}\p{M}\p{N}\s@.+-]/gu, " ").replace(/\s+/g, " ").trim();
 }
@@ -232,6 +324,153 @@ Deno.serve(async (req: Request) => {
 
     const admin = await verifyToken(req.headers.get("x-admin-token"));
     if (!admin) return response(req, { success: false, error: "Sessão administrativa inválida ou expirada" }, 401);
+
+    if (action === "pending_governance") {
+      const typeFilter = cleanText(body?.type, 20).toLowerCase();
+      const requestedType = body?.type === undefined || !typeFilter || typeFilter === "abordagem" || typeFilter === "retificacao" ? null : governanceType(body.type);
+      if (body?.type !== undefined && !requestedType) return response(req, { success: false, error: "Tipo inválido" }, 400);
+      const requestedStatus = body?.status === undefined || body.status === "pending" ? "pending_rectification" : body.status === "all" ? null : cleanText(body.status, 40);
+      const { limit, offset } = pageParams(body);
+      const fetchSize = Math.min(5_000, offset + limit);
+      const occurrenceSelect = "id,status,ocorrencia_original_id,solicitada_em,solicitada_por,criado_em,atualizado_em,campos_alterados,versao_original,solicitacao_retificacao_justificativa,justificativa_retificacao";
+      const approachSelect = "id,status_retificacao,abordagem_original_id,solicitada_em,solicitada_por,criado_em,atualizado_em,campos_alterados,versao_original,solicitacao_retificacao_justificativa,justificativa_retificacao,nome,placa";
+      let occurrenceQuery = adminClient.from("ocorrencias").select(occurrenceSelect).not("ocorrencia_original_id", "is", null).order("solicitada_em", { ascending: false }).range(0, Math.max(0, fetchSize - 1));
+      let peopleQuery = adminClient.from("abordagens_pessoas").select(approachSelect).not("abordagem_original_id", "is", null).order("solicitada_em", { ascending: false }).range(0, Math.max(0, fetchSize - 1));
+      let vehiclesQuery = adminClient.from("abordagens_veiculos").select(approachSelect).not("abordagem_original_id", "is", null).order("solicitada_em", { ascending: false }).range(0, Math.max(0, fetchSize - 1));
+      if (requestedStatus) {
+        occurrenceQuery = occurrenceQuery.eq("status", requestedStatus);
+        peopleQuery = peopleQuery.eq("status_retificacao", requestedStatus);
+        vehiclesQuery = vehiclesQuery.eq("status_retificacao", requestedStatus);
+      }
+      const [occurrences, people, vehicles] = await Promise.all([
+        !requestedType || requestedType === "ocorrencia"
+          ? occurrenceQuery
+          : Promise.resolve({ data: [], error: null }),
+        !requestedType || requestedType === "pessoa"
+          ? peopleQuery
+          : Promise.resolve({ data: [], error: null }),
+        !requestedType || requestedType === "veiculo"
+          ? vehiclesQuery
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (occurrences.error || people.error || vehicles.error) throw new Error("governance_queue_query_failed");
+      const merged = [
+        ...(occurrences.data ?? []).map((row: UserRecord) => ({ row, type: "ocorrencia" as GovernanceType })),
+        ...(people.data ?? []).map((row: UserRecord) => ({ row, type: "pessoa" as GovernanceType })),
+        ...(vehicles.data ?? []).map((row: UserRecord) => ({ row, type: "veiculo" as GovernanceType })),
+      ].sort((a, b) => Date.parse(String(b.row.solicitada_em ?? b.row.criado_em ?? "")) - Date.parse(String(a.row.solicitada_em ?? a.row.criado_em ?? "")));
+      const requesterIds = [...new Set(merged.map(({ row }) => governanceRequesterId(row)).filter(Boolean))];
+      const requesterMap = new Map<string, UserRecord>();
+      if (requesterIds.length) {
+        const { data, error } = await adminClient.from("usuarios").select("id,nome_completo,matricula").in("id", requesterIds);
+        if (error) throw new Error("governance_requester_query_failed");
+        (data ?? []).forEach((user: UserRecord) => requesterMap.set(String(user.id), user));
+      }
+      const requesterFilter = safeSearch(body?.solicitante);
+      const minAge = Math.max(0, Number(body?.idade_min) || 0);
+      const filtered = merged.filter(({ row }) => {
+        const requester = requesterMap.get(governanceRequesterId(row));
+        const name = `${requester?.nome_completo ?? ""} ${requester?.matricula ?? ""}`;
+        const age = governanceAgeHours(row.solicitada_em ?? row.criado_em) ?? 0;
+        return (!requesterFilter || safeSearch(name).toLowerCase().includes(requesterFilter.toLowerCase())) && age >= minAge * 24;
+      });
+      const page = filtered.slice(offset, offset + limit).map(({ row, type }) => governanceItem(row, type, requesterMap.get(governanceRequesterId(row))));
+      const ages = filtered.map(({ row }) => governanceAgeHours(row.solicitada_em ?? row.criado_em)).filter((age): age is number => age !== null).sort((a, b) => a - b);
+      const p95Index = ages.length ? Math.min(ages.length - 1, Math.ceil(ages.length * 0.95) - 1) : -1;
+      return response(req, { success: true, data: page, count: filtered.length, limit, offset, has_more: offset + page.length < filtered.length, metrics: { total: filtered.length, idade_p95: p95Index >= 0 ? ages[p95Index] / 24 : null } });
+    }
+
+    if (action === "pending_detail") {
+      const type = governanceType(body?.type);
+      const id = cleanText(body?.id, 80);
+      if (!type || !UUID_RE.test(id)) return response(req, { success: false, error: "Tipo ou identificador inválido" }, 400);
+      const table = type === "ocorrencia" ? "ocorrencias" : type === "pessoa" ? "abordagens_pessoas" : "abordagens_veiculos";
+      const statusColumn = type === "ocorrencia" ? "status" : "status_retificacao";
+      const detailSelect = type === "ocorrencia"
+        ? "id,status,ocorrencia_original_id,solicitada_em,solicitada_por,criado_em,atualizado_em,campos_alterados,versao_original,solicitacao_retificacao_justificativa,justificativa_retificacao"
+        : "id,status_retificacao,abordagem_original_id,solicitada_em,solicitada_por,criado_em,atualizado_em,campos_alterados,versao_original,solicitacao_retificacao_justificativa,justificativa_retificacao,nome,placa";
+      const { data: row, error } = await adminClient.from(table).select(detailSelect).eq("id", id).eq(statusColumn, "pending_rectification").maybeSingle();
+      if (error) throw new Error("governance_detail_query_failed");
+      if (!row) return response(req, { success: false, error: "Item pendente não encontrado" }, 404);
+      let requester: UserRecord | null = null;
+      if (row.solicitada_por) {
+        const result = await adminClient.from("usuarios").select("id,nome_completo,matricula").eq("id", row.solicitada_por).maybeSingle();
+        if (result.error) throw new Error("governance_requester_query_failed");
+        requester = result.data as UserRecord | null;
+      }
+      return response(req, { success: true, data: governanceDetail(row as UserRecord, type, requester) });
+    }
+
+    if (action === "approve_governance") {
+      const type = governanceType(body?.type);
+      const id = cleanText(body?.id, 80);
+      if (!type || !UUID_RE.test(id)) return response(req, { success: false, error: "Tipo ou identificador inválido" }, 400);
+      const rpc = "gm_admin_approve_governance";
+      const args = { p_retification_id: id, p_tipo: type, p_actor_id: admin.id };
+      const { data, error } = await adminClient.rpc(rpc, args);
+      if (error) return response(req, { success: false, error: "Não foi possível aprovar a retificação" }, 409);
+      const entity = type === "ocorrencia" ? "ocorrencias" : type === "pessoa" ? "abordagens_pessoas" : "abordagens_veiculos";
+      await writeAudit(admin, "approve_governance", entity, id, null, { id, tipo: type, status: "rectified" }, body?.justificativa);
+      return response(req, { success: true, data: { id, tipo: type, status: "rectified", resultado: data } });
+    }
+
+    if (action === "reject_governance") {
+      const type = governanceType(body?.type);
+      const id = cleanText(body?.id, 80);
+      const reason = cleanText(body?.motivo ?? body?.motivo_rejeicao, 1_000);
+      if (!type || !UUID_RE.test(id)) return response(req, { success: false, error: "Tipo ou identificador inválido" }, 400);
+      if (reason.length < 10) return response(req, { success: false, error: "O motivo deve ter ao menos 10 caracteres" }, 400);
+      const table = type === "ocorrencia" ? "ocorrencias" : type === "pessoa" ? "abordagens_pessoas" : "abordagens_veiculos";
+      const statusColumn = type === "ocorrencia" ? "status" : "status_retificacao";
+      const { data: before, error: beforeError } = await adminClient.from(table).select("id,status,status_retificacao,esta_ativa,solicitada_por,solicitada_em,campos_alterados").eq("id", id).eq(statusColumn, "pending_rectification").maybeSingle();
+      if (beforeError) throw new Error("governance_reject_lookup_failed");
+      if (!before) return response(req, { success: false, error: "Item pendente não encontrado" }, 409);
+      const { data: after, error } = await adminClient.rpc("gm_admin_reject_governance", { p_retification_id: id, p_tipo: type, p_motivo: reason, p_actor_id: admin.id });
+      if (error || !after) return response(req, { success: false, error: "O item mudou de estado; atualize a fila" }, 409);
+      await writeAudit(admin, "reject_governance", table, id, before, { id, tipo: type, status: "rectification_rejected", rejeitada_em: (after as UserRecord).rejeitada_em }, reason);
+      return response(req, { success: true, data: { id, tipo: type, status: "rectification_rejected", rejeitada_em: (after as UserRecord).rejeitada_em } });
+    }
+
+    if (action === "sync_metrics") {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000).toISOString();
+      const [sync, occurrences, people, vehicles] = await Promise.all([
+        adminClient.from("sincronizacao").select("id,status,origem,atualizado_em,criado_em").gte("atualizado_em", since).order("atualizado_em", { ascending: false }).limit(5_000),
+        adminClient.from("ocorrencias").select("id,status,origem,atualizado_em").gte("atualizado_em", since).limit(5_000),
+        adminClient.from("abordagens_pessoas").select("id,status_abordagem,origem,atualizado_em").gte("atualizado_em", since).limit(5_000),
+        adminClient.from("abordagens_veiculos").select("id,status_abordagem,origem,atualizado_em").gte("atualizado_em", since).limit(5_000),
+      ]);
+      if (sync.error || occurrences.error || people.error || vehicles.error) return response(req, { success: true, data: null, status: "indisponivel" });
+      const rows = [...(sync.data ?? []), ...(occurrences.data ?? []), ...(people.data ?? []), ...(vehicles.data ?? [])] as UserRecord[];
+      const buckets = new Map<string, UserRecord>();
+      for (const row of rows) {
+        const origin = cleanText(row.origem, 80) || "desconhecida";
+        const key = `${origin}|${String(row.atualizado_em ?? row.criado_em ?? "")}`;
+        const bucket = buckets.get(key) ?? { origem: origin, atualizado_em: row.atualizado_em ?? row.criado_em ?? null, pending: 0, success: 0, error: 0, conflict: 0 };
+        const status = String(row.status ?? row.status_abordagem ?? "").toLowerCase();
+        if (["pending", "pending_sync", "processing"].includes(status)) bucket.pending = Number(bucket.pending) + 1;
+        else if (["success", "synced", "completed"].includes(status)) bucket.success = Number(bucket.success) + 1;
+        else if (["conflict", "conflito"].includes(status)) bucket.conflict = Number(bucket.conflict) + 1;
+        else if (["error", "erro", "failed"].includes(status)) bucket.error = Number(bucket.error) + 1;
+        buckets.set(key, bucket);
+      }
+      const itens = [...buckets.values()];
+      const totals = itens.reduce((result, item) => {
+        for (const key of ["pending", "success", "error", "conflict"]) result[key] += Number(item[key] ?? 0);
+        return result;
+      }, { pending: 0, success: 0, error: 0, conflict: 0 });
+      const decided = totals.success + totals.error + totals.conflict;
+      return response(req, { success: true, data: {
+        estado: "disponivel",
+        desde: since,
+        pendentes: totals.pending,
+        conflitos: totals.conflict,
+        sucesso: totals.success,
+        erros: totals.error,
+        taxa: decided ? (totals.success / decided) * 100 : null,
+        ultima_sincronizacao: itens[0]?.atualizado_em ?? null,
+        itens,
+      } });
+    }
 
     if (action === "summary") {
       const profileNames = ["guarda", "supervisor", "administrador"] as const;

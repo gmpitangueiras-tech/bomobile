@@ -205,12 +205,12 @@ export async function renderPerfil(container, appInstance) {
   window._perfilAlterarSenha = () => modalAlterarSenha(appInstance);
   window._perfilEscolherFoto = () => document.getElementById("perfilFotoInput")?.click();
   window._perfilLogout = async () => {
-    let confirmado = false;
-    if (appInstance && appInstance.confirmar) {
-      confirmado = await appInstance.confirmar("Deseja realmente sair do sistema?");
-    } else {
-      confirmado = window.confirm("Deseja realmente sair do sistema?");
-    }
+    const confirmar = appInstance?.confirmar || window.utils?.confirmar;
+    if (typeof confirmar !== "function") return;
+    const confirmado = await confirmar.call(
+      appInstance,
+      "Deseja realmente sair do sistema?",
+    );
     if (!confirmado) return;
     if (typeof authManager !== "undefined") {
       await authManager.logout();
@@ -636,11 +636,11 @@ async function selecionarFotoPerfil(file, user, appInstance) {
 function abrirModalConfirmacaoFoto(avatarBlob, user, appInstance) {
   document.querySelector(".perfil-upload-overlay")?.remove();
   const overlay = document.createElement("div");
-  overlay.className = "perfil-upload-overlay";
+  overlay.className = "modal-overlay perfil-upload-overlay";
   overlay.setAttribute("role", "presentation");
   const previewUrl = URL.createObjectURL(avatarBlob);
   overlay.innerHTML = `
-    <section class="perfil-upload-dialog" role="dialog" aria-modal="true" aria-labelledby="perfilUploadTitle">
+    <section class="modal perfil-upload-dialog" role="dialog" aria-modal="true" aria-labelledby="perfilUploadTitle">
       <button type="button" class="perfil-upload-close" aria-label="Fechar janela"><i class="fas fa-times" aria-hidden="true"></i></button>
       <div class="perfil-upload-preview"><img alt="Prévia da foto de perfil" src="${escaparHtml(previewUrl)}"></div>
       <p class="perfil-eyebrow">Confirmação de segurança</p>

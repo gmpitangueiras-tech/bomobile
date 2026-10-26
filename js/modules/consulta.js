@@ -2740,9 +2740,18 @@ async function fecharFormularioComConfirmacao(container, appInstance) {
   const temDados = verificarCamposPreenchidos();
 
   if (temDados) {
-    const confirmado = await confirmarModal(
+    const confirmar = appInstance?.confirmar || window.utils?.confirmar;
+    if (typeof confirmar !== "function") return;
+    const confirmado = await confirmar.call(
+      appInstance,
       "Você tem dados não salvos. Deseja descartar as alterações?",
       "Descartar Alterações",
+      {
+        cancelText: "Continuar editando",
+        confirmText: "Descartar",
+        intent: "danger",
+        icon: "fa-trash-alt",
+      },
     );
 
     if (!confirmado) {
@@ -2766,71 +2775,6 @@ function fecharFormulario(container, appInstance) {
       carregarAbordagens(containerEl, appInstance);
     }
   }
-}
-
-// ============================================
-// MODAL DE CONFIRMAÇÃO
-// ============================================
-
-function confirmarModal(mensagem, titulo = "Confirmar") {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
-
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:400px;width:100%;background:var(--branco);border-radius:20px;box-shadow:var(--sombra-forte);">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);">
-          <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-question-circle" style="margin-right:8px;color:var(--aviso);"></i>
-            ${titulo}
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
-            style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="padding:14px 16px 4px 16px;">
-          <p style="font-size:15px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;">${mensagem}</p>
-        </div>
-        <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:10px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
-            style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-            Continuar Editando
-          </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);"
-            style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--erro);color:var(--branco);">
-            <i class="fas fa-trash" style="margin-right:6px;"></i> Descartar
-          </button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-    window._confirmModalResolve = resolve;
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        resolve(false);
-      }
-    });
-  });
 }
 
 // ============================================

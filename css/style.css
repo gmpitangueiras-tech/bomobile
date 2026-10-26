@@ -3443,6 +3443,76 @@ body {
   box-shadow: 0 4px 20px rgba(0, 63, 135, 0.3);
 }
 
+/* Diálogo compartilhado para confirmações do app */
+.modal-overlay .confirm-modal {
+  width: min(440px, 100%);
+  max-width: 440px;
+}
+.confirm-modal .confirm-modal__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+}
+.confirm-modal__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--azul-muito-claro);
+  color: var(--azul-bandeira);
+  font-size: 15px;
+}
+.confirm-modal__icon--danger {
+  background: var(--erro-claro);
+  color: var(--erro);
+}
+.confirm-modal__message {
+  margin: 0;
+  color: var(--cinza-escuro);
+  font-size: 14px;
+  line-height: 1.65;
+  text-align: left;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.modal-overlay .confirm-modal .confirm-modal__footer {
+  position: static;
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+.modal-overlay .confirm-modal .confirm-modal__footer .confirm-modal__button {
+  width: auto;
+  flex: 1;
+  min-height: 44px;
+  padding: 10px 14px;
+}
+.modal-overlay .confirm-modal .confirm-modal__footer .confirm-modal__button--danger {
+  background: var(--erro);
+  color: var(--branco);
+}
+.modal-overlay .confirm-modal .confirm-modal__footer .confirm-modal__button--danger:hover {
+  background: #b91c1c;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.24);
+}
+.confirm-modal__button:focus-visible,
+.confirm-modal__close:focus-visible {
+  outline: 3px solid var(--azul-transparente);
+  outline-offset: 2px;
+}
+@media (max-width: 380px) {
+  .modal-overlay .confirm-modal .confirm-modal__footer {
+    flex-direction: column-reverse;
+  }
+  .modal-overlay .confirm-modal .confirm-modal__footer .confirm-modal__button {
+    width: 100%;
+  }
+}
 /* ============================================
    MODAL - FORMULÁRIOS
    ============================================ */
@@ -9408,8 +9478,8 @@ body.dark-mode .mural-engagement { border-color:#39495a; }
 .perfil-empty-state > p:not(.perfil-eyebrow) { max-width:390px; margin:8px 0 18px; color:#687b8b; font-size:13px; line-height:1.6; }
 .perfil-notice { padding:14px 16px; border-radius:12px; font-size:13px; }
 .perfil-notice-error { border:1px solid #f0caca; background:#fff6f6; color:#963d3d; }
-.perfil-upload-overlay { position:fixed; z-index:10050; inset:0; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(11,27,42,.58); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); }
-.perfil-upload-dialog { position:relative; width:min(430px,100%); max-height:min(92vh,720px); overflow:auto; padding:26px; border:1px solid rgba(255,255,255,.35); border-radius:20px; background:#fff; box-shadow:0 22px 70px rgba(8,28,45,.28); }
+.perfil-upload-overlay { z-index:10050; }
+.perfil-upload-dialog { position:relative; width:min(430px,100%); max-height:min(92vh,720px); overflow:auto; padding:26px; }
 .perfil-upload-close { position:absolute; top:12px; right:12px; display:grid; width:36px; height:36px; place-items:center; border:0; border-radius:10px; background:#f2f5f7; color:#526779; cursor:pointer; }
 .perfil-upload-preview { display:grid; width:86px; height:86px; overflow:hidden; place-items:center; margin:0 auto 18px; border:3px solid white; border-radius:50%; background:#e9f1f7; box-shadow:0 0 0 1px #d4e0e8,0 4px 12px rgba(20,48,73,.12); }
 .perfil-upload-preview img { width:100%; height:100%; object-fit:cover; }

@@ -1275,8 +1275,8 @@ class App {
     return ui.showToast(message, type, duration);
   }
 
-  confirmar(mensagem, titulo = "Confirmar") {
-    return utils.confirmar(mensagem, titulo);
+  confirmar(mensagem, titulo = "Confirmar", opcoes = {}) {
+    return utils.confirmar(mensagem, titulo, opcoes);
   }
 
   inputModal(

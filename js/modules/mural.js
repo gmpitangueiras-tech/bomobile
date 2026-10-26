@@ -1713,9 +1713,13 @@ export async function editarAvisoMural(id, container, appInstance) {
 // ============================================
 
 export async function deletarAvisoMural(id, container, appInstance) {
-  const confirmado = await confirmarModal(
+  const confirmar = appInstance?.confirmar || window.utils?.confirmar;
+  if (typeof confirmar !== "function") return;
+  const confirmado = await confirmar.call(
+    appInstance,
     "Tem certeza que deseja excluir este aviso?\n\nEsta ação não pode ser desfeita.",
     "Confirmar Exclusão",
+    { confirmText: "Excluir aviso", intent: "danger", icon: "fa-trash-alt" },
   );
 
   if (!confirmado) return;
@@ -1762,67 +1766,6 @@ function formatarDataHoraLocal(date) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-function confirmarModal(mensagem, titulo = "Confirmar") {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
-
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:380px;width:100%;background:var(--branco);border-radius:16px;box-shadow:var(--sombra-forte);">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px 8px 14px;border-bottom:1px solid var(--cinza-claro);">
-          <div class="title" style="font-size:15px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-question-circle" style="margin-right:6px;"></i>
-            ${titulo}
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
-            style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--cinza-medio);padding:2px 6px;border-radius:50%;">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="padding:12px 14px;">
-          <p style="font-size:14px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;white-space:pre-wrap;">${mensagem}</p>
-        </div>
-        <div class="modal-footer" style="padding:10px 14px 12px 14px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:8px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);"
-            style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-            Cancelar
-          </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);"
-            style="flex:1;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:none;min-height:36px;background:var(--gradiente-principal);color:var(--branco);">
-            <i class="fas fa-check" style="margin-right:4px;"></i> Confirmar
-          </button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-    window._confirmModalResolve = resolve;
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        resolve(false);
-      }
-    });
   });
 }
 

@@ -757,7 +757,10 @@ export async function toggleStatusUsuario(id, appInstance) {
     const acao = novoStatus === "ativo" ? "ativar" : "desativar";
 
     // Confirmar com o usuário
-    const confirmado = await confirmarModal(
+    const confirmar = appInstance?.confirmar || window.utils?.confirmar;
+    if (typeof confirmar !== "function") return;
+    const confirmado = await confirmar.call(
+      appInstance,
       `Deseja ${acao} o usuário "${user.nome_completo}"?`,
       `Confirmar ${acao === "ativar" ? "Ativação" : "Desativação"}`,
     );
@@ -823,7 +826,10 @@ export async function resetarSenhaUsuario(id, appInstance) {
       return;
     }
 
-    const confirmado = await confirmarModal(
+    const confirmar = appInstance?.confirmar || window.utils?.confirmar;
+    if (typeof confirmar !== "function") return;
+    const confirmado = await confirmar.call(
+      appInstance,
       `Deseja resetar a senha do usuário "${user.nome_completo}"?\n\nUma nova senha temporária será gerada.`,
       "Resetar Senha",
     );
@@ -1092,67 +1098,6 @@ function getLogLabel(acao) {
     ativar_desativar_usuario: "Ativar/Desativar Usuário",
   };
   return map[acao] || acao;
-}
-
-/**
- * Modal de confirmação (fallback)
- */
-function confirmarModal(mensagem, titulo = "Confirmar") {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      z-index: 999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      animation: fadeIn 0.25s ease;
-    `;
-
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:400px;width:100%;">
-        <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px 16px;border-bottom:1px solid var(--cinza-claro);">
-          <div class="title" style="font-size:16px;font-weight:700;color:var(--azul-bandeira);">
-            <i class="fas fa-question-circle" style="margin-right:8px;"></i>
-            ${titulo}
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--cinza-medio);padding:4px 8px;border-radius:50%;transition:all 0.3s ease;">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body" style="padding:14px 16px 4px 16px;">
-          <p style="font-size:15px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;white-space:pre-wrap;">${mensagem}</p>
-        </div>
-        <div class="modal-footer" style="padding:12px 16px 14px 16px;border-top:1px solid var(--cinza-claro);display:flex;flex-direction:row;gap:10px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(false);" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--cinza-claro);color:var(--cinza-escuro);">
-            Cancelar
-          </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmModalResolve(true);" style="flex:1;padding:10px 16px;border-radius:16px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.3s ease;border:none;min-height:42px;background:var(--gradiente-principal);color:var(--branco);">
-            <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
-          </button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-    window._confirmModalResolve = resolve;
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        resolve(false);
-      }
-    });
-  });
 }
 
 function showToast(message, type = "info") {

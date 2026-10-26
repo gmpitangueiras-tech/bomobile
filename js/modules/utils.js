@@ -739,50 +739,122 @@ export function throttle(func, limit = 300) {
 // ============================================
 
 /**
- * Exibe um modal de confirmação (Sim/Não)
- * @param {string} mensagem - Texto da confirmação
- * @param {string} titulo - Título do modal
+ * Exibe o modal compartilhado de confirmação do aplicativo.
+ * @param {string} mensagem Texto exibido no corpo do diálogo.
+ * @param {string} titulo Título do diálogo.
+ * @param {{cancelText?:string,confirmText?:string,intent?:"primary"|"danger",icon?:string}} opcoes Ajustes de texto e ênfase.
  * @returns {Promise<boolean>}
  */
-export function confirmar(mensagem, titulo = "Confirmar") {
+let sequenciaModalConfirmacao = 0;
+
+export function confirmar(mensagem, titulo = "Confirmar", opcoes = {}) {
+  const {
+    cancelText = "Cancelar",
+    confirmText = "Confirmar",
+    intent = "primary",
+    icon = intent === "danger" ? "fa-triangle-exclamation" : "fa-question-circle",
+  } = opcoes || {};
+
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:400px;">
-        <div class="modal-header">
-          <div class="title">
-            <i class="fas fa-question-circle" style="margin-right:8px;color:var(--azul-bandeira);"></i>
-            ${titulo}
-          </div>
-          <button type="button" class="close-btn" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(false);">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-body">
-          <p style="font-size:16px;color:var(--cinza-escuro);margin:0;text-align:center;line-height:1.6;">
-            ${mensagem}
-          </p>
-        </div>
-        <div class="modal-footer" style="flex-direction:row;gap:10px;">
-          <button type="button" class="btn-secondary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(false);" style="flex:1;">
-            Cancelar
-          </button>
-          <button type="button" class="btn-primary" onclick="this.closest('.modal-overlay').remove(); window._confirmResolve(true);" style="flex:1;">
-            <i class="fas fa-check" style="margin-right:6px;"></i> Confirmar
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    window._confirmResolve = resolve;
+    overlay.className = "modal-overlay confirm-modal-overlay";
+    overlay.setAttribute("role", "presentation");
+    const previousFocus = document.activeElement;
 
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        resolve(false);
+    const modal = document.createElement("section");
+    modal.className = "modal confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("tabindex", "-1");
+    const sequence = ++sequenciaModalConfirmacao;
+    const titleId = `confirm-modal-title-${sequence}`;
+    const messageId = `confirm-modal-message-${sequence}`;
+    modal.setAttribute("aria-labelledby", titleId);
+    modal.setAttribute("aria-describedby", messageId);
+
+    const header = document.createElement("header");
+    header.className = "modal-header confirm-modal__header";
+    const heading = document.createElement("h2");
+    heading.className = "title confirm-modal__title";
+    heading.id = titleId;
+    const iconElement = document.createElement("i");
+    const safeIcon = /^fa-[a-z0-9-]+$/.test(icon) ? icon : "fa-question-circle";
+    iconElement.className = `fas ${safeIcon} confirm-modal__icon${intent === "danger" ? " confirm-modal__icon--danger" : ""}`;
+    iconElement.setAttribute("aria-hidden", "true");
+    const titleText = document.createElement("span");
+    titleText.textContent = String(titulo ?? "Confirmar");
+    heading.append(iconElement, titleText);
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "close-btn confirm-modal__close";
+    closeButton.setAttribute("aria-label", "Fechar confirmação");
+    const closeIcon = document.createElement("i");
+    closeIcon.className = "fas fa-times";
+    closeIcon.setAttribute("aria-hidden", "true");
+    closeButton.append(closeIcon);
+    header.append(heading, closeButton);
+
+    const body = document.createElement("div");
+    body.className = "modal-body confirm-modal__body";
+    const message = document.createElement("p");
+    message.className = "confirm-modal__message";
+    message.id = messageId;
+    message.textContent = String(mensagem ?? "");
+    body.append(message);
+
+    const footer = document.createElement("footer");
+    footer.className = "modal-footer confirm-modal__footer";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "btn-secondary confirm-modal__button";
+    cancelButton.textContent = String(cancelText);
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.className = `btn-primary confirm-modal__button${intent === "danger" ? " confirm-modal__button--danger" : ""}`;
+    confirmButton.textContent = String(confirmText);
+    footer.append(cancelButton, confirmButton);
+
+    modal.append(header, body, footer);
+    overlay.append(modal);
+    document.body.append(overlay);
+
+    let settled = false;
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      if (previousFocus && typeof previousFocus.focus === "function") {
+        previousFocus.focus();
+      }
+      resolve(confirmed);
+    };
+    cancelButton.addEventListener("click", () => finish(false));
+    closeButton.addEventListener("click", () => finish(false));
+    confirmButton.addEventListener("click", () => finish(true));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) finish(false);
+    });
+    modal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+        return;
+      }
+      if (event.key === "Tab") {
+        const controls = [closeButton, cancelButton, confirmButton].filter((item) => !item.disabled);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     });
+    cancelButton.focus();
   });
 }
 

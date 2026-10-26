@@ -10928,3 +10928,32 @@ body.dark-mode .modal-overlay .modal textarea:disabled { background: #263443 !im
 @media (max-width: 640px) {
   .report-detail-actions .report-back-button { min-height: 44px; padding-right: 10px; padding-left: 10px; }
 }
+
+/* GOVERNANÇA FASE 3 — refinamento responsivo para homologação local */
+.admin-governance-filters { align-items: end; flex-wrap: wrap; }
+.admin-governance-filters label { display: flex; flex: 1 1 150px; min-width: 0; flex-direction: column; gap: 5px; color: #62788d; font-size: 10px; font-weight: 750; }
+.admin-governance-filters .form-control { min-height: 38px; width: 100%; }
+.admin-governance-filters > .btn-primary { min-height: 38px; white-space: nowrap; }
+.admin-governance-page .btn-primary, .admin-governance-page .btn-secondary, .admin-governance-page .admin-icon-button { min-height: 38px; }
+.admin-lifecycle-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.admin-lifecycle-actions .btn-primary, .admin-lifecycle-actions .btn-secondary { width: auto; }
+.admin-lifecycle-note { display: flex; gap: 7px; align-items: flex-start; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid #dce7ef; border-radius: 9px; color: #62788d; font-size: 11px; }
+.admin-lifecycle-note i { color: #2c6e9c; margin-top: 2px; }
+@media (max-width:390px) {
+  .admin-governance-page { padding-left: 7px; padding-right: 7px; }
+  .admin-hero { padding: 17px 14px; }
+  .admin-hero h2 { font-size: 21px; line-height: 1.15; }
+  .admin-hero-actions, .admin-search-row { width: 100%; flex-wrap: wrap; }
+  .admin-hero-actions > *, .admin-search-row > button { flex: 1 1 100%; }
+  .admin-governance-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .admin-governance-filters label { min-width: 0; width: auto; }
+  .admin-governance-filters label:last-of-type, .admin-governance-filters > .btn-primary { grid-column: 1 / -1; }
+  .admin-governance-filters > .btn-primary { width: 100%; }
+  .admin-card-header { flex-wrap: wrap; }
+  .admin-card-header .btn-primary { width: 100%; }
+  .admin-lifecycle-actions .btn-primary, .admin-lifecycle-actions .btn-secondary { width: 100%; }
+  .admin-profile-summary span { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  .admin-row-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .admin-row-actions .btn-primary, .admin-row-actions .btn-secondary { flex: 1 1 100%; }
+}
+@media (max-width:350px) { .admin-metrics-grid { grid-template-columns: 1fr; } .admin-section-nav button { min-width: 112px; padding-left: 9px; padding-right: 9px; } }

@@ -11005,3 +11005,32 @@ body.dark-mode .admin-avatar { border-color:#40566c; }
   .admin-feedback-actions { flex-direction:column-reverse; }
   .admin-feedback-actions button { width:100%; min-height:42px; }
 }
+
+/* Fase 5 — observabilidade operacional e segurança */
+.admin-phase5-section { border-top: 3px solid #2d78a7; }
+.admin-phase5-services { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:4px 0 18px; }
+.admin-phase5-service { display:flex; align-items:center; gap:10px; min-width:0; padding:12px; border:1px solid #dce8ef; border-radius:14px; background:#fbfdfe; }
+.admin-phase5-service-icon { display:grid; flex:none; width:34px; height:34px; place-items:center; border-radius:10px; background:#e8f3fa; color:#2d78a7; }
+.admin-phase5-service strong { display:block; color:#23435f; font-size:12px; }
+.admin-phase5-service p { margin:3px 0 0; color:#7890a1; font-size:10px; line-height:1.35; }
+.admin-phase5-status { flex:none; margin-left:auto; padding:4px 7px; border-radius:999px; font-size:9px; font-weight:800; white-space:nowrap; }
+.admin-phase5-status.is-ok { color:#16724a; background:#e7f7ee; }
+.admin-phase5-status.is-warning { color:#996300; background:#fff4d6; }
+.admin-phase5-status.is-danger { color:#a42d35; background:#ffe9e9; }
+.admin-phase5-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.admin-phase5-panel { padding:15px; border:1px solid #e0eaf0; border-radius:14px; background:#fff; }
+.admin-phase5-panel h4 { margin:4px 0 12px; color:#23435f; font-size:14px; }
+.admin-phase5-panel small { display:block; margin-top:12px; color:#8496a5; font-size:10px; line-height:1.45; }
+.admin-phase5-funnel { display:grid; gap:7px; }
+.admin-phase5-funnel-item { display:grid; grid-template-columns:1fr auto 12px; gap:8px; align-items:center; padding:8px 9px; border-radius:9px; background:#f6f9fb; color:#61778b; font-size:11px; }
+.admin-phase5-funnel-item strong { color:#23435f; font-size:15px; }
+.admin-phase5-funnel-item i { font-size:8px; }
+.admin-phase5-funnel-item i.is-ok { color:#238052; }.admin-phase5-funnel-item i.is-warning { color:#c58a13; }.admin-phase5-funnel-item i.is-danger { color:#c53b3b; }
+.admin-phase5-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.admin-phase5-list li { display:flex; justify-content:space-between; gap:12px; padding:9px; border-bottom:1px solid #edf2f5; color:#61778b; font-size:11px; }
+.admin-phase5-list li strong { color:#23435f; }
+.admin-phase5-security { display:flex; align-items:baseline; gap:8px; padding:10px 0 12px; }.admin-phase5-security strong { color:#238052; font-size:28px; }.admin-phase5-security span { color:#61778b; font-size:11px; }
+.admin-phase5-security-note { padding:10px; border-radius:10px; background:#f7fafc; color:#6a7f90; font-size:10px; line-height:1.45; }.admin-phase5-security-note i { margin-right:5px; color:#2d78a7; }
+body.dark-mode .admin-phase5-service, body.dark-mode .admin-phase5-panel { border-color:#38536b; background:#1b2b3b; } body.dark-mode .admin-phase5-service strong, body.dark-mode .admin-phase5-panel h4, body.dark-mode .admin-phase5-funnel-item strong, body.dark-mode .admin-phase5-list li strong { color:#e5edf5; } body.dark-mode .admin-phase5-service p, body.dark-mode .admin-phase5-panel small, body.dark-mode .admin-phase5-funnel-item, body.dark-mode .admin-phase5-list li, body.dark-mode .admin-phase5-security span { color:#b8c7d4; }
+@media (max-width:850px) { .admin-phase5-services, .admin-phase5-grid { grid-template-columns:1fr; } }
+@media (max-width:600px) { .admin-phase5-services { grid-template-columns:1fr; } .admin-phase5-service { align-items:flex-start; } .admin-phase5-status { margin-top:2px; } }

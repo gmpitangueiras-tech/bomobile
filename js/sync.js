@@ -93,13 +93,19 @@ class SyncManager {
     // Iniciar sincronização periódica
     this.syncTimer = setInterval(() => {
       if (navigator.onLine) {
-        this.sincronizar();
+        this.reconciliarPendenciasRemotas()
+          .catch((error) => console.warn("⚠️ Falha ao reconciliar pendências remotas:", error?.message || error))
+          .finally(() => this.sincronizar());
       }
     }, SYNC_INTERVAL);
 
     // Sincronizar imediatamente se online
     if (navigator.onLine) {
-      setTimeout(() => this.sincronizar(), 3000);
+      setTimeout(() => {
+        this.reconciliarPendenciasRemotas()
+          .catch((error) => console.warn("⚠️ Falha ao reconciliar pendências remotas:", error?.message || error))
+          .finally(() => this.sincronizar());
+      }, 3000);
     }
 
     this.initialized = true;
@@ -138,7 +144,9 @@ class SyncManager {
     window.addEventListener("online", () => {
       console.log("🌐 Conexão restaurada");
       this.isOffline = false;
-      this.sincronizar();
+      this.reconciliarPendenciasRemotas()
+        .catch((error) => console.warn("⚠️ Falha ao reconciliar pendências remotas:", error?.message || error))
+        .finally(() => this.sincronizar());
       this.notifyListeners("online", {});
     });
 
@@ -150,6 +158,60 @@ class SyncManager {
 
     // O Service Worker não recebe a chave derivada da senha. A fila cifrada
     // sincroniza apenas enquanto a página autenticada e o cofre estão desbloqueados.
+  }
+
+  /**
+   * Recupera registros gravados como pending_sync no servidor, mas que não
+   * chegaram à fila local quando a segunda etapa do cadastro online falhou.
+   */
+  async reconciliarPendenciasRemotas() {
+    if (!navigator.onLine || !authManager?.isLoggedIn?.() || !window.offlineVault?.unlocked) return { total: 0 };
+    if (window.offlineVault.userId !== authManager.getUserId()) return { total: 0 };
+
+    const client = supabaseClient.getClient();
+    if (!client) return { total: 0 };
+
+    const { data: ocorrencias, error } = await client
+      .from("ocorrencias")
+      .select("*")
+      .eq("criado_por", authManager.getUserId())
+      .eq("status", "pending_sync")
+      .order("atualizado_em", { ascending: true })
+      .limit(BATCH_SIZE);
+    if (error) throw error;
+
+    let enfileiradas = 0;
+    for (const ocorrencia of ocorrencias || []) {
+      const idempotencyKey = `remote-pending:${ocorrencia.id}:${ocorrencia.atualizado_em || ocorrencia.criado_em || ""}`;
+      if (this.syncQueue.some((item) => item.idempotencyKey === idempotencyKey)) continue;
+
+      const [envolvidosResult, anexosResult, guardasResult] = await Promise.all([
+        client.from("envolvidos").select("*").eq("ocorrencia_id", ocorrencia.id).limit(200),
+        client.from("anexos").select("*").eq("ocorrencia_id", ocorrencia.id).is("deleted_at", null).limit(200),
+        client.from("ocorrencia_guardas").select("*").eq("ocorrencia_id", ocorrencia.id).eq("esta_ativo", true).limit(50),
+      ]);
+      if (envolvidosResult.error) throw envolvidosResult.error;
+      if (anexosResult.error) throw anexosResult.error;
+      if (guardasResult.error) throw guardasResult.error;
+
+      const payload = {
+        ocorrencia: { ...ocorrencia, status: "pending_sync" },
+        envolvidos: envolvidosResult.data || [],
+        anexos: (anexosResult.data || []).map((anexo) => ({
+          ...anexo,
+          nome: anexo.nome || anexo.nome_arquivo,
+          tipo: anexo.tipo || anexo.tipo_arquivo,
+          url: anexo.url,
+        })),
+        guardasParticipantes: guardasResult.data || [],
+        assinaturas: ocorrencia.assinaturas || [],
+      };
+
+      await this.addToQueue(payload, "ocorrencia", SYNC_PRIORITY.URGENTE, { idempotencyKey });
+      enfileiradas += 1;
+    }
+    if (enfileiradas) console.log(`♻️ ${enfileiradas} pendência(s) remota(s) recuperada(s) para sincronização`);
+    return { total: enfileiradas };
   }
 
   // ============================================

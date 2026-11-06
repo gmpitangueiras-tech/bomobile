@@ -212,13 +212,13 @@
         <div id="page-login" class="page">
           <section class="login-screen" aria-labelledby="loginTitle">
             <div class="login-card">
-              <div class="login-brand">
-                <div class="login-crest">
+              <div class="login-hero">
+                <div class="login-crest" aria-hidden="true">
                   <img
                     src="assets/images/logo-guarda.png"
                     alt="Brasão da Guarda Municipal de Pitangueiras"
-                    width="68"
-                    height="68"
+                    width="104"
+                    height="104"
                   />
                 </div>
                 <div class="login-brand-copy">
@@ -230,8 +230,8 @@
 
               <div class="login-intro">
                 <span class="login-intro-label">
-                  <i class="fas fa-lock" aria-hidden="true"></i>
-                  Acesso institucional
+                  <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                  Acesso seguro
                 </span>
                 <h2>Acesse o sistema</h2>
                 <p>Sistema de Registro de Ocorrências</p>
@@ -250,10 +250,8 @@
                       autocomplete="username"
                       inputmode="numeric"
                       required
-                      aria-describedby="loginCpfHint"
                     />
                   </div>
-                  <p id="loginCpfHint" class="login-field-hint">Use o CPF cadastrado, com ou sem pontuação.</p>
                 </div>
                 <div class="form-group login-form-group">
                   <label for="loginSenha">Senha</label>
@@ -265,7 +263,6 @@
                       placeholder="Digite sua senha"
                       autocomplete="current-password"
                       required
-                      aria-describedby="loginSenhaHint"
                     />
                     <button
                       type="button"
@@ -276,7 +273,6 @@
                       <i class="fas fa-eye" aria-hidden="true"></i>
                     </button>
                   </div>
-                  <p id="loginSenhaHint" class="login-field-hint">A senha nunca é exibida nem armazenada nesta tela.</p>
                 </div>
 
                 <div class="options-row login-options-row">

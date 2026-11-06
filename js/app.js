@@ -54,6 +54,7 @@ const CACHE_KEYS = {
 };
 
 const CACHE_EXPIRY = 3600000; // 1 hora
+const LOGIN_REMEMBER_KEY = "guarda_login_cpf";
 
 function sincronizarTemaSistema() {
   const media = typeof window.matchMedia === "function"
@@ -1135,6 +1136,14 @@ class App {
         return;
       }
 
+      const rememberMe = document.getElementById("rememberMe");
+      try {
+        if (rememberMe?.checked) localStorage.setItem(LOGIN_REMEMBER_KEY, cpfDigits);
+        else localStorage.removeItem(LOGIN_REMEMBER_KEY);
+      } catch (_) {
+        // O login não deve falhar caso o navegador bloqueie o armazenamento local.
+      }
+
       this.atualizarHeader();
       await window.syncManager?.init?.();
       await this.carregarRascunho();
@@ -1450,6 +1459,16 @@ class App {
 
     const cpfInput = document.getElementById("loginCpf");
     if (cpfInput) {
+      const rememberMe = document.getElementById("rememberMe");
+      try {
+        const rememberedCpf = localStorage.getItem(LOGIN_REMEMBER_KEY);
+        if (rememberedCpf) {
+          cpfInput.value = this.formatarCPFLogin(rememberedCpf);
+          if (rememberMe) rememberMe.checked = true;
+        }
+      } catch (_) {
+        // Armazenamento local indisponível: manter o login normal.
+      }
       cpfInput.addEventListener("input", (event) => {
         event.target.value = this.formatarCPFLogin(event.target.value);
         event.target.setAttribute("aria-invalid", "false");

@@ -237,7 +237,7 @@
                 <p>Sistema de Registro de Ocorrências</p>
               </div>
 
-              <form id="loginForm">
+              <form id="loginForm" novalidate>
                 <div class="form-group login-form-group">
                   <label for="loginCpf">CPF</label>
                   <div class="input-wrapper login-input-wrapper">
@@ -249,8 +249,11 @@
                       maxlength="14"
                       autocomplete="username"
                       inputmode="numeric"
+                      required
+                      aria-describedby="loginCpfHint"
                     />
                   </div>
+                  <p id="loginCpfHint" class="login-field-hint">Use o CPF cadastrado, com ou sem pontuação.</p>
                 </div>
                 <div class="form-group login-form-group">
                   <label for="loginSenha">Senha</label>
@@ -261,6 +264,8 @@
                       id="loginSenha"
                       placeholder="Digite sua senha"
                       autocomplete="current-password"
+                      required
+                      aria-describedby="loginSenhaHint"
                     />
                     <button
                       type="button"
@@ -271,6 +276,7 @@
                       <i class="fas fa-eye" aria-hidden="true"></i>
                     </button>
                   </div>
+                  <p id="loginSenhaHint" class="login-field-hint">A senha nunca é exibida nem armazenada nesta tela.</p>
                 </div>
 
                 <div class="options-row login-options-row">
@@ -278,10 +284,10 @@
                     <input type="checkbox" id="rememberMe" />
                     <span>Lembrar-me</span>
                   </label>
-                  <a href="#" class="forgot-link">
+                  <button type="button" class="forgot-link" id="forgotPasswordBtn">
                     Esqueci minha senha
                     <i class="fas fa-circle-question" aria-hidden="true"></i>
-                  </a>
+                  </button>
                 </div>
 
                 <button type="submit" class="btn-primary login-submit" id="loginBtn">
@@ -290,12 +296,15 @@
                   <span class="spinner-small"></span>
                 </button>
 
+                <p id="loginNetworkStatus" class="login-network-status" role="status" aria-live="polite"></p>
+
                 <div
                   id="loginError"
                   class="login-error"
                   style="display: none"
                   role="alert"
                   aria-live="polite"
+                  tabindex="-1"
                 ></div>
               </form>
 

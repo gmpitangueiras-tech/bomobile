@@ -1075,27 +1075,62 @@ class App {
   // LOGIN
   // ============================================
 
+  formatarCPFLogin(valor) {
+    const digits = String(valor || "").replace(/\D/g, "").slice(0, 11);
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+    if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+
+  atualizarStatusLogin() {
+    const status = document.getElementById("loginNetworkStatus");
+    if (!status) return;
+    const online = navigator.onLine;
+    status.className = `login-network-status ${online ? "is-online" : "is-offline"}`;
+    status.innerHTML = online
+      ? '<i class="fas fa-wifi" aria-hidden="true"></i><span>Conexão disponível. O acesso será validado com segurança.</span>'
+      : '<i class="fas fa-wifi-slash" aria-hidden="true"></i><span>Sem conexão. O acesso offline só funciona se este dispositivo já tiver sido habilitado.</span>';
+  }
+
+  definirErroLogin(mensagem) {
+    const errorEl = document.getElementById("loginError");
+    if (!errorEl) return;
+    errorEl.textContent = mensagem || "Não foi possível entrar. Tente novamente.";
+    errorEl.style.display = "block";
+    errorEl.focus({ preventScroll: true });
+  }
+
   async handleLogin() {
-    const cpf = document.getElementById("loginCpf").value.trim();
-    const senha = document.getElementById("loginSenha").value;
+    const cpfInput = document.getElementById("loginCpf");
+    const passwordInput = document.getElementById("loginSenha");
+    const cpf = cpfInput.value.trim();
+    const senha = passwordInput.value;
     const btn = document.getElementById("loginBtn");
     const errorEl = document.getElementById("loginError");
+    const cpfDigits = cpf.replace(/\D/g, "");
 
-    if (!cpf || !senha) {
-      this.showToast("Preencha todos os campos", "warning");
+    if (cpfDigits.length !== 11 || !senha) {
+      const target = cpfDigits.length !== 11 ? cpfInput : passwordInput;
+      target.setAttribute("aria-invalid", "true");
+      this.definirErroLogin(cpfDigits.length !== 11 ? "Informe um CPF válido com 11 dígitos." : "Informe sua senha.");
+      this.showToast("Confira os dados informados", "warning");
       return;
     }
 
+    cpfInput.setAttribute("aria-invalid", "false");
+    passwordInput.setAttribute("aria-invalid", "false");
     btn.disabled = true;
     btn.classList.add("loading");
+    btn.setAttribute("aria-busy", "true");
+    btn.querySelector(".btn-text")?.replaceChildren(document.createTextNode("Validando..."));
     errorEl.style.display = "none";
 
     try {
       const result = await authManager.login(cpf, senha);
 
       if (!result.success) {
-        errorEl.style.display = "block";
-        errorEl.textContent = result.error;
+        this.definirErroLogin(result.error);
         this.showToast(result.error, "error");
         return;
       }
@@ -1127,6 +1162,8 @@ class App {
       if (passwordInput) passwordInput.value = "";
       btn.disabled = false;
       btn.classList.remove("loading");
+      btn.removeAttribute("aria-busy");
+      btn.querySelector(".btn-text")?.replaceChildren(document.createTextNode("Entrar"));
     }
   }
 
@@ -1411,6 +1448,29 @@ class App {
       });
     }
 
+    const cpfInput = document.getElementById("loginCpf");
+    if (cpfInput) {
+      cpfInput.addEventListener("input", (event) => {
+        event.target.value = this.formatarCPFLogin(event.target.value);
+        event.target.setAttribute("aria-invalid", "false");
+      });
+      cpfInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") document.getElementById("loginSenha")?.focus();
+      });
+      cpfInput.focus({ preventScroll: true });
+    }
+
+    const loginNetworkStatus = document.getElementById("loginNetworkStatus");
+    if (loginNetworkStatus) {
+      this.atualizarStatusLogin();
+      window.addEventListener("online", () => this.atualizarStatusLogin());
+      window.addEventListener("offline", () => this.atualizarStatusLogin());
+    }
+
+    document.getElementById("forgotPasswordBtn")?.addEventListener("click", () => {
+      this.showToast("Para redefinir a senha, procure o administrador responsável pelo sistema.", "info");
+    });
+
     // Toggle password
     const toggleBtn = document.querySelector(".toggle-password");
     if (toggleBtn) {
@@ -1427,6 +1487,7 @@ class App {
           icon.className = "fas fa-eye";
           toggleBtn.setAttribute("aria-label", "Mostrar senha");
         }
+        input.focus({ preventScroll: true });
       });
     }
 

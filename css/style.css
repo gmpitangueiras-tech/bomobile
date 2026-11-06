@@ -11034,3 +11034,61 @@ body.dark-mode .admin-avatar { border-color:#40566c; }
 body.dark-mode .admin-phase5-service, body.dark-mode .admin-phase5-panel { border-color:#38536b; background:#1b2b3b; } body.dark-mode .admin-phase5-service strong, body.dark-mode .admin-phase5-panel h4, body.dark-mode .admin-phase5-funnel-item strong, body.dark-mode .admin-phase5-list li strong { color:#e5edf5; } body.dark-mode .admin-phase5-service p, body.dark-mode .admin-phase5-panel small, body.dark-mode .admin-phase5-funnel-item, body.dark-mode .admin-phase5-list li, body.dark-mode .admin-phase5-security span { color:#b8c7d4; }
 @media (max-width:850px) { .admin-phase5-services, .admin-phase5-grid { grid-template-columns:1fr; } }
 @media (max-width:600px) { .admin-phase5-services { grid-template-columns:1fr; } .admin-phase5-service { align-items:flex-start; } .admin-phase5-status { margin-top:2px; } }
+
+/* Login — feedback de validação e conectividade */
+#page-login .login-field-hint {
+  margin: 5px 2px 0;
+  color: #80909e;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+#page-login .login-input-wrapper input[aria-invalid="true"] {
+  border-color: #c94a4a;
+  background: #fff8f8;
+  box-shadow: 0 0 0 3px rgba(201, 74, 74, 0.12);
+}
+
+#page-login .login-network-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-height: 18px;
+  margin: 10px 2px 0;
+  color: #627688;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+#page-login .login-network-status i {
+  flex: 0 0 12px;
+  margin-top: 1px;
+  color: #08734a;
+}
+
+#page-login .login-network-status.is-offline i {
+  color: #b7791f;
+}
+
+#page-login .forgot-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#page-login .login-submit[aria-busy="true"] {
+  cursor: wait;
+  filter: saturate(0.8);
+}
+
+body.dark-mode #page-login .login-field-hint,
+body.dark-mode #page-login .login-network-status {
+  color: #aebdcc;
+}
+
+body.dark-mode #page-login .login-input-wrapper input[aria-invalid="true"] {
+  border-color: #f08b8b;
+  background: #2b2025;
+}

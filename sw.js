@@ -24,19 +24,27 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v92";
+const CACHE_NAME = "guarda-pitangueiras-v93";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v4";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v92";
+const CACHE_VERSION = "v93";
+
+// Diagnósticos esperados ficam silenciosos; falhas continuam no console.
+if (self.console) {
+  self.console.log = () => {};
+  self.console.info = () => {};
+  self.console.debug = () => {};
+}
 
 const STATIC_ASSETS = [
   BASE_PATH,
   BASE_PATH + "index.html",
   BASE_PATH + "css/style.css",
+  BASE_PATH + "js/console-policy.js",
   BASE_PATH + "js/config.js",
   BASE_PATH + "js/supabase.js",
   BASE_PATH + "js/admin-api.js",

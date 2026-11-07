@@ -364,6 +364,26 @@ class AuthManager {
     };
   }
 
+  async registrarEventoSeguranca(eventType, cpf, reason = null, metadata = {}) {
+    try {
+      const client = supabaseClient.getClient();
+      if (!client || !["failed_login", "blocked_login", "successful_login"].includes(eventType)) return;
+      const attemptKeyHash = await this.generateIntegrityHash(`login:${String(cpf || "").replace(/\D/g, "")}`);
+      let ipHash = null;
+      try { const ip = await this.obterIP(); if (ip) ipHash = await this.generateIntegrityHash(`ip:${ip}`); } catch (_) { /* telemetria não bloqueia login */ }
+      await client.rpc("gm_record_security_event", {
+        p_event_type: eventType,
+        p_attempt_key_hash: attemptKeyHash,
+        p_ip_hash: ipHash,
+        p_reason: reason ? String(reason).slice(0, 240) : null,
+        p_user_agent: String(navigator?.userAgent || "").slice(0, 400) || null,
+        p_metadata: metadata && typeof metadata === "object" ? metadata : {},
+      });
+    } catch (_) {
+      // Telemetria de segurança nunca deve impedir ou alterar o resultado do login.
+    }
+  }
+
   // ============================================
   // REGISTRO DE LOGS DE ACESSO
   // ============================================
@@ -661,7 +681,9 @@ class AuthManager {
       let result = null;
       try { result = await response.json(); } catch { /* resposta inválida */ }
       if (!response.ok || result?.success !== true || !result.session) {
-        return { success: false, error: result?.error || "CPF ou senha inválidos.", blocked: response.status === 429 };
+        const blocked = response.status === 429 || result?.blocked === true;
+        void this.registrarEventoSeguranca(blocked ? "blocked_login" : "failed_login", cpfClean, blocked ? "rate_limit_or_lockout" : "invalid_credentials", { http_status: response.status });
+        return { success: false, error: result?.error || "CPF ou senha inválidos.", blocked };
       }
 
       const { data: sessionData, error: sessionError } = await client.auth.setSession({
@@ -696,6 +718,8 @@ class AuthManager {
       this.offlineOnly = false;
 
       // Login é confirmado pelo servidor. Falha de log não deve invalidar a sessão.
+      void this.registrarEventoSeguranca("successful_login", cpfClean, null, { usuario_id: usuario.id, perfil: usuario.perfil });
+      void this.registrarEventoSeguranca("successful_login", cpfClean, null, { usuario_id: usuario.id, perfil: usuario.perfil });
       try { await this.logLogin(usuario.id); } catch (e) { console.warn("Falha ao registrar login."); }
       try {
         if (window.app && typeof window.app.registrarLogPericial === "function") {

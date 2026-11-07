@@ -107,7 +107,7 @@
     <script>
       // Registrar Service Worker para PWA e Notificações
       if ("serviceWorker" in navigator) {
-        const forcedUpdateVersion = "v105-governanca-auditoria";
+        const forcedUpdateVersion = "v109-security-analytics";
         navigator.serviceWorker.addEventListener("controllerchange", function () {
           if (sessionStorage.getItem("gm-sw-reloaded") === forcedUpdateVersion) return;
           sessionStorage.setItem("gm-sw-reloaded", forcedUpdateVersion);

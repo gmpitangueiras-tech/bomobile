@@ -171,6 +171,13 @@
     listUsers: (search = "", limit = 50, offset = 0) => adminCall("users", { search, limit, offset }),
     listLogs: (limit = 50, offset = 0) => adminCall("logs", { limit, offset }),
     listAuditLogs: (filters = {}, limit = 50, offset = 0) => adminCall("audit_logs", { ...filters, limit, offset }),
+    securityMetrics: async () => {
+      const client = window.supabaseClient?.getClient?.();
+      if (!client) throw new Error("Cliente Supabase indisponível.");
+      const { data, error } = await client.rpc("gm_security_metrics");
+      if (error) throw error;
+      return { success: true, data: data || null };
+    },
     listErrors: (limit = 50, offset = 0) => adminCall("errors", { limit, offset }),
     listPendingGovernance: (filters = {}, limit = 25, offset = 0) => adminCall("pending_governance", { ...filters, limit, offset }),
     getPendingGovernance: (id, tipo) => adminCall("pending_detail", { id, type: tipo }),

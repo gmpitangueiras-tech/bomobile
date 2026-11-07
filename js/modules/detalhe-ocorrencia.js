@@ -474,7 +474,8 @@ function safeDetalheImageUrl(value) {
   const raw = String(value);
   if (/^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(raw)) return raw;
   try {
-    const url = new URL(raw, window.location.href);
+    if (!/^(https?:|blob:)/i.test(raw)) return "";
+    const url = new URL(raw);
     return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
   } catch (error) {
     return "";

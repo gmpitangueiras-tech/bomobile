@@ -130,7 +130,9 @@ function muralJsArg(value) {
 }
 function muralSafeUrl(value) {
   try {
-    const url = new URL(String(value || ""), window.location.href);
+    const raw = String(value || "").trim();
+    if (!/^(https?:|blob:)/i.test(raw)) return "";
+    const url = new URL(raw);
     return url.protocol === "https:" || url.protocol === "http:" ? escapeMuralHtml(url.href) : "";
   } catch (_) { return ""; }
 }

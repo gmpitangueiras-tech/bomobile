@@ -3301,7 +3301,7 @@ function renderAbordagensCards(abordagens, appInstance) {
           (a) => a.tipo === "image" || a.tipo_arquivo === "image",
         );
         if (imagens.length > 0) {
-          primeiroAnexo = imagens[0].url_thumb || imagens[0].url;
+          primeiroAnexo = safeConsultaDetailUrl(imagens[0].url_thumb || imagens[0].url);
         }
       }
 
@@ -3766,7 +3766,9 @@ function escapeConsultaDetailHtml(value) {
 function safeConsultaDetailUrl(value) {
   if (!value) return "";
   try {
-    const url = new URL(String(value), window.location.href);
+    const raw = String(value).trim();
+    if (!/^(https?:|blob:)/i.test(raw)) return "";
+    const url = new URL(raw);
     return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
   } catch (error) {
     return "";

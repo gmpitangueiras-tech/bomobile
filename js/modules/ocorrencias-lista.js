@@ -529,7 +529,9 @@ function escapeOcorrenciaCardValue(value) {
 function safeOcorrenciaImageUrl(value) {
   if (!value) return "";
   try {
-    const url = new URL(String(value), window.location.href);
+    const raw = String(value).trim();
+    if (!/^(https?:|blob:)/i.test(raw)) return "";
+    const url = new URL(raw);
     return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
   } catch (error) {
     return "";

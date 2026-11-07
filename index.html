@@ -107,11 +107,21 @@
     <script>
       // Registrar Service Worker para PWA e Notificações
       if ("serviceWorker" in navigator) {
+        const forcedUpdateVersion = "v94-dashboard";
+        navigator.serviceWorker.addEventListener("controllerchange", function () {
+          if (sessionStorage.getItem("gm-sw-reloaded") === forcedUpdateVersion) return;
+          sessionStorage.setItem("gm-sw-reloaded", forcedUpdateVersion);
+          window.location.reload();
+        });
         window.addEventListener("load", function () {
           navigator.serviceWorker
             .register("sw.js")
             .then(function (registration) {
               console.log("✅ Service Worker registrado com sucesso");
+              registration.update();
+              if (registration.waiting) {
+                registration.waiting.postMessage({ type: "SKIP_WAITING" });
+              }
 
               // Verificar se há suporte para notificações push
               if (

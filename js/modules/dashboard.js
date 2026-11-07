@@ -36,10 +36,10 @@
 // CONSTANTES
 // ============================================
 
-const CACHE_KEY_STATS = "dashboard_stats";
-const CACHE_KEY_OCORRENCIAS = "dashboard_ocorrencias_com_fotos_v2";
-const CACHE_KEY_ABORDAGENS = "dashboard_abordagens";
-const CACHE_KEY_ABORDAGENS_HOJE = "dashboard_abordagens_hoje";
+const CACHE_KEY_STATS = "dashboard_stats_v94";
+const CACHE_KEY_OCORRENCIAS = "dashboard_ocorrencias_com_fotos_v94";
+const CACHE_KEY_ABORDAGENS = "dashboard_abordagens_v94";
+const CACHE_KEY_ABORDAGENS_HOJE = "dashboard_abordagens_hoje_v94";
 const CACHE_EXPIRY = 30000; // 30 segundos de cache
 const PULL_REFRESH_THRESHOLD = 80;
 
@@ -104,6 +104,12 @@ function getDashboardRole() {
   };
 }
 
+function getDashboardDisplayName(user) {
+  const apelido = String(user?.apelido || "").trim();
+  const nomeCompleto = String(user?.nome_completo || "").trim();
+  return apelido || nomeCompleto || "Guarda";
+}
+
 // ============================================
 // FUNÇÕES PRINCIPAIS
 // ============================================
@@ -122,7 +128,9 @@ export async function renderDashboard(container, appInstance) {
     const role = getDashboardRole();
     dashboardMemoryCache.clear();
     estado.userId = userId;
-    estado.escopoOcorrencias = role.isSupervisor || role.isAdministrator ? "geral" : "minhas";
+    // O dashboard é um briefing de leitura da equipe. A edição continua
+    // condicionada aos fluxos próprios de ocorrência/retificação.
+    estado.escopoOcorrencias = "geral";
     estado.statsData = null;
     estado.ocorrenciasData = [];
     estado.abordagensData = [];
@@ -568,22 +576,24 @@ async function carregarBriefings() {
       return;
     }
 
-    const dozeHorasAtras = globalThis.obterTimestampBrasilSemFuso(new Date(Date.now() - 12 * 60 * 60 * 1000));
+    const trintaSeisHorasAtras = globalThis.obterTimestampBrasilSemFuso(new Date(Date.now() - 36 * 60 * 60 * 1000));
 
     const { data: novasOcorrencias, error: occError } = await client
       .from("ocorrencias")
       .select("id, tipo_ocorrencia, criado_em, local_ocorrencia, criado_por")
-      .gte("criado_em", dozeHorasAtras)
+      .gte("criado_em", trintaSeisHorasAtras)
       .eq("esta_ativa", true)
-      .limit(5);
+      .order("criado_em", { ascending: false })
+      .limit(50);
 
     if (occError) throw occError;
 
     const { data: novosAvisos, error: avisoError } = await client
       .from("mural_avisos")
       .select("id, titulo, tipo, criado_em")
-      .gte("criado_em", dozeHorasAtras)
-      .limit(5);
+      .gte("criado_em", trintaSeisHorasAtras)
+      .order("criado_em", { ascending: false })
+      .limit(25);
 
     if (avisoError) throw avisoError;
 
@@ -671,7 +681,7 @@ async function carregarOcorrencias() {
   }
 
   try {
-    const filtros = { limit: estado.filtroStatusAtual ? 100 : 5 };
+    const filtros = { limit: estado.filtroStatusAtual ? 100 : 50 };
     if (estado.escopoOcorrencias === "minhas") {
       const currentUser = typeof authManager !== "undefined" ? authManager.getUser() : null;
       if (!currentUser?.id) throw new Error("Não foi possível confirmar a sessão para filtrar suas ocorrências.");
@@ -726,14 +736,14 @@ async function carregarAbordagens() {
     const [veiculosResult, pessoasResult] = await Promise.all([
       client
         .from("abordagens_veiculos")
-        .select("*, usuarios(nome_completo)")
+        .select("id,placa,marca_modelo,cor,motivo,local_abordagem,criado_em,criado_por,fase,status_abordagem,usuarios(nome_completo,apelido)")
         .order("criado_em", { ascending: false })
-        .limit(5),
+        .limit(25),
       client
         .from("abordagens_pessoas")
-        .select("*, usuarios(nome_completo)")
+        .select("id,nome,alcunha,caracteristicas_fisicas,motivo,local_abordagem,criado_em,criado_por,fase,status_abordagem,usuarios(nome_completo,apelido)")
         .order("criado_em", { ascending: false })
-        .limit(5),
+        .limit(25),
     ]);
 
     if (veiculosResult.error) throw veiculosResult.error;
@@ -750,7 +760,7 @@ async function carregarAbordagens() {
       (a, b) => new Date(b.criado_em) - new Date(a.criado_em),
     );
 
-    estado.abordagensData = todasAbordagens.slice(0, 5);
+    estado.abordagensData = todasAbordagens.slice(0, 50);
     estado.erros.abordagens = false;
     setCachedData(CACHE_KEY_ABORDAGENS, estado.abordagensData);
   } catch (error) {
@@ -844,127 +854,93 @@ function getCachedData(key) {
 // ============================================
 
 function renderizarDashboard(container, appInstance) {
-  const user =
-    typeof authManager !== "undefined" ? authManager.getUser() : null;
+  const user = typeof authManager !== "undefined" ? authManager.getUser() : null;
   const stats = estado.statsData;
   const ocorrencias = estado.ocorrenciasData;
   const abordagens = estado.abordagensData;
-  const briefings = estado.briefingsData;
   const pendentesCount = estado.pendentesRetificacoes?.length || 0;
   const role = getDashboardRole();
-  const filtroAtivo = estado.filtroStatusAtual;
-  const temNovidades =
-    briefings?.ocorrencias?.length > 0 || briefings?.avisos?.length > 0;
-  const tituloFiltro = filtroAtivo ? getStatusLabel(filtroAtivo) : "Todas";
   const timeZone = globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo";
-  const dataHoje = new Intl.DateTimeFormat("pt-BR", {
-    timeZone,
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  }).format(new Date());
-  const formatoHora = new Intl.DateTimeFormat("pt-BR", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  const updatedLabel = Object.values(estado.erros).some(Boolean)
-    ? "Dados carregados parcialmente"
-    : "Dados atualizados";
-  const updatedTime = estado.lastUpdatedAt
-    ? `${updatedLabel} às ${formatoHora.format(estado.lastUpdatedAt)}`
-    : "Atualização ainda não confirmada";
+  const formatoHora = new Intl.DateTimeFormat("pt-BR", { timeZone, hour: "2-digit", minute: "2-digit" });
+  const updatedLabel = Object.values(estado.erros).some(Boolean) ? "Dados carregados parcialmente" : "Dados atualizados";
+  const updatedTime = estado.lastUpdatedAt ? `${updatedLabel} às ${formatoHora.format(estado.lastUpdatedAt)}` : "Atualização ainda não confirmada";
+  const displayName = getDashboardDisplayName(user);
 
   container.innerHTML = `
     <div class="container dashboard-shell" id="dashboardContainer">
       <header class="dashboard-welcome" aria-labelledby="dashboardTitle">
         <div class="dashboard-welcome__copy">
-          <span class="dashboard-eyebrow">${role.label}</span>
-          <h1 id="dashboardTitle">Bem-vindo, ${escapeDashboardHtml(user?.nome_completo || "Guarda")}</h1>
-          <p>${role.description}</p>
-          <div class="dashboard-trust-context">
-            <span><i class="fas fa-shield-halved" aria-hidden="true"></i> Escopo: dados permitidos ao seu perfil</span>
-            <span id="dashboardUpdatedAt" aria-live="polite">${updatedTime}</span>
-          </div>
+          <h1 id="dashboardTitle">Bem-vindo, ${escapeDashboardHtml(displayName)}</h1>
+          <p>Movimentação da equipe nas últimas 36 horas.</p>
         </div>
-        <div class="dashboard-date-card">
-          <span>HOJE</span>
-          <strong>${dataHoje}</strong>
-          <button type="button" class="dashboard-refresh-button" data-dashboard-refresh aria-label="Atualizar dados do dashboard">
-            <i class="fas fa-rotate" aria-hidden="true"></i><span>Atualizar</span>
-          </button>
+        <div class="dashboard-update-bubble" role="status" aria-live="polite">
+          <span class="dashboard-update-bubble__dot"><i class="fas fa-rotate" aria-hidden="true"></i></span>
+          <span><strong>${escapeDashboardHtml(updatedLabel)}</strong><small id="dashboardUpdatedAt">${escapeDashboardHtml(updatedTime)}</small></span>
+          <button type="button" data-dashboard-refresh aria-label="Atualizar dados do dashboard"><i class="fas fa-rotate" aria-hidden="true"></i></button>
         </div>
       </header>
-
       ${renderDashboardDataState()}
       ${renderPrioridades(stats, pendentesCount, role.podeRevisarRetificacoes)}
       ${renderResumoHoje(stats, estado.abordagensHoje, Boolean(estado.erros.stats))}
-      ${temNovidades ? renderBriefing(briefings) : ""}
-
+      ${renderMovimentoEquipe(ocorrencias, abordagens)}
       <section class="dashboard-section dashboard-actions-section" aria-labelledby="dashboardActionsTitle">
-        <div class="dashboard-section-heading">
-          <div>
-            <span class="dashboard-eyebrow">ATENDIMENTO</span>
-            <h2 id="dashboardActionsTitle">O que você precisa fazer agora?</h2>
-          </div>
-        </div>
+        <div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">ACESSO RÁPIDO</span><h2 id="dashboardActionsTitle">O que você precisa fazer?</h2></div></div>
         ${renderAcessoRapido(appInstance)}
       </section>
-
       <section class="dashboard-section dashboard-status-section" aria-labelledby="dashboardStatusTitle">
-        <div class="dashboard-section-heading">
-          <div>
-            <span class="dashboard-eyebrow">ACOMPANHAMENTO</span>
-            <h2 id="dashboardStatusTitle">Situação dos registros</h2>
-            <p>Indicadores dos registros ativos. Toque em um cartão para filtrar.</p>
-          </div>
-        </div>
+        <div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">ACOMPANHAMENTO</span><h2 id="dashboardStatusTitle">Situação dos registros</h2><p>Toque em um indicador para consultar os registros.</p></div></div>
         ${renderStatsCards(stats, Boolean(estado.erros.stats))}
         ${role.isSupervisor || role.isAdministrator ? renderStatsAdicionais(stats, Boolean(estado.erros.stats)) : ""}
       </section>
-
-      <div class="dashboard-activity-grid">
-        <section class="dashboard-section dashboard-activity-section" aria-labelledby="dashboardOccurrencesTitle">
-          <div class="dashboard-section-heading dashboard-section-heading--compact">
-            <div>
-              <span class="dashboard-eyebrow">BOLETINS</span>
-              <h2 id="dashboardOccurrencesTitle">${filtroAtivo ? `Ocorrências — ${tituloFiltro}` : "Ocorrências recentes"} · ${estado.escopoOcorrencias === "minhas" ? "Minhas" : "Geral"}</h2>
-              <p>${estado.escopoOcorrencias === "minhas" ? "Registros criados por você." : (!navigator.onLine ? "Dados disponíveis neste dispositivo; não representam todo o acervo enquanto estiver offline." : "Registros ativos visíveis ao seu perfil.")}</p>
-            </div>
-            <div class="dashboard-scope-switch" role="group" aria-label="Escopo das ocorrências">
-              <button type="button" data-dashboard-scope="minhas" aria-pressed="${estado.escopoOcorrencias === "minhas"}">Minhas</button>
-              <button type="button" data-dashboard-scope="geral" aria-pressed="${estado.escopoOcorrencias === "geral"}">Geral</button>
-            </div>
-            <button onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">
-              Ver todas <i class="fas fa-arrow-right" aria-hidden="true"></i>
-            </button>
-          </div>
-          <div id="listaOcorrenciasContainer" class="dashboard-record-list">
-            ${renderOcorrenciasLista(ocorrencias, filtroAtivo, appInstance, Boolean(estado.erros.ocorrencias))}
-          </div>
-        </section>
-
-        <section class="dashboard-section dashboard-activity-section" aria-labelledby="dashboardApproachesTitle">
-          <div class="dashboard-section-heading dashboard-section-heading--compact">
-            <div>
-              <span class="dashboard-eyebrow">ABORDAGENS</span>
-              <h2 id="dashboardApproachesTitle">Abordagens recentes</h2>
-            </div>
-          </div>
-          <div id="listaAbordagensContainer" class="dashboard-record-list">
-            ${renderAbordagensLista(abordagens, appInstance, Boolean(estado.erros.abordagens))}
-          </div>
-        </section>
-      </div>
     </div>
   `;
 
   const indicator = container.querySelector(".pull-refresh-indicator");
-  if (indicator) {
-    setTimeout(() => {
-      if (indicator.parentNode) indicator.remove();
-    }, 500);
+  if (indicator) setTimeout(() => { if (indicator.parentNode) indicator.remove(); }, 500);
+}
+
+function renderMovimentoEquipe(ocorrencias, abordagens) {
+  const agora = Date.now();
+  const faixas = [
+    { inicio: 0, fim: 6, titulo: "Agora", subtitulo: "Últimas 6 horas" },
+    { inicio: 6, fim: 12, titulo: "6 a 12 horas atrás" },
+    { inicio: 12, fim: 18, titulo: "12 a 18 horas atrás" },
+    { inicio: 18, fim: 24, titulo: "18 a 24 horas atrás" },
+    { inicio: 24, fim: 36, titulo: "24 a 36 horas atrás" },
+  ];
+  const registros = [
+    ...(Array.isArray(ocorrencias) ? ocorrencias : []).map((item) => ({ ...item, _tipo: "ocorrencia" })),
+    ...(Array.isArray(abordagens) ? abordagens : []).map((item) => ({ ...item, _tipo: "abordagem" })),
+  ].filter((item) => {
+    const timestamp = new Date(item.criado_em || item.data_hora_inicio || 0).getTime();
+    const idade = (agora - timestamp) / 3600000;
+    return idade >= 0 && idade < 36;
+  }).sort((a, b) => new Date(b.criado_em || b.data_hora_inicio) - new Date(a.criado_em || a.data_hora_inicio));
+
+  const blocos = faixas.map((faixa) => {
+    const itens = registros.filter((item) => {
+      const idade = (agora - new Date(item.criado_em || item.data_hora_inicio).getTime()) / 3600000;
+      return idade >= faixa.inicio && idade < faixa.fim;
+    });
+    const cards = itens.slice(0, 12).map((item) => renderMovimentoItem(item)).join("");
+    return `<section class="dashboard-movement-block${itens.length ? "" : " dashboard-movement-block--empty"}"><header class="dashboard-movement-block__header"><div><span class="dashboard-movement-dot${faixa.inicio === 0 ? " is-current" : ""}"></span><div><h3>${faixa.titulo}</h3><small>${faixa.subtitulo || "Faixa de acompanhamento"}</small></div></div><strong>${itens.length} ${itens.length === 1 ? "registro" : "registros"}</strong></header>${cards ? `<div class="dashboard-movement-records">${cards}</div>` : `<p class="dashboard-movement-empty">Nenhum registro nesta faixa.</p>`}</section>`;
+  }).join("");
+
+  return `<section class="dashboard-section dashboard-movement" aria-labelledby="dashboardMovementTitle"><div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">MOVIMENTO OPERACIONAL</span><h2 id="dashboardMovementTitle">Últimas 36 horas</h2><p>Registros da equipe para consulta. Toque em um item para ver os detalhes.</p></div><button type="button" onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">Ver ocorrências <i class="fas fa-arrow-right" aria-hidden="true"></i></button></div><div class="dashboard-movement-grid">${blocos}</div></section>`;
+}
+
+function renderMovimentoItem(item) {
+  const data = item.criado_em || item.data_hora_inicio;
+  const hora = data ? new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(data)) : "—";
+  if (item._tipo === "abordagem") {
+    const isVeiculo = item.tipo_abordagem === "veiculo";
+    const identificador = isVeiculo ? (item.placa || "Veículo sem placa") : (item.nome || item.alcunha || "Pessoa não identificada");
+    const autor = item.usuarios?.apelido || item.usuarios?.nome_completo || "Guarda não identificado";
+    return `<button type="button" class="dashboard-movement-record dashboard-movement-record--approach" data-dashboard-approach="${escapeDashboardHtml(item.id)}" data-dashboard-approach-type="${escapeDashboardHtml(item.tipo_abordagem || (isVeiculo ? "veiculo" : "pessoa"))}"><span class="dashboard-movement-record__icon"><i class="fas ${isVeiculo ? "fa-car-side" : "fa-user-shield"}" aria-hidden="true"></i></span><span class="dashboard-movement-record__body"><span class="dashboard-movement-record__top"><strong>${escapeDashboardHtml(identificador)}</strong><time>${hora}</time></span><span class="dashboard-movement-record__detail">Abordagem de ${isVeiculo ? "veículo" : "pessoa"} · ${escapeDashboardHtml(item.local_abordagem || "Local não informado")}</span><span class="dashboard-movement-record__meta"><b class="dashboard-movement-badge dashboard-movement-badge--green">${escapeDashboardHtml(item.status_abordagem || "Registrada")}</b><span>por ${escapeDashboardHtml(autor)}</span></span></span><i class="fas fa-chevron-right dashboard-movement-record__arrow" aria-hidden="true"></i></button>`;
   }
+  const autor = item.criador?.apelido || item.criador?.nome_completo || "Guarda não identificado";
+  const numero = item.numero_ocorrencia || item.numero_temporario || "Sem número";
+  return `<button type="button" class="dashboard-movement-record dashboard-movement-record--occurrence" data-dashboard-bo="${escapeDashboardHtml(item.id)}"><span class="dashboard-movement-record__icon"><i class="fas fa-file-lines" aria-hidden="true"></i></span><span class="dashboard-movement-record__body"><span class="dashboard-movement-record__top"><strong>BO ${escapeDashboardHtml(numero)}</strong><time>${hora}</time></span><span class="dashboard-movement-record__detail">${escapeDashboardHtml(getTipoLabel(item.tipo_ocorrencia) || "Ocorrência")} · ${escapeDashboardHtml(item.local_ocorrencia || "Local não informado")}</span><span class="dashboard-movement-record__meta"><b class="dashboard-movement-badge dashboard-movement-badge--${getStatusClass(item.status)}">${escapeDashboardHtml(getStatusLabel(item.status))}</b><span>por ${escapeDashboardHtml(autor)}</span></span></span><i class="fas fa-chevron-right dashboard-movement-record__arrow" aria-hidden="true"></i></button>`;
 }
 
 

@@ -24,14 +24,14 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v102-situacao-turno";
+const CACHE_NAME = "guarda-pitangueiras-v103-acessibilidade-admin";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v4";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v102-situacao-turno";
+const CACHE_VERSION = "v103-acessibilidade-admin";
 
 // Diagnósticos esperados ficam silenciosos; falhas continuam no console.
 if (self.console) {

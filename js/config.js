@@ -46,8 +46,8 @@ const CONFIG = {
   MUNICIPIO: "Pitangueiras",
   ESTADO: "Paraná",
   GUARDA_NOME: "Guarda Municipal de Pitangueiras",
-  VERSAO: "1.0.0-v102-situacao-turno",
-  BUILD: "v102-situacao-turno",
+  VERSAO: "1.0.0-v103-acessibilidade-admin",
+  BUILD: "v103-acessibilidade-admin",
 
   // ============================================
   // SINCERONIZAÇÃO (SYNC)
@@ -63,7 +63,7 @@ const CONFIG = {
   CACHE_EXPIRY: 60000, // 1 minuto para dados dinâmicos
   CACHE_STATIC_EXPIRY: 3600000, // 1 hora para dados estáticos
   CACHE_MAX_ITEMS: 100, // Máximo de itens em cache
-  CACHE_VERSION: 13, // Versão do cache (para limpeza)
+  CACHE_VERSION: 14, // Versão do cache (para limpeza)
 
   // ============================================
   // SESSÃO

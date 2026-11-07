@@ -139,6 +139,8 @@ function criarBottomSheet() {
 
   bottomSheetOverlay = document.createElement("div");
   bottomSheetOverlay.id = "bottomSheetOverlay";
+  bottomSheetOverlay.setAttribute("aria-hidden", "true");
+  bottomSheetOverlay.inert = true;
   bottomSheetOverlay.style.cssText = `
     position: fixed;
     top: 0;
@@ -246,6 +248,7 @@ export function openBottomSheet() {
 
   bottomSheetOverlay.style.display = "block";
   bottomSheetOverlay.setAttribute("aria-hidden", "false");
+  bottomSheetOverlay.inert = false;
   const navMais = document.getElementById("navMais");
   document.querySelectorAll(".nav-item[data-nav-section]").forEach((item) => {
     item.classList.remove("active");
@@ -294,11 +297,13 @@ export function closeBottomSheet() {
   bottomSheet.style.transform = "translateY(100%)";
 
   setTimeout(() => {
+    const navMais = document.getElementById("navMais");
+    if (bottomSheetOverlay.contains(document.activeElement)) navMais?.focus({ preventScroll: true });
+    bottomSheetOverlay.inert = true;
     bottomSheetOverlay.style.display = "none";
     bottomSheetOverlay.setAttribute("aria-hidden", "true");
     isBottomSheetOpen = false;
     isAnimating = false;
-    const navMais = document.getElementById("navMais");
     if (navMais) navMais.setAttribute("aria-expanded", "false");
     if (typeof window.app !== "undefined" && window.app.updateBottomNav && window.app.currentPage) {
       window.app.updateBottomNav(window.app.currentPage);

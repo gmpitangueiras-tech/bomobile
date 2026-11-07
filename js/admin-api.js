@@ -117,7 +117,16 @@
     const headers = { "Content-Type": "application/json", apikey: window.CONFIG?.SUPABASE_ANON_KEY || "" };
     const token = getToken();
     if (token && action !== "issue_session") headers["x-admin-token"] = token;
-    const response = await fetch(endpoint(), { method: "POST", headers, body: JSON.stringify({ action, ...payload }) });
+    let response;
+    try {
+      response = await fetch(endpoint(), { method: "POST", headers, body: JSON.stringify({ action, ...payload }) });
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      if (message.includes("cors") || message.includes("failed to fetch") || message.includes("networkerror")) {
+        throw new Error("Não foi possível acessar o serviço administrativo. A função de governança precisa liberar a origem do aplicativo (CORS).");
+      }
+      throw error;
+    }
     const data = await response.json().catch(() => ({ success: false, error: "Resposta inválida do servidor" }));
     if (response.status === 401 && action !== "issue_session") clear();
     if (!response.ok || data.success === false) throw new Error(data.error || "Operação administrativa recusada");

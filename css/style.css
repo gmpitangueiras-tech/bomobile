@@ -11575,3 +11575,43 @@ body.dark-mode #page-login .login-input-wrapper input[aria-invalid="true"] {
   #page-dashboard .dashboard-timeline-record__meta { font-size: 8px; }
   #page-dashboard .dashboard-timeline-period .dashboard-movement-record__meta span:last-child { display: inline; }
 }
+
+/* ========================================================================
+   DASHBOARD V102 — PAINEL DE SITUAÇÃO DO TURNO
+   ======================================================================== */
+#page-dashboard .dashboard-situation { padding: 18px; }
+#page-dashboard .dashboard-situation__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+#page-dashboard .dashboard-situation .dashboard-attention__heading h2 { margin-top: 5px; font-size: 18px; line-height: 1.15; }
+#page-dashboard .dashboard-situation .dashboard-attention__heading p { margin: 5px 0 0; line-height: 1.35; }
+#page-dashboard .dashboard-situation__health { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: 7px; font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+#page-dashboard .dashboard-situation__health i { font-size: 9px; }
+#page-dashboard .dashboard-situation__health.is-ok { background: #e4f4ea; color: #2a7c53; }
+#page-dashboard .dashboard-situation__health.is-alert { background: #fff0d7; color: #9d6a16; }
+#page-dashboard .dashboard-situation__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 16px 0 13px; }
+#page-dashboard .dashboard-situation__metric { display: grid; grid-template-columns: 22px 1fr; grid-template-rows: 1fr 1fr; column-gap: 6px; padding: 8px; border: 1px solid #e1eaf0; border-radius: 8px; background: #fbfdfe; text-align: left; cursor: pointer; }
+#page-dashboard .dashboard-situation__metric i { display: grid; grid-row: 1 / span 2; place-items: center; width: 22px; height: 22px; margin-top: 2px; border-radius: 6px; background: #eaf3fa; color: #28709a; font-size: 9px; }
+#page-dashboard .dashboard-situation__metric strong { color: #214d6c; font-size: 17px; line-height: 1; }
+#page-dashboard .dashboard-situation__metric span { color: #8497a4; font-size: 8px; }
+#page-dashboard .dashboard-situation__metric.is-green i { background: #e5f4eb; color: #2d7d54; }
+#page-dashboard .dashboard-situation__metric.is-teal i { background: #e1f3f0; color: #267d73; }
+#page-dashboard .dashboard-situation__metric.is-amber i { background: #fff0d4; color: #a16d18; }
+#page-dashboard .dashboard-situation__metric.is-muted i { background: #f0f3f5; color: #8496a1; }
+#page-dashboard .dashboard-situation .dashboard-attention__list { margin-top: 3px; padding-top: 12px; border-top: 1px solid #e5edf2; }
+#page-dashboard .dashboard-situation .dashboard-attention-item { grid-template-columns: 28px minmax(0, 1fr) auto 10px; }
+#page-dashboard .dashboard-situation .dashboard-attention-item b { padding: 4px 5px; border-radius: 5px; background: #eef4f8; color: #527189; font-size: 8px; font-weight: 800; }
+#page-dashboard .dashboard-situation__updated { display: flex; align-items: center; gap: 5px; margin-top: 14px; padding-top: 10px; border-top: 1px solid #e5edf2; color: #95a6b1; font-size: 8px; }
+#page-dashboard .dashboard-situation__updated i { color: #7190a4; font-size: 9px; }
+#page-dashboard .dashboard-situation.is-clear .dashboard-situation__metrics { margin-bottom: 11px; }
+#page-dashboard .dashboard-situation.has-items .dashboard-situation__metrics { margin-bottom: 12px; }
+@media (max-width: 760px) {
+  #page-dashboard .dashboard-situation { padding: 15px; }
+  #page-dashboard .dashboard-situation__health { padding: 5px 6px; }
+  #page-dashboard .dashboard-situation .dashboard-attention__heading h2 { font-size: 17px; }
+  #page-dashboard .dashboard-situation__metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 13px 0 11px; }
+  #page-dashboard .dashboard-situation__metric { display: flex; min-height: 55px; flex-direction: column; align-items: flex-start; gap: 3px; padding: 7px 6px; }
+  #page-dashboard .dashboard-situation__metric i { width: 20px; height: 20px; margin: 0; flex: 0 0 20px; }
+  #page-dashboard .dashboard-situation__metric strong { font-size: 16px; }
+  #page-dashboard .dashboard-situation__metric span { font-size: 7px; }
+  #page-dashboard .dashboard-situation .dashboard-attention-item { grid-template-columns: 28px minmax(0, 1fr) auto 9px; }
+  #page-dashboard .dashboard-situation .dashboard-attention-item small { font-size: 8px; }
+}

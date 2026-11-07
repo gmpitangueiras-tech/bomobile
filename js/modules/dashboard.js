@@ -19,7 +19,7 @@
  * - Animações suaves
  * - Cards em linha com 5 estatísticas
  * - Cards de acesso rápido com ícones (Nova Ocorrência, Nova Abordagem, Buscar BO, Busca Profunda)
- * - Miniaturas de imagens em ocorrências e abordagens
+ * - Anexos carregados sob demanda ao abrir detalhes
  *
  * Depende de: authManager (global), supabaseClient (global),
  *             ocorrenciaManager (global), utils, ui
@@ -694,13 +694,11 @@ async function carregarOcorrencias() {
     const result = await ocorrenciaManager.listar(filtros);
     if (result.success) {
       const ocorrencias = result.data || [];
-      try {
-        await associarAnexosOcorrenciasDashboard(ocorrencias);
-      } catch (anexoError) {
-        console.warn("Não foi possível carregar miniaturas das ocorrências:", anexoError);
-        estado.erros.anexos = true;
-        ocorrencias.forEach((ocorrencia) => { ocorrencia.anexos = []; });
-      }
+      // As miniaturas não fazem parte do briefing inicial. Resolver URLs
+      // assinadas para dezenas de anexos aqui dispara muitas requisições ao
+      // Storage e pode causar 429. Os anexos são carregados sob demanda no
+      // detalhe do registro, após uma ação explícita do usuário.
+      ocorrencias.forEach((ocorrencia) => { ocorrencia.anexos = []; });
       estado.ocorrenciasData = ocorrencias;
       estado.erros.ocorrencias = false;
       setCachedData(scopeCacheKey, ocorrencias);

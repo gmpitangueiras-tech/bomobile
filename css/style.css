@@ -11517,3 +11517,61 @@ body.dark-mode #page-login .login-input-wrapper input[aria-invalid="true"] {
   #page-dashboard .dashboard-timeline-period .dashboard-movement-record { min-height: 58px; padding: 8px; }
   #page-dashboard .dashboard-movement-record__detail { max-width: 100%; }
 }
+
+/* ========================================================================
+   DASHBOARD V101 — CENTRAL DO TURNO / OPERAÇÃO
+   ======================================================================== */
+#page-dashboard .dashboard-command-bar { align-items: center; padding: 14px 16px; }
+#page-dashboard .dashboard-command-bar__intro { flex-basis: 205px; }
+#page-dashboard .dashboard-command-bar__intro h2 { font-size: 16px; }
+#page-dashboard .dashboard-command-bar__actions { gap: 6px; }
+#page-dashboard .dashboard-command { min-height: 50px; border-radius: 9px; }
+#page-dashboard .dashboard-command--primary { box-shadow: 0 5px 12px rgba(21,90,134,.16); }
+#page-dashboard .dashboard-section-heading { margin-bottom: 16px; }
+#page-dashboard .dashboard-section-heading h2 { font-size: 24px; }
+#page-dashboard .dashboard-timeline-list { padding-top: 5px; }
+#page-dashboard .dashboard-timeline-list::before { top: 16px; left: 49px; bottom: 19px; background: #cfdee8; }
+#page-dashboard .dashboard-timeline-period { grid-template-columns: 100px minmax(0, 1fr); gap: 0; padding-bottom: 21px; }
+#page-dashboard .dashboard-timeline-period__marker { padding-top: 16px; background: transparent; }
+#page-dashboard .dashboard-timeline-period__marker .dashboard-movement-dot { margin-left: 45px; }
+#page-dashboard .dashboard-timeline-period__content > header { min-height: 39px; padding: 0 0 9px; }
+#page-dashboard .dashboard-timeline-period__content h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .045em; }
+#page-dashboard .dashboard-timeline-period__content small { font-size: 9px; }
+#page-dashboard .dashboard-timeline-period__content > header strong { font-size: 9px; }
+#page-dashboard .dashboard-timeline-period .dashboard-movement-record { position: relative; display: grid; grid-template-columns: 41px 31px minmax(0, 1fr) 12px; align-items: center; gap: 10px; min-height: 72px; padding: 10px 12px 10px 10px; border: 1px solid #dbe6ed; border-left: 3px solid #1f6d9e; border-radius: 10px; box-shadow: 0 3px 10px rgba(30,67,92,.045); }
+#page-dashboard .dashboard-timeline-period .dashboard-movement-record--approach { border-left-color: #2d806d; }
+#page-dashboard .dashboard-timeline-record__time { align-self: start; padding-top: 3px; color: #627e92; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+#page-dashboard .dashboard-timeline-record__icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #eaf3fa; color: #1c6794; font-size: 12px; }
+#page-dashboard .dashboard-movement-record--approach .dashboard-timeline-record__icon { background: #e5f4ed; color: #2d806d; }
+#page-dashboard .dashboard-timeline-record__body { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+#page-dashboard .dashboard-timeline-record__kind { overflow: hidden; color: #7d94a3; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
+#page-dashboard .dashboard-timeline-record__title { overflow: hidden; color: #1b4564; font-size: 12px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+#page-dashboard .dashboard-timeline-record__detail { overflow: hidden; margin-top: 1px; color: #718999; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+#page-dashboard .dashboard-timeline-record__meta { display: flex; align-items: center; gap: 7px; margin-top: 3px; color: #8799a5; font-size: 9px; }
+#page-dashboard .dashboard-timeline-record__meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#page-dashboard .dashboard-timeline-record .dashboard-movement-record__arrow { font-size: 9px; }
+#page-dashboard .dashboard-timeline-period .dashboard-movement-empty { max-width: 420px; padding: 8px 11px; background: rgba(255,255,255,.48); }
+#page-dashboard .dashboard-attention-column { min-width: 0; }
+#page-dashboard .dashboard-attention.is-clear { padding: 14px; border-color: #d5e6dd; background: #fbfefc; }
+#page-dashboard .dashboard-attention.is-clear .dashboard-attention__heading p { margin-bottom: 11px; }
+#page-dashboard .dashboard-attention.is-clear .dashboard-attention__stats { margin-top: 12px; }
+#page-dashboard .dashboard-attention.has-items { border-color: #e3d7bd; box-shadow: 0 7px 18px rgba(131,94,35,.07); }
+#page-dashboard .dashboard-attention.has-items .dashboard-attention__heading .dashboard-eyebrow { color: #9b6b1e; }
+@media (max-width: 760px) {
+  #page-dashboard .dashboard-command-bar { padding: 13px; }
+  #page-dashboard .dashboard-command-bar__actions { grid-template-columns: 1fr 1fr; }
+  #page-dashboard .dashboard-command-grid { gap: 10px; }
+  #page-dashboard .dashboard-attention-column { order: 2; }
+  #page-dashboard .dashboard-attention-column:has(.dashboard-attention.has-items) { order: 1; }
+  #page-dashboard .dashboard-timeline-list::before { left: 38px; }
+  #page-dashboard .dashboard-timeline-period { grid-template-columns: 76px minmax(0, 1fr); }
+  #page-dashboard .dashboard-timeline-period__marker { padding-top: 14px; }
+  #page-dashboard .dashboard-timeline-period__marker .dashboard-movement-dot { margin-left: 34px; }
+  #page-dashboard .dashboard-timeline-period .dashboard-movement-record { grid-template-columns: 35px 28px minmax(0, 1fr) 10px; gap: 7px; min-height: 68px; padding: 9px 8px; }
+  #page-dashboard .dashboard-timeline-record__time { font-size: 10px; }
+  #page-dashboard .dashboard-timeline-record__icon { width: 27px; height: 27px; font-size: 10px; }
+  #page-dashboard .dashboard-timeline-record__title { font-size: 11px; }
+  #page-dashboard .dashboard-timeline-record__detail { font-size: 9px; }
+  #page-dashboard .dashboard-timeline-record__meta { font-size: 8px; }
+  #page-dashboard .dashboard-timeline-period .dashboard-movement-record__meta span:last-child { display: inline; }
+}

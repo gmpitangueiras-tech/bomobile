@@ -867,30 +867,32 @@ function renderizarDashboard(container, appInstance) {
 
   container.innerHTML = `
     <div class="container dashboard-shell" id="dashboardContainer">
-      <header class="dashboard-welcome" aria-labelledby="dashboardTitle">
-        <div class="dashboard-welcome__copy">
-          <h1 id="dashboardTitle">Bem-vindo, ${escapeDashboardHtml(displayName)}</h1>
-          <p>Movimentação da equipe nas últimas 36 horas.</p>
+      <header class="dashboard-hero" aria-labelledby="dashboardTitle">
+        <div class="dashboard-hero__identity">
+          <span class="dashboard-eyebrow">CENTRAL DO TURNO</span>
+          <h1 id="dashboardTitle">Bom trabalho, ${escapeDashboardHtml(displayName)}.</h1>
+          <p>Veja o que está acontecendo e escolha a próxima ação.</p>
         </div>
-        <div class="dashboard-update-bubble${hasDashboardWarning ? " dashboard-update-bubble--warning" : ""}" role="status" aria-live="polite">
-          <span class="dashboard-update-bubble__dot"><i class="fas fa-rotate" aria-hidden="true"></i></span>
-          <span><strong>${escapeDashboardHtml(updatedLabel)}</strong><small id="dashboardUpdatedAt">${escapeDashboardHtml(updatedTime)}</small></span>
+        <div class="dashboard-shift-status${hasDashboardWarning ? " is-warning" : ""}" role="status" aria-live="polite">
+          <span class="dashboard-shift-status__dot"></span>
+          <span><strong>${hasDashboardWarning ? "Atenção" : "Turno ativo"}</strong><small id="dashboardUpdatedAt">${escapeDashboardHtml(updatedTime)}</small></span>
           <button type="button" data-dashboard-refresh aria-label="Atualizar dados do dashboard"><i class="fas fa-rotate" aria-hidden="true"></i></button>
         </div>
       </header>
       ${renderDashboardDataState()}
-      ${renderPrioridades(stats, pendentesCount, role.podeRevisarRetificacoes)}
-      ${renderResumoHoje(stats, estado.abordagensHoje, Boolean(estado.erros.stats))}
-      ${renderMovimentoEquipe(ocorrencias, abordagens)}
-      <section class="dashboard-section dashboard-actions-section" aria-labelledby="dashboardActionsTitle">
-        <div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">ACESSO RÁPIDO</span><h2 id="dashboardActionsTitle">O que você precisa fazer?</h2></div></div>
-        ${renderAcessoRapido(appInstance)}
+      <section class="dashboard-command-bar" aria-labelledby="dashboardCommandTitle">
+        <div class="dashboard-command-bar__intro"><span class="dashboard-eyebrow">COMANDO RÁPIDO</span><h2 id="dashboardCommandTitle">O que você precisa fazer?</h2></div>
+        <div class="dashboard-command-bar__actions">
+          <button type="button" class="dashboard-command dashboard-command--primary" onclick="window._dashboardNovaOcorrencia()"><i class="fas fa-file-circle-plus" aria-hidden="true"></i><span><strong>Novo BO</strong><small>Registrar ocorrência</small></span><i class="fas fa-arrow-right" aria-hidden="true"></i></button>
+          <button type="button" class="dashboard-command dashboard-command--secondary" onclick="window._dashboardNovaAbordagem()"><i class="fas fa-user-shield" aria-hidden="true"></i><span><strong>Nova abordagem</strong><small>Pessoa ou veículo</small></span><i class="fas fa-arrow-right" aria-hidden="true"></i></button>
+          <button type="button" class="dashboard-command dashboard-command--quiet" onclick="window._dashboardBuscarBO()"><i class="fas fa-magnifying-glass" aria-hidden="true"></i><span><strong>Buscar BO</strong><small>Consulta direta</small></span></button>
+          <button type="button" class="dashboard-command dashboard-command--quiet" onclick="window._dashboardBuscaProfunda()"><i class="fas fa-sliders" aria-hidden="true"></i><span><strong>Busca profunda</strong><small>Mais filtros</small></span></button>
+        </div>
       </section>
-      <section class="dashboard-section dashboard-status-section" aria-labelledby="dashboardStatusTitle">
-        <div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">ACOMPANHAMENTO</span><h2 id="dashboardStatusTitle">Situação dos registros</h2><p>Toque em um indicador para consultar os registros.</p></div></div>
-        ${renderStatsCards(stats, Boolean(estado.erros.stats))}
-        ${role.isSupervisor || role.isAdministrator ? renderStatsAdicionais(stats, Boolean(estado.erros.stats)) : ""}
-      </section>
+      <div class="dashboard-command-grid">
+        <main>${renderMovimentoEquipe(ocorrencias, abordagens)}</main>
+        <aside>${renderAtencaoTurno(stats, pendentesCount, role, Boolean(estado.erros.stats))}</aside>
+      </div>
     </div>
   `;
 
@@ -922,10 +924,20 @@ function renderMovimentoEquipe(ocorrencias, abordagens) {
       return idade >= faixa.inicio && idade < faixa.fim;
     });
     const cards = itens.slice(0, 12).map((item) => renderMovimentoItem(item)).join("");
-    return `<section class="dashboard-movement-block${itens.length ? "" : " dashboard-movement-block--empty"}"><header class="dashboard-movement-block__header"><div><span class="dashboard-movement-dot${faixa.inicio === 0 ? " is-current" : ""}"></span><div><h3>${faixa.titulo}</h3><small>${faixa.subtitulo || "Faixa de acompanhamento"}</small></div></div><strong>${itens.length} ${itens.length === 1 ? "registro" : "registros"}</strong></header>${cards ? `<div class="dashboard-movement-records">${cards}</div>` : `<p class="dashboard-movement-empty">Nenhum registro nesta faixa.</p>`}</section>`;
+    return `<section class="dashboard-timeline-period${itens.length ? "" : " is-empty"}"><div class="dashboard-timeline-period__marker"><span class="dashboard-movement-dot${faixa.inicio === 0 ? " is-current" : ""}"></span></div><div class="dashboard-timeline-period__content"><header><div><h3>${faixa.titulo}</h3><small>${faixa.subtitulo || "Faixa de acompanhamento"}</small></div><strong>${itens.length} ${itens.length === 1 ? "registro" : "registros"}</strong></header>${cards ? `<div class="dashboard-movement-records">${cards}</div>` : `<p class="dashboard-movement-empty">Nenhum movimento registrado.</p>`}</div></section>`;
   }).join("");
 
-  return `<section class="dashboard-section dashboard-movement" aria-labelledby="dashboardMovementTitle"><div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">MOVIMENTO OPERACIONAL</span><h2 id="dashboardMovementTitle">Últimas 36 horas</h2><p>Registros da equipe para consulta. Toque em um item para ver os detalhes.</p></div><button type="button" onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">Ver ocorrências <i class="fas fa-arrow-right" aria-hidden="true"></i></button></div><div class="dashboard-movement-grid">${blocos}</div></section>`;
+  return `<section class="dashboard-section dashboard-movement dashboard-timeline" aria-labelledby="dashboardMovementTitle"><div class="dashboard-section-heading"><div><span class="dashboard-eyebrow">MOVIMENTO DO TURNO</span><h2 id="dashboardMovementTitle">Últimas 36 horas</h2><p>Registros da equipe em ordem de atividade.</p></div><button type="button" onclick="window.app.navigateTo('ocorrencias')" class="dashboard-text-action">Ver todos <i class="fas fa-arrow-right" aria-hidden="true"></i></button></div><div class="dashboard-timeline-list">${blocos}</div></section>`;
+}
+
+function renderAtencaoTurno(stats, pendingReviewCount, role, statsIndisponiveis) {
+  const pendingSync = statsIndisponiveis ? null : Number(stats?.pending) || 0;
+  const drafts = statsIndisponiveis ? null : Number(stats?.draft) || 0;
+  const itens = [];
+  if (role.podeRevisarRetificacoes && pendingReviewCount > 0) itens.push(`<button class="dashboard-attention-item dashboard-attention-item--review" onclick="window.app.navigateTo('retificacoes')"><i class="fas fa-clipboard-check"></i><span><strong>${pendingReviewCount} retificação${pendingReviewCount === 1 ? "" : "ões"}</strong><small>Aguardando sua análise</small></span><i class="fas fa-arrow-right"></i></button>`);
+  if (pendingSync === null || pendingSync > 0) itens.push(`<button class="dashboard-attention-item dashboard-attention-item--sync" onclick="window._dashboardFiltrarStatus('pending_sync')"><i class="fas fa-cloud-arrow-up"></i><span><strong>${pendingSync === null ? "Sincronização" : `${pendingSync} pendência${pendingSync === 1 ? "" : "s"}`}</strong><small>${pendingSync === null ? "Não foi possível confirmar" : "Aguardando envio"}</small></span><i class="fas fa-arrow-right"></i></button>`);
+  if (drafts === null || drafts > 0) itens.push(`<button class="dashboard-attention-item dashboard-attention-item--draft" onclick="window._dashboardFiltrarStatus('draft')"><i class="fas fa-file-pen"></i><span><strong>${drafts === null ? "Rascunhos" : `${drafts} rascunho${drafts === 1 ? "" : "s"}`}</strong><small>${drafts === null ? "Não foi possível confirmar" : "Registros para concluir"}</small></span><i class="fas fa-arrow-right"></i></button>`);
+  return `<section class="dashboard-attention" aria-labelledby="dashboardAttentionTitle"><div class="dashboard-attention__heading"><span class="dashboard-eyebrow">ATENÇÃO</span><h2 id="dashboardAttentionTitle">${itens.length ? "Acompanhe isto" : "Tudo em ordem"}</h2><p>${itens.length ? "Itens que podem exigir sua ação." : "Nenhuma pendência para você agora."}</p></div>${itens.length ? `<div class="dashboard-attention__list">${itens.join("")}</div>` : `<div class="dashboard-attention__ok"><i class="fas fa-check"></i><span>O turno segue sem pendências.</span></div>`}<div class="dashboard-attention__stats"><button onclick="window._dashboardFiltrarStatus('synced')"><strong>${statsIndisponiveis ? "—" : (stats?.synced ?? 0)}</strong><span>finalizados</span></button><button onclick="window._dashboardFiltrarStatus(null)"><strong>${statsIndisponiveis ? "—" : (stats?.total ?? 0)}</strong><span>ativos</span></button></div></section>`;
 }
 
 function renderMovimentoItem(item) {

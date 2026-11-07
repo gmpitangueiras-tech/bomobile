@@ -24,7 +24,7 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v110-security-alerts-exports";
+const CACHE_NAME = "guarda-pitangueiras-v111-client-error-observability";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v4";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
@@ -47,6 +47,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/console-policy.js",
   BASE_PATH + "js/config.js",
   BASE_PATH + "js/supabase.js",
+  BASE_PATH + "js/client-error-monitor.js",
   BASE_PATH + "js/admin-api.js",
   BASE_PATH + "js/auth.js",
   BASE_PATH + "js/offline-vault.js",

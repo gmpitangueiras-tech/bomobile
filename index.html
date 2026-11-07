@@ -107,7 +107,7 @@
     <script>
       // Registrar Service Worker para PWA e Notificações
       if ("serviceWorker" in navigator) {
-        const forcedUpdateVersion = "v110-security-alerts-exports";
+        const forcedUpdateVersion = "v111-client-error-observability";
         navigator.serviceWorker.addEventListener("controllerchange", function () {
           if (sessionStorage.getItem("gm-sw-reloaded") === forcedUpdateVersion) return;
           sessionStorage.setItem("gm-sw-reloaded", forcedUpdateVersion);
@@ -498,6 +498,7 @@
     <script src="js/admin-api.js"></script>
     <script src="js/offline-vault.js"></script>
     <script src="js/auth.js"></script>
+    <script src="js/client-error-monitor.js"></script>
     <script src="js/ocorrencia.js"></script>
     <script src="js/session.js"></script>
     <script src="js/sync.js"></script>

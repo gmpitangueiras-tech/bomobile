@@ -12,6 +12,11 @@
     return `${base}/functions/v1/admin-governance`;
   }
 
+  function observabilityEndpoint() {
+    const base = String(window.CONFIG?.SUPABASE_URL || "").replace(/\/$/, "");
+    return `${base}/functions/v1/client-error-observability`;
+  }
+
   function getToken() {
     return adminToken;
   }
@@ -182,7 +187,18 @@
       if (alertsError) throw alertsError;
       return { success: true, data: { ...(data || {}), alerts: alertsData?.alerts || [] } };
     },
-    listErrors: (limit = 50, offset = 0) => adminCall("errors", { limit, offset }),
+    listErrors: async (limit = 50, offset = 0) => {
+      await ensureSession();
+      const response = await fetch(observabilityEndpoint(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: window.CONFIG?.SUPABASE_ANON_KEY || "", "x-admin-token": getToken() },
+        body: JSON.stringify({ limit, offset, resolvido: false }),
+      });
+      const data = await response.json().catch(() => ({ success: false, error: "Resposta inválida do servidor" }));
+      if (response.status === 401) clear();
+      if (!response.ok || data.success === false) throw new Error(data.error || "Não foi possível consultar os incidentes técnicos");
+      return data;
+    },
     listPendingGovernance: (filters = {}, limit = 25, offset = 0) => adminCall("pending_governance", { ...filters, limit, offset }),
     getPendingGovernance: (id, tipo) => adminCall("pending_detail", { id, type: tipo }),
     approveGovernance: (id, tipo, justificativa = "") => adminCall("approve_governance", { id, tipo, justificativa }),

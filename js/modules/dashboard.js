@@ -1517,7 +1517,11 @@ function escapeDashboardHtml(value) {
 function safeDashboardMediaUrl(value) {
   if (!value) return "";
   try {
-    const url = new URL(String(value), window.location.href);
+    const raw = String(value).trim();
+    // Caminhos internos do bucket não podem virar URLs relativas ao Pages.
+    // Eles só são utilizáveis depois que resolverUrlAnexo gerar uma URL assinada.
+    if (!/^(https?:|blob:)/i.test(raw)) return "";
+    const url = new URL(raw);
     return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
   } catch (error) {
     return "";

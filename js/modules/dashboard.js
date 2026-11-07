@@ -860,7 +860,8 @@ function renderizarDashboard(container, appInstance) {
   const role = getDashboardRole();
   const timeZone = globalThis.CONFIG?.TIMEZONE || "America/Sao_Paulo";
   const formatoHora = new Intl.DateTimeFormat("pt-BR", { timeZone, hour: "2-digit", minute: "2-digit" });
-  const updatedLabel = Object.values(estado.erros).some(Boolean) ? "Dados carregados parcialmente" : "Dados atualizados";
+  const hasDashboardWarning = Object.values(estado.erros).some(Boolean);
+  const updatedLabel = hasDashboardWarning ? "Dados carregados parcialmente" : "Dados atualizados";
   const updatedTime = estado.lastUpdatedAt ? `${updatedLabel} às ${formatoHora.format(estado.lastUpdatedAt)}` : "Atualização ainda não confirmada";
   const displayName = getDashboardDisplayName(user);
 
@@ -871,7 +872,7 @@ function renderizarDashboard(container, appInstance) {
           <h1 id="dashboardTitle">Bem-vindo, ${escapeDashboardHtml(displayName)}</h1>
           <p>Movimentação da equipe nas últimas 36 horas.</p>
         </div>
-        <div class="dashboard-update-bubble" role="status" aria-live="polite">
+        <div class="dashboard-update-bubble${hasDashboardWarning ? " dashboard-update-bubble--warning" : ""}" role="status" aria-live="polite">
           <span class="dashboard-update-bubble__dot"><i class="fas fa-rotate" aria-hidden="true"></i></span>
           <span><strong>${escapeDashboardHtml(updatedLabel)}</strong><small id="dashboardUpdatedAt">${escapeDashboardHtml(updatedTime)}</small></span>
           <button type="button" data-dashboard-refresh aria-label="Atualizar dados do dashboard"><i class="fas fa-rotate" aria-hidden="true"></i></button>

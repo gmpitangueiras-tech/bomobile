@@ -174,9 +174,13 @@
     securityMetrics: async () => {
       const client = window.supabaseClient?.getClient?.();
       if (!client) throw new Error("Cliente Supabase indisponível.");
-      const { data, error } = await client.rpc("gm_security_metrics");
+      const [{ data, error }, { data: alertsData, error: alertsError }] = await Promise.all([
+        client.rpc("gm_security_metrics"),
+        client.rpc("gm_security_alerts"),
+      ]);
       if (error) throw error;
-      return { success: true, data: data || null };
+      if (alertsError) throw alertsError;
+      return { success: true, data: { ...(data || {}), alerts: alertsData?.alerts || [] } };
     },
     listErrors: (limit = 50, offset = 0) => adminCall("errors", { limit, offset }),
     listPendingGovernance: (filters = {}, limit = 25, offset = 0) => adminCall("pending_governance", { ...filters, limit, offset }),

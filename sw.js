@@ -24,7 +24,7 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v109-security-analytics";
+const CACHE_NAME = "guarda-pitangueiras-v110-security-alerts-exports";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v4";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";

@@ -728,6 +728,17 @@ class AuthManager {
       } catch (e) { console.warn("Falha ao registrar auditoria do login."); }
 
       this.notifyListeners("login", usuario);
+      // Recuperar ocorrências criadas online que ficaram em pending_sync após
+      // a gravação dos filhos ou uma interrupção antes da etapa final.
+      setTimeout(async () => {
+        try {
+          if (window.syncManager?.carregarFila) await window.syncManager.carregarFila();
+          if (window.syncManager?.reconciliarPendenciasRemotas) await window.syncManager.reconciliarPendenciasRemotas();
+          if (window.syncManager?.sincronizar) await window.syncManager.sincronizar();
+        } catch (syncError) {
+          console.warn("Falha na reconciliação pós-login:", syncError?.message || syncError);
+        }
+      }, 400);
       if (usuario.status === "primeiro_acesso" || usuario.primeiro_acesso === true) {
         return { success: true, primeiro_acesso: true, usuario };
       }

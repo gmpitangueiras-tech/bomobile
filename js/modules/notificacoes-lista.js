@@ -621,6 +621,11 @@ function renderizarLista(container, appInstance) {
         </button>
       </header>
 
+      <section class="notif-push-banner" aria-label="Notificações no dispositivo">
+        <div><i class="fas fa-bell" aria-hidden="true"></i><span><strong>Receba avisos mesmo com o app fechado</strong><small id="pushNotificationStatus">Ative as notificações neste dispositivo.</small></span></div>
+        <button type="button" class="notif-primary-button" onclick="window.ativarNotificacoesPush?.()">Ativar notificações</button>
+      </section>
+
       <section class="notif-overview" aria-label="Resumo das notificações">
         <div class="notif-unread-summary">
           <span class="notif-unread-number">${naoLidas}</span>

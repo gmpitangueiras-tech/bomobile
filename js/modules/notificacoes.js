@@ -177,6 +177,43 @@ class Notificacoes {
     console.log("✅ Sistema de Notificações inicializado");
   }
 
+  async ativarPush() {
+    try {
+      if (!window.isSecureContext || !("Notification" in window) || !("serviceWorker" in navigator)) throw new Error("Este dispositivo não oferece suporte a notificações push seguras.");
+      const user = authManager.getUser();
+      const client = supabaseClient.getClient();
+      if (!user || !client) throw new Error("Faça login online para ativar as notificações.");
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("A permissão para notificações não foi concedida.");
+      const registration = await navigator.serviceWorker.ready;
+      const applicationServerKey = this.base64ToUint8Array(CONFIG.PUSH.VAPID_PUBLIC_KEY);
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+      const json = subscription.toJSON();
+      const { error } = await client.from("push_subscriptions").upsert({ usuario_id: user.id, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth: json.keys?.auth, user_agent: navigator.userAgent.slice(0, 500), plataforma: navigator.platform?.slice(0, 100) || null, ativo: true, atualizado_em: new Date().toISOString(), ultimo_erro: null }, { onConflict: "endpoint" });
+      if (error) throw error;
+      this.pushAtivo = true;
+      this.atualizarStatusPush();
+      window.app?.showToast?.("Notificações ativadas neste dispositivo.", "success");
+      return { success: true, subscription };
+    } catch (error) {
+      console.warn("Falha ao ativar Web Push:", error);
+      window.app?.showToast?.(error.message || "Não foi possível ativar as notificações.", "warning");
+      return { success: false, error: error.message };
+    }
+  }
+
+  base64ToUint8Array(value) {
+    const padding = "=".repeat((4 - value.length % 4) % 4);
+    const raw = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+  }
+
+  atualizarStatusPush() {
+    const status = document.getElementById("pushNotificationStatus");
+    if (status) status.textContent = this.pushAtivo ? "Ativadas neste dispositivo" : "Ative para receber com o app fechado";
+  }
+
   // ============================================
   // CARREGAR NOTIFICAÇÕES NÃO LIDAS
   // ============================================
@@ -819,6 +856,7 @@ const notificacoes = getNotificacoesInstance();
 // Expor globalmente
 if (typeof window !== "undefined") {
   window.notificacoes = notificacoes;
+  window.ativarNotificacoesPush = () => notificacoes.ativarPush();
   window.Notificacoes = Notificacoes;
 }
 

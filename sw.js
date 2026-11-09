@@ -24,14 +24,14 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v112-sync-reconciliation";
+const CACHE_NAME = "guarda-pitangueiras-v113-web-push";
 const BASE_PATH = "./";
 const ASSETS_CACHE = "guarda-assets-v4";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v112-sync-reconciliation";
+const CACHE_VERSION = "v113-web-push";
 
 // Diagnósticos esperados ficam silenciosos; falhas continuam no console.
 if (self.console) {
@@ -64,6 +64,7 @@ const STATIC_ASSETS = [
   BASE_PATH + "js/modules/logs.js",
   BASE_PATH + "js/modules/mural.js",
   BASE_PATH + "js/modules/notificacoes-lista.js",
+  BASE_PATH + "js/modules/notificacoes.js",
   BASE_PATH + "js/modules/nova-ocorrencia.js",
   BASE_PATH + "js/modules/ocorrencias-lista.js",
   BASE_PATH + "js/modules/perfil.js",
@@ -325,6 +326,38 @@ self.addEventListener("message", (event) => {
         }),
     );
   }
+});
+
+// ============================================
+// WEB PUSH - funciona mesmo com o app fechado
+// ============================================
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch (_) { payload = { body: event.data?.text() || "Você tem uma nova notificação" }; }
+  const title = payload.title || "Guarda Municipal";
+  const options = {
+    body: payload.body || "Você tem uma nova notificação",
+    icon: payload.icon || `${BASE_PATH}assets/icons/icon-192x192.png`,
+    badge: payload.badge || `${BASE_PATH}assets/icons/icon-72x72.png`,
+    tag: payload.tag || `guarda-${Date.now()}`,
+    renotify: true,
+    data: payload.data || { link: `${BASE_PATH}#notificacoes` },
+    vibrate: [200, 100, 200],
+    actions: [{ action: "open", title: "Abrir aplicativo" }, { action: "close", title: "Dispensar" }],
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  if (event.action === "close") return;
+  const target = new URL(event.notification.data?.link || `${BASE_PATH}#notificacoes`, self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+    const existing = clients.find((client) => "focus" in client);
+    if (existing) { existing.navigate(target); return existing.focus(); }
+    return self.clients.openWindow(target);
+  }));
 });
 
 // ============================================

@@ -2408,8 +2408,10 @@ class OcorrenciaManager {
 
   async salvarGuardas(ocorrenciaId, guardas) {
     const equipe = (guardas || []).filter((g) => g && g.guarda_id && g.papel);
-    if (!ocorrenciaId || equipe.length === 0) {
-      return { success: false, error: "Equipe da ocorrência incompleta" };
+    const responsavel = equipe.find((g) => g.papel === "responsavel");
+    const apoio = equipe.find((g) => g.papel === "acompanhante" && g.guarda_id !== responsavel?.guarda_id);
+    if (!ocorrenciaId || !responsavel || !apoio) {
+      return { success: false, error: "Selecione um GM responsável e outro GM como apoio da ocorrência" };
     }
 
     try {
@@ -2420,32 +2422,17 @@ class OcorrenciaManager {
       const atuaisResult = await this.listarGuardas(ocorrenciaId);
       if (!atuaisResult.success) return atuaisResult;
       const atuais = atuaisResult.data || [];
-      const desejados = equipe.map((g) => ({
-        guarda_id: g.guarda_id,
-        papel: g.papel,
-      }));
-      const chave = (g) => `${g.guarda_id}:${g.papel}`;
-      const desejadasChaves = new Set(desejados.map(chave));
-
-      const remover = atuais.filter((g) => !desejadasChaves.has(chave(g)));
-      if (remover.length > 0) {
-        const ids = remover.map((g) => g.id);
-        const { error } = await client
-          .from("ocorrencia_guardas")
-          .update({
-            esta_ativo: false,
-            removido_em: globalThis.obterTimestampBrasilSemFuso(),
-            removido_por: user.id,
-            motivo_remocao: "Substituição da equipe durante edição",
-            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
-          })
-          .in("id", ids);
-        if (error) throw error;
+      const desejadosPorGuarda = new Map(equipe.map((g) => [g.guarda_id, g]));
+      const atuaisPorGuarda = new Map(atuais.map((g) => [g.guarda_id, g]));
+      const responsavelAtual = atuais.find((g) => g.papel === "responsavel");
+      if (responsavelAtual && responsavelAtual.guarda_id !== responsavel.guarda_id) {
+        return { success: false, error: "O GM responsável original não pode ser substituído nesta edição" };
       }
 
-      const atuaisChaves = new Set(atuais.map(chave));
+      // Primeiro adiciona novos integrantes; assim, uma ocorrência sincronizada nunca
+      // fica momentaneamente sem GM de apoio durante a troca de equipe.
       const novos = equipe
-        .filter((g) => !atuaisChaves.has(chave(g)))
+        .filter((g) => !atuaisPorGuarda.has(g.guarda_id))
         .map((g, index) => ({
           ocorrencia_id: ocorrenciaId,
           guarda_id: g.guarda_id,
@@ -2460,6 +2447,33 @@ class OcorrenciaManager {
 
       if (novos.length > 0) {
         const { error } = await client.from("ocorrencia_guardas").insert(novos);
+        if (error) throw error;
+      }
+
+      const alteracoesPapel = equipe
+        .filter((g) => atuaisPorGuarda.has(g.guarda_id) && atuaisPorGuarda.get(g.guarda_id).papel !== g.papel)
+        .sort((a, b) => Number(b.papel === "acompanhante") - Number(a.papel === "acompanhante"));
+      for (const guarda of alteracoesPapel) {
+        const atual = atuaisPorGuarda.get(guarda.guarda_id);
+        const { error } = await client
+          .from("ocorrencia_guardas")
+          .update({ papel: guarda.papel, atualizado_em: globalThis.obterTimestampBrasilSemFuso() })
+          .eq("id", atual.id);
+        if (error) throw error;
+      }
+
+      const remover = atuais.filter((g) => !desejadosPorGuarda.has(g.guarda_id));
+      if (remover.length > 0) {
+        const { error } = await client
+          .from("ocorrencia_guardas")
+          .update({
+            esta_ativo: false,
+            removido_em: globalThis.obterTimestampBrasilSemFuso(),
+            removido_por: user.id,
+            motivo_remocao: "Substituição da equipe durante edição",
+            atualizado_em: globalThis.obterTimestampBrasilSemFuso(),
+          })
+          .in("id", remover.map((g) => g.id));
         if (error) throw error;
       }
       return { success: true };

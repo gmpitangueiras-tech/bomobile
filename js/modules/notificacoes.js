@@ -551,6 +551,70 @@ class Notificacoes {
     }
   }
 
+  async marcarComoNaoLida(id) {
+    try {
+      const user = authManager.getUser();
+      if (!user) return { success: false, error: "Usuário não autenticado" };
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
+      const { data, error } = await client
+        .from("notificacoes")
+        .update({ lida: false, lida_em: null })
+        .eq("id", id)
+        .eq("usuario_id", user.id)
+        .eq("lida", true)
+        .select()
+        .maybeSingle();
+      if (error) throw error;
+      const { count, error: countError } = await client
+        .from("notificacoes")
+        .select("id", { count: "exact", head: true })
+        .eq("usuario_id", user.id)
+        .eq("lida", false);
+      if (countError) throw countError;
+      this.notificacoesNaoLidas = Number(count) || 0;
+      this.cache.naoLidas = this.notificacoesNaoLidas;
+      this.cache.ultimaAtualizacao = Date.now();
+      try { localStorage.removeItem(NOTIFICACOES_CACHE_KEY); } catch (e) {}
+      this.atualizarBadge();
+      return { success: true, data };
+    } catch (error) {
+      console.error("Erro ao marcar notificação como não lida:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async marcarTodasComoNaoLidas() {
+    try {
+      const user = authManager.getUser();
+      if (!user) return { success: false, error: "Usuário não autenticado" };
+      const client = supabaseClient.getClient();
+      if (!client) return { success: false, error: "Erro ao conectar ao servidor" };
+      const { data, error } = await client
+        .from("notificacoes")
+        .update({ lida: false, lida_em: null })
+        .eq("usuario_id", user.id)
+        .eq("lida", true)
+        .select();
+      if (error) throw error;
+      const { count, error: countError } = await client
+        .from("notificacoes")
+        .select("id", { count: "exact", head: true })
+        .eq("usuario_id", user.id)
+        .eq("lida", false);
+      if (countError) throw countError;
+      this.notificacoesNaoLidas = Number(count) || 0;
+      this.cache.naoLidas = this.notificacoesNaoLidas;
+      this.cache.ultimaAtualizacao = Date.now();
+      try { localStorage.removeItem(NOTIFICACOES_CACHE_KEY); } catch (e) {}
+      this.atualizarBadge();
+      return { success: true, data: data || [] };
+    } catch (error) {
+      console.error("Erro ao marcar todas notificações como não lidas:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
   // ============================================
   // EXCLUIR NOTIFICAÇÃO
   // ============================================

@@ -1758,6 +1758,14 @@ export function abrirFormularioAbordagem(appInstance, termoPreenchido = "", tipo
       ? window.app.obterLocalizacaoAtual()
       : null;
 
+  const usuarioAtualId = authManager.getUser()?.id;
+  const guardasApoio = (estado.listaGuardas || [])
+    .filter((guarda) => guarda.id !== usuarioAtualId && ["guarda", "supervisor"].includes(guarda.perfil))
+    .sort((a, b) => String(a.nome_completo || "").localeCompare(String(b.nome_completo || ""), "pt-BR"));
+  const opcoesGuardasApoio = guardasApoio.map((guarda) =>
+    `<option value="${escapeHtmlAbordagem(guarda.id)}">${escapeHtmlAbordagem(guarda.nome_completo || "GM cadastrado")}${guarda.matricula ? ` · Mat. ${escapeHtmlAbordagem(guarda.matricula)}` : ""}</option>`,
+  ).join("");
+
   // Data/hora local para preencher o campo datetime-local sem conversão UTC.
   const dataHoraAtual = obterDataHoraLocalInputAbordagem();
   const dataHoraInicio = dataHoraAtual;
@@ -1900,6 +1908,18 @@ export function abrirFormularioAbordagem(appInstance, termoPreenchido = "", tipo
   }
 
   html += `
+    <section class="approach-support-selection" aria-label="Equipe da Guarda">
+      <div class="approach-section-heading"><span><i class="fas fa-user-shield" aria-hidden="true"></i></span><div><h4>Equipe da Guarda</h4><p>Uma abordagem deve ser realizada por pelo menos dois GMs.</p></div></div>
+      <div class="approach-form-field approach-form-field--wide">
+        <label for="formGuardaApoio">GM de apoio que participou *</label>
+        <select id="formGuardaApoio" required>
+          <option value="">Selecione um GM cadastrado</option>
+          ${opcoesGuardasApoio}
+        </select>
+        <small>${guardasApoio.length ? "Selecione o GM que atuou junto com você. Ele receberá uma notificação de que foi marcado como apoio." : "Nenhum GM de apoio ativo foi carregado. Conecte-se e atualize a lista de GMs antes de registrar."}</small>
+      </div>
+    </section>
+
     <div class="approach-section-heading"><span>02</span><div><h4><i class="fas fa-map-marker-alt" aria-hidden="true"></i> Onde e quando</h4><p>Confira o horário do atendimento e descreva o local com referência útil.</p></div></div>
     <div class="form-group" style="margin-bottom:10px;">
       <label for="formLocal" style="display:block;font-size:12px;margin-bottom:5px;font-weight:600;">Local da abordagem</label>
@@ -2185,6 +2205,13 @@ export async function salvarAbordagemComAnexos(appInstance) {
   const tipoAtendimento = document.getElementById("formTipoAtendimento")?.value || "";
   const motivoAbordagem = document.getElementById("formMotivo")?.value?.trim() || "";
   const providencia = document.getElementById("formProvidencia")?.value || "";
+  const guardaApoioId = document.getElementById("formGuardaApoio")?.value || "";
+
+  if (!guardaApoioId || guardaApoioId === user.id) {
+    appInstance.showToast("Selecione outro GM cadastrado como apoio da abordagem", "warning");
+    document.getElementById("formGuardaApoio")?.focus();
+    return;
+  }
 
   if (identificacaoStatus === "identificado" && !identificador) {
     appInstance.showToast(isVeiculo ? "Informe a placa ou altere a situação da identificação" : "Informe o nome ou altere a situação da identificação", "warning");
@@ -2243,6 +2270,7 @@ export async function salvarAbordagemComAnexos(appInstance) {
     // 🔥 NOVO: Preparar dados com data/hora
     const dados = {
       criado_por: user.id,
+      guarda_apoio_id: guardaApoioId,
       local_abordagem: document.getElementById("formLocal")?.value || "",
       motivo: motivoAbordagem,
       tipo_atendimento: tipoAtendimento,
@@ -2880,8 +2908,10 @@ async function carregarListaGuardas() {
     if (!client) return;
     const { data, error } = await client
       .from("usuarios")
-      .select("id, nome_completo")
+      .select("id, nome_completo, matricula, perfil")
       .eq("status", "ativo")
+      .in("perfil", ["guarda", "supervisor"])
+      .is("deleted_at", null)
       .order("nome_completo");
     if (error) throw error;
     estado.listaGuardas = data || [];

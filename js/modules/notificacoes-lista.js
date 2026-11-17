@@ -338,6 +338,25 @@ function getNotificacoes() {
       }
     },
 
+    marcarTodasComoNaoLidas: async () => {
+      try {
+        const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+        const user = typeof authManager !== "undefined" ? authManager.getUser() : null;
+        if (!client) return { success: false, error: "Erro ao conectar" };
+        if (!user) return { success: false, error: "Usuário não autenticado" };
+        const { data, error } = await client
+          .from("notificacoes")
+          .update({ lida: false, lida_em: null })
+          .eq("usuario_id", user.id)
+          .eq("lida", true)
+          .select();
+        if (error) throw error;
+        return { success: true, data: data || [] };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+
     marcarComoLida: async (id) => {
       try {
         const client =
@@ -358,6 +377,27 @@ function getNotificacoes() {
           .select()
           .single();
 
+        if (error) throw error;
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+
+    marcarComoNaoLida: async (id) => {
+      try {
+        const client = typeof supabaseClient !== "undefined" ? supabaseClient.getClient() : null;
+        const user = typeof authManager !== "undefined" ? authManager.getUser() : null;
+        if (!client) return { success: false, error: "Erro ao conectar" };
+        if (!user) return { success: false, error: "Usuário não autenticado" };
+        const { data, error } = await client
+          .from("notificacoes")
+          .update({ lida: false, lida_em: null })
+          .eq("id", id)
+          .eq("usuario_id", user.id)
+          .eq("lida", true)
+          .select()
+          .maybeSingle();
         if (error) throw error;
         return { success: true, data };
       } catch (error) {
@@ -482,7 +522,9 @@ export async function renderNotificacoes(container, appInstance) {
 
   estado.usuario = user;
   window._notificacoesMarcarTodas = () => marcarTodasComoLidas(container, appInstance);
+  window._notificacoesMarcarTodasComoNaoLidas = () => marcarTodasComoNaoLidas(container, appInstance);
   window._notificacoesMarcarUma = (id) => marcarUmaComoLida(id, container, appInstance);
+  window._notificacoesMarcarUmaComoNaoLida = (id) => marcarUmaComoNaoLida(id, container, appInstance);
   window._notificacoesExcluir = (id) => excluirNotificacao(id, container, appInstance);
   window._notificacoesAplicarFiltros = () => aplicarFiltros(container, appInstance);
   window._notificacoesLimparFiltros = () => limparFiltros(container, appInstance);
@@ -631,7 +673,10 @@ function renderizarLista(container, appInstance) {
           <span class="notif-unread-number">${naoLidas}</span>
           <span><strong>${naoLidas === 1 ? "não lida" : "não lidas"}</strong><small>Atualizado às ${horaAtualizacao}</small></span>
         </div>
-        ${naoLidas > 0 ? `<button type="button" class="notif-mark-all" onclick="window._notificacoesMarcarTodas()"><i class="fas fa-check-double" aria-hidden="true"></i> Marcar todas como lidas</button>` : `<span class="notif-all-read"><i class="fas fa-check-circle" aria-hidden="true"></i> Você está em dia</span>`}
+        <div class="notif-bulk-actions">
+          ${naoLidas > 0 ? `<button type="button" class="notif-mark-all" onclick="window._notificacoesMarcarTodas()"><i class="fas fa-check-double" aria-hidden="true"></i> Marcar todas como lidas</button>` : `<span class="notif-all-read"><i class="fas fa-check-circle" aria-hidden="true"></i> Você está em dia</span>`}
+          <button type="button" class="notif-mark-unread" onclick="window._notificacoesMarcarTodasComoNaoLidas()"><i class="fas fa-envelope" aria-hidden="true"></i> Marcar todas como não lidas</button>
+        </div>
       </section>
 
       <form class="notif-search" role="search" onsubmit="event.preventDefault(); window._notificacoesBuscar(document.getElementById('buscaNotificacoes').value)">
@@ -743,7 +788,7 @@ function renderNotificacaoItem(notif) {
         <details class="notif-more-menu">
           <summary aria-label="Mais ações"><i class="fas fa-ellipsis-h" aria-hidden="true"></i></summary>
           <div class="notif-menu-items">
-            ${!isLida ? `<button type="button" data-notif-action="read"><i class="fas fa-check" aria-hidden="true"></i> Marcar como lida</button>` : ""}
+            ${!isLida ? `<button type="button" data-notif-action="read"><i class="fas fa-check" aria-hidden="true"></i> Marcar como lida</button>` : `<button type="button" data-notif-action="unread"><i class="fas fa-envelope" aria-hidden="true"></i> Marcar como não lida</button>`}
             <button type="button" class="notif-delete-action" data-notif-action="delete"><i class="fas fa-trash" aria-hidden="true"></i> Excluir</button>
           </div>
         </details>
@@ -791,7 +836,7 @@ function renderPreviaNotificacao(notif) {
         </dl>
         <footer class="notif-dialog-footer">
           <button type="button" class="notif-dialog-secondary" data-notif-action="close-preview">Fechar</button>
-          ${!isLida ? `<button type="button" class="notif-dialog-secondary" data-notif-action="read"><i class="fas fa-check" aria-hidden="true"></i> Marcar como lida</button>` : ""}
+          ${!isLida ? `<button type="button" class="notif-dialog-secondary" data-notif-action="read"><i class="fas fa-check" aria-hidden="true"></i> Marcar como lida</button>` : `<button type="button" class="notif-dialog-secondary" data-notif-action="unread"><i class="fas fa-envelope" aria-hidden="true"></i> Marcar como não lida</button>`}
           ${link && link !== "#" ? `<button type="button" class="notif-dialog-primary" data-notif-action="open"><i class="fas fa-external-link-alt" aria-hidden="true"></i> Abrir no app</button>` : ""}
         </footer>
       </section>
@@ -799,8 +844,8 @@ function renderPreviaNotificacao(notif) {
   `;
 }
 
-function abrirPreviaNotificacao(id, container) {
-  const notificacao = estado.notificacoes.find((item) => String(item.id) === String(id));
+function abrirPreviaNotificacao(id, container, notificacaoSubstituta = null) {
+  const notificacao = estado.notificacoes.find((item) => String(item.id) === String(id)) || notificacaoSubstituta;
   if (!notificacao || container.querySelector(".notif-dialog-backdrop")) return;
   estado.previewFocusReturn = document.activeElement;
   estado.previewPreviousOverflow = document.body.style.overflow;
@@ -854,12 +899,23 @@ function fecharPreviaNotificacao(container) {
   if (focusReturn?.isConnected && typeof focusReturn.focus === "function") focusReturn.focus();
 }
 
+async function marcarComoLidaAoAbrir(id, container, appInstance, notificacao) {
+  if (!notificacao || notificacao.lida === true) return notificacao;
+  const result = await notif.marcarComoLida(id);
+  if (!result.success) return notificacao;
+  const atualizada = { ...notificacao, lida: true, lida_em: result.data?.lida_em || globalThis.obterTimestampBrasilSemFuso() };
+  await carregarNotificacoes(estado.paginaAtual);
+  renderizarLista(container, appInstance);
+  await atualizarBadgeNotificacoes();
+  return atualizada;
+}
+
 function registrarEventosNotificacoes(container, appInstance) {
   if (estado.clickRoot && estado.clickHandler) {
     estado.clickRoot.removeEventListener("click", estado.clickHandler);
   }
   estado.clickRoot = container;
-  estado.clickHandler = (event) => {
+  estado.clickHandler = async (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     const action = target?.closest("[data-notif-action]");
     if (!action || !container.contains(action)) return;
@@ -876,14 +932,21 @@ function registrarEventosNotificacoes(container, appInstance) {
     const id = item?.getAttribute("data-notif-id");
     if (!id) return;
     if (actionName === "preview") {
-      abrirPreviaNotificacao(id, container);
+      const notificacao = estado.notificacoes.find((item) => String(item.id) === String(id));
+      const atualizada = await marcarComoLidaAoAbrir(id, container, appInstance, notificacao);
+      abrirPreviaNotificacao(id, container, atualizada);
     } else if (actionName === "open") {
       const link = item.getAttribute("data-notif-link") || "#";
       fecharPreviaNotificacao(container);
+      const notificacao = estado.notificacoes.find((entry) => String(entry.id) === String(id));
+      await marcarComoLidaAoAbrir(id, container, appInstance, notificacao);
       navegarParaLink(link, id, appInstance);
     } else if (actionName === "read") {
       fecharPreviaNotificacao(container);
       marcarUmaComoLida(id, container, appInstance);
+    } else if (actionName === "unread") {
+      fecharPreviaNotificacao(container);
+      marcarUmaComoNaoLida(id, container, appInstance);
     } else if (actionName === "delete") {
       excluirNotificacao(id, container, appInstance);
     }
@@ -973,6 +1036,32 @@ export async function marcarTodasComoLidas(container, appInstance) {
 }
 
 // ============================================
+// AÇÕES - MARCAR TODAS COMO NÃO LIDAS
+// ============================================
+
+export async function marcarTodasComoNaoLidas(container, appInstance) {
+  try {
+    const confirmado = await appInstance.confirmar(
+      "Deseja marcar todas as notificações da sua conta como não lidas?",
+      "Marcar todas como não lidas",
+    );
+    if (!confirmado) return;
+    const result = await notif.marcarTodasComoNaoLidas();
+    if (result.success) {
+      appInstance.showToast("Todas as notificações da sua conta foram marcadas como não lidas", "success");
+      await carregarNotificacoes(estado.paginaAtual);
+      renderizarLista(container, appInstance);
+      await atualizarBadgeNotificacoes();
+    } else {
+      appInstance.showToast("Erro ao marcar notificações", "error");
+    }
+  } catch (error) {
+    console.error("Erro ao marcar todas como não lidas:", error);
+    appInstance.showToast("Erro ao marcar notificações", "error");
+  }
+}
+
+// ============================================
 // AÇÕES - MARCAR UMA COMO LIDA
 // ============================================
 
@@ -992,6 +1081,26 @@ export async function marcarUmaComoLida(id, container, appInstance) {
     }
   } catch (error) {
     console.error("Erro ao marcar notificação:", error);
+    appInstance.showToast("Erro ao marcar notificação", "error");
+  }
+}
+
+// ============================================
+// AÇÕES - MARCAR UMA COMO NÃO LIDA
+// ============================================
+
+export async function marcarUmaComoNaoLida(id, container, appInstance) {
+  try {
+    const result = await notif.marcarComoNaoLida(id);
+    if (result.success) {
+      await carregarNotificacoes(estado.paginaAtual);
+      renderizarLista(container, appInstance);
+      await atualizarBadgeNotificacoes();
+    } else {
+      appInstance.showToast("Erro ao marcar notificação", "error");
+    }
+  } catch (error) {
+    console.error("Erro ao marcar notificação como não lida:", error);
     appInstance.showToast("Erro ao marcar notificação", "error");
   }
 }
@@ -1178,7 +1287,9 @@ async function atualizarBadgeNotificacoes() {
 export default {
   renderNotificacoes,
   marcarTodasComoLidas,
+  marcarTodasComoNaoLidas,
   marcarUmaComoLida,
+  marcarUmaComoNaoLida,
   excluirNotificacao,
   navegarParaLink,
   aplicarFiltros,

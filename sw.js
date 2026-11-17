@@ -24,14 +24,14 @@
 // CONSTANTES - VERSÃO ATUALIZADA
 // ============================================
 
-const CACHE_NAME = "guarda-pitangueiras-v117-support-notifications";
+const CACHE_NAME = "guarda-pitangueiras-v118-support-notifications";
 const BASE_PATH = "./";
-const ASSETS_CACHE = "guarda-assets-v4";
+const ASSETS_CACHE = "guarda-assets-v5";
 const SUPABASE_PROJECT_REF = "wswezvcxfljzcttpqkch";
 
 const IMAGES_CACHE = "guarda-images-v2";
 const DYNAMIC_CACHE = "guarda-dynamic-v3";
-const CACHE_VERSION = "v117-support-notifications";
+const CACHE_VERSION = "v118-support-notifications";
 
 // Diagnósticos esperados ficam silenciosos; falhas continuam no console.
 if (self.console) {
